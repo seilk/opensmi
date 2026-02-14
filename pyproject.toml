@@ -52,9 +52,9 @@ dev = [
 opensmi = "opensmi.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/<org-or-user>/opensmi"
-Repository = "https://github.com/<org-or-user>/opensmi"
-Issues = "https://github.com/<org-or-user>/opensmi/issues"
+Homepage = "https://github.com/seil/opensmi"
+Repository = "https://github.com/seil/opensmi"
+Issues = "https://github.com/seil/opensmi/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

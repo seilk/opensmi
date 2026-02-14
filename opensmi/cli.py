@@ -53,7 +53,7 @@ def _require_admin(cfg, action: str) -> None:
 
     print(
         f"Permission denied: '{op}' is not an admin for action '{action}'.\n"
-        f"Configure admins in config.json (admins.master / admins.members).\n"
+        f"Configure admins in opensmi.json (admins.master / admins.members).\n"
         f"Current: master={master!r}, members={members_list!r}",
         file=sys.stderr,
     )
@@ -76,6 +76,23 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"Config created: {cfg_path}")
     print(f"Edit it, then run: opensmi poll")
     return 0
+
+
+def _cmd_onboard(args: argparse.Namespace) -> int:
+    """Onboarding wizard to create opensmi.json (interactive)."""
+    state_dir = get_state_dir(args.state_dir)
+    ensure_state_dir(state_dir)
+
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+
+    if cfg_path.exists() and not bool(args.force):
+        print(f"Config already exists: {cfg_path} (use --force to overwrite)", file=sys.stderr)
+        return 2
+
+    if args.from_ssh_config:
+        return _init_from_ssh_config(cfg_path, args.from_ssh_config)
+
+    return _init_wizard(cfg_path)
 
 
 def _init_wizard(cfg_path: Path) -> int:
@@ -287,7 +304,7 @@ def _cmd_poll(args: argparse.Namespace) -> int:
     if not cfg_path.exists():
         print(
             f"Config not found: {cfg_path}\n"
-            f"Run: opensmi init (writes ./config.json in the repo, or ~/.opensmi/config.json when installed)\n"
+            f"Run: opensmi init (writes ./opensmi.json in a repo checkout, or ~/.opensmi/opensmi.json when installed)\n"
             f"Tip: override with --config or OPENSMI_CONFIG",
             file=sys.stderr,
         )
@@ -315,10 +332,17 @@ def _cmd_poll(args: argparse.Namespace) -> int:
 
 def _load_cfg(args: argparse.Namespace):
     state_dir = get_state_dir(args.state_dir)
-    cfg_path = Path(args.config).expanduser().resolve() if args.config else config_path(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=getattr(args, "config", None))
+
     if not cfg_path.exists():
-        print(f"Config not found: {cfg_path}\nRun: opensmi init", file=sys.stderr)
+        print(
+            f"Config not found: {cfg_path}\n"
+            f"Run: opensmi init\n"
+            f"Tip: override with --config or OPENSMI_CONFIG",
+            file=sys.stderr,
+        )
         raise SystemExit(2)
+
     return state_dir, load_config(cfg_path)
 
 
@@ -693,16 +717,34 @@ def _cmd_users(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
     p.add_argument("--state-dir", default=None, help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)")
-    p.add_argument("--config", default=None, help="Config path (default: <state-dir>/config.json)")
+    p.add_argument(
+        "--config",
+        default=None,
+        help="Config path (default: ./opensmi.json in a repo checkout, else <state-dir>/opensmi.json; override with OPENSMI_CONFIG)",
+    )
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp_init = sub.add_parser("init", help="Create default config in the state dir")
+    sp_init = sub.add_parser("init", help="Create default opensmi.json")
     sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
     sp_init.add_argument("--wizard", action="store_true", help="Interactive setup wizard")
-    sp_init.add_argument("--from-ssh-config", default=None, metavar="PATH",
-                         help="Import nodes from ~/.ssh/config (e.g. --from-ssh-config ~/.ssh/config)")
+    sp_init.add_argument(
+        "--from-ssh-config",
+        default=None,
+        metavar="PATH",
+        help="Import nodes from ~/.ssh/config (e.g. --from-ssh-config ~/.ssh/config)",
+    )
     sp_init.set_defaults(func=_cmd_init)
+
+    sp_on = sub.add_parser("onboard", help="Interactive onboarding to create opensmi.json")
+    sp_on.add_argument("--force", action="store_true", help="Overwrite existing config")
+    sp_on.add_argument(
+        "--from-ssh-config",
+        default=None,
+        metavar="PATH",
+        help="Import nodes from ~/.ssh/config (non-interactive)",
+    )
+    sp_on.set_defaults(func=_cmd_onboard)
 
     sp_poll = sub.add_parser("poll", help="Poll cluster via SSH + nvidia-smi")
     sp_poll.add_argument("--timeout", default=15, type=int, help="Per-node timeout seconds")

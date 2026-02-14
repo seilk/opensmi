@@ -23,7 +23,7 @@ The backend runs a small bash script over SSH:
 ## State
 
 Default state dir: `~/.opensmi/`
-- `config.json` (cluster topology)
+- `opensmi.json` (cluster topology)
 - `allocations.json` (GPU assignments)
 
 State dir is configurable via:

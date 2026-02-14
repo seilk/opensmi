@@ -87,6 +87,12 @@ jobs:
       - name: List artifacts
         run: ls -lhR artifacts/
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          ls -lh SHA256SUMS.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

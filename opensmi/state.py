@@ -7,7 +7,8 @@ from typing import Optional
 ENV_STATE_DIR = "OPENSMI_STATE_DIR"
 ENV_CONFIG_PATH = "OPENSMI_CONFIG"
 DEFAULT_STATE_DIRNAME = ".opensmi"
-DEFAULT_CONFIG_NAME = "config.json"
+DEFAULT_CONFIG_NAME = "opensmi.json"
+LEGACY_CONFIG_NAME = "config.json"
 
 
 def get_state_dir(state_dir: Optional[str] = None) -> Path:
@@ -55,8 +56,8 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
     Priority:
       1) CLI flag --config
       2) env OPENSMI_CONFIG
-      3) <repo_root>/config.json (if in a repo checkout)
-      4) <state_dir>/config.json
+      3) <repo_root>/opensmi.json (if in a repo checkout)
+      4) <state_dir>/opensmi.json
     """
     if cli_config:
         return Path(cli_config).expanduser().resolve()
@@ -67,9 +68,23 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
 
     repo = find_repo_root()
     if repo:
-        return (repo / DEFAULT_CONFIG_NAME).resolve()
+        preferred = (repo / DEFAULT_CONFIG_NAME)
+        if preferred.exists():
+            return preferred.resolve()
+        legacy = (repo / LEGACY_CONFIG_NAME)
+        if legacy.exists():
+            return legacy.resolve()
+        return preferred.resolve()
 
-    return config_path(state_dir)
+    preferred = config_path(state_dir)
+    if preferred.exists():
+        return preferred
+
+    legacy = (state_dir / LEGACY_CONFIG_NAME)
+    if legacy.exists():
+        return legacy
+
+    return preferred
 
 
 def latest_snapshot_path(state_dir: Path) -> Path:

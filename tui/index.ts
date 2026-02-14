@@ -104,7 +104,15 @@ function getStateDir(): string {
 
 async function loadAdminStatus(): Promise<void> {
   try {
-    const cfgPath = `${getStateDir()}/config.json`;
+    const candidates = [
+      process.env.OPENSMI_CONFIG,
+      BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
+      BASE_DIR ? `${BASE_DIR}/config.json` : undefined,
+      `${getStateDir()}/opensmi.json`,
+      `${getStateDir()}/config.json`,
+    ].filter(Boolean) as string[];
+
+    const cfgPath = candidates.find((p) => existsSync(p)) || candidates[0]!;
     const raw = await Bun.file(cfgPath).text();
     const data = JSON.parse(raw) as any;
 
@@ -123,7 +131,7 @@ async function loadAdminStatus(): Promise<void> {
       : `Read-only (${OPERATOR} not in admins)`;
   } catch {
     isAdmin = false;
-    adminHint = `Read-only (${OPERATOR}); config.json missing`;
+    adminHint = `Read-only (${OPERATOR}); opensmi.json missing`;
   }
 }
 
@@ -151,7 +159,7 @@ const OPENSMI_CWD = BASE_DIR ? BASE_DIR : undefined;
 
 const OPENSMI = [PYTHON, "-m", "opensmi"];
 
-async function runMicvgpus(
+async function runOpensmi(
   args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = spawn([...OPENSMI, ...args], {
@@ -172,7 +180,7 @@ async function allocSet(
   user: string
 ): Promise<void> {
   const by = process.env.USER || "admin";
-  const { code, stderr } = await runMicvgpus([
+  const { code, stderr } = await runOpensmi([
     "alloc",
     "set",
     nodeAlias,
@@ -186,7 +194,7 @@ async function allocSet(
 }
 
 async function allocClear(nodeAlias: string, gpuIdx: number): Promise<void> {
-  const { code, stderr } = await runMicvgpus([
+  const { code, stderr } = await runOpensmi([
     "alloc",
     "clear",
     nodeAlias,
@@ -201,7 +209,7 @@ async function killPids(
   signal: "TERM" | "KILL" = "TERM"
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const args = ["kill", nodeAlias, ...pids.map((p) => String(p)), "--signal", signal];
-  return await runMicvgpus(args);
+  return await runOpensmi(args);
 }
 
 // ── Data fetching ──────────────────────────────────────────────────
@@ -1109,7 +1117,7 @@ async function main() {
     if (!force && systemUsersLoadedAt && Date.now() - systemUsersLoadedAt < 10 * 60_000) return;
 
     try {
-      const { code, stdout, stderr } = await runMicvgpus(["users", "--json", "--timeout", "8"]);
+      const { code, stdout, stderr } = await runOpensmi(["users", "--json", "--timeout", "8"]);
       if (code !== 0) {
         setStatus(`Failed to load system users: ${stderr.trim() || `exit ${code}`}`);
         return;

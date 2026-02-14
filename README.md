@@ -28,10 +28,34 @@ just SSH and `nvidia-smi`.
 
 ## Installation
 
-### Option A: Pre-built binary (recommended for TUI)
+### Quick install (recommended)
 
-Download the latest release for your platform from
-[**GitHub Releases**](https://github.com/<org-or-user>/opensmi/releases).
+One command installs both CLI + TUI binary, creates symlinks in `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash
+```
+
+Or with options:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh) \
+  --version v0.1.0 \
+  --bin-dir /usr/local/bin
+```
+
+The installer will:
+1. Download the Python CLI wheel and install via `pip install --user`
+2. Download the pre-built TUI binary for your platform
+3. Verify SHA256 checksums
+4. Place `opensmi` + `opensmi-tui` in `~/.local/bin` (or your `--bin-dir`)
+5. Symlink versioned binary → stable name (`opensmi-tui-linux-x64` → `opensmi-tui`)
+
+> Run `install.sh --help` for all options (`--tui-only`, `--cli-only`, `--no-verify`, etc.)
+
+### Manual: pre-built binary (TUI only)
+
+Download from [**GitHub Releases**](https://github.com/seil/opensmi/releases):
 
 | Platform | Binary |
 |----------|--------|
@@ -41,55 +65,45 @@ Download the latest release for your platform from
 | macOS Intel | `opensmi-tui-darwin-x64` |
 
 ```bash
-# Example: Linux x64
 curl -fsSL -o opensmi-tui \
-  https://github.com/<org-or-user>/opensmi/releases/latest/download/opensmi-tui-linux-x64
-
+  https://github.com/seil/opensmi/releases/latest/download/opensmi-tui-linux-x64
 chmod +x opensmi-tui
-
-# (optional) move to PATH
 sudo mv opensmi-tui /usr/local/bin/
 ```
 
-> The TUI binary is **self-contained** — no Bun, Node.js, or npm required.
-> You still need the Python CLI installed for backend commands.
+> Self-contained binary — no Bun/Node.js required. Python CLI still needed for backend.
 
-### Option B: pip install (CLI only)
-
-```bash
-pip install opensmi
-```
-
-Or install from source:
+### Manual: pip install (CLI only)
 
 ```bash
-git clone https://github.com/<org-or-user>/opensmi.git
-cd opensmi
+# From source
+git clone https://github.com/seil/opensmi.git && cd opensmi
 pip install -e .
 ```
 
 > **Zero dependencies.** opensmi uses only the Python standard library.
 
-### Option C: From source (CLI + TUI)
+### From source (CLI + TUI)
 
 ```bash
-git clone https://github.com/<org-or-user>/opensmi.git
-cd opensmi
+git clone https://github.com/seil/opensmi.git && cd opensmi
 
-# CLI
-pip install -e .
-
-# TUI (requires Bun — https://bun.sh)
-cd tui && bun install
+pip install -e .                       # CLI
+cd tui && bun install && bun index.ts  # TUI (requires Bun)
 ```
 
-### Verify installation
+### Build TUI binary locally
 
 ```bash
-opensmi --help          # CLI
-opensmi-tui             # TUI (if using pre-built binary)
-# or
-cd tui && bun index.ts   # TUI (from source)
+./scripts/build-tui.sh
+# → dist/opensmi-tui-<os>-<arch>
+```
+
+### Verify
+
+```bash
+opensmi --help     # CLI
+opensmi-tui        # TUI (binary)
 ```
 
 ---
@@ -179,7 +193,7 @@ Admin Terminal
                └─ nvidia-smi   ← GPU & process info
 
 State: ~/.opensmi/
-  ├─ config.json               ← cluster topology
+  ├─ opensmi.json              ← cluster topology
   └─ allocations.json          ← GPU assignments (persistent)
 ```
 
@@ -187,7 +201,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Configuration
 
-`~/.opensmi/config.json`:
+`~/.opensmi/opensmi.json`:
 
 ```jsonc
 {
