@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.
 
 This will place binaries in `~/.local/bin` (and print a PATH hint if needed).
 
-**Requirements:** macOS/Linux, Python 3.8+, SSH access to GPU nodes with `nvidia-smi`.
+**Requirements:** macOS/Linux, **Python 3.8+**, SSH access to GPU nodes with `nvidia-smi`.
 
 ### Update
 

@@ -15,6 +15,7 @@ from .sshutil import SSHRunError, ssh_bash_script, ssh_run
 from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
 from .update import UpdateError, update as update_release
+from .uninstall import UninstallError, run_uninstall
 
 
 def _current_operator() -> str:
@@ -131,7 +132,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
 
     if args.wizard:
-        return _init_wizard(cfg_path)
+        return _init_wizard(cfg_path, n_nodes=args.nodes)
 
     if args.from_ssh_config:
         return _init_from_ssh_config(cfg_path, args.from_ssh_config)
@@ -156,10 +157,10 @@ def _cmd_onboard(args: argparse.Namespace) -> int:
     if args.from_ssh_config:
         return _init_from_ssh_config(cfg_path, args.from_ssh_config)
 
-    return _init_wizard(cfg_path)
+    return _init_wizard(cfg_path, n_nodes=args.nodes)
 
 
-def _init_wizard(cfg_path: Path) -> int:
+def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     """Interactive setup wizard."""
     import json as _json
 
@@ -167,20 +168,38 @@ def _init_wizard(cfg_path: Path) -> int:
 
     cluster_name = input("Cluster name [GPU-Cluster]: ").strip() or "GPU-Cluster"
 
+    # Nodes
+    if n_nodes is None:
+        while True:
+            raw_n = input("\nNumber of GPU nodes [2]: ").strip() or "2"
+            try:
+                n_nodes = int(raw_n)
+                if n_nodes <= 0:
+                    raise ValueError
+                break
+            except ValueError:
+                print("Please enter a positive integer (e.g. 6).")
+    else:
+        if int(n_nodes) <= 0:
+            print("--nodes must be a positive integer", file=sys.stderr)
+            return 2
+        n_nodes = int(n_nodes)
+
     nodes = []
-    print("\nAdd GPU nodes (empty alias to finish):")
-    idx = 1
-    while True:
-        alias = input(f"  Node #{idx} alias (e.g. GPU-01): ").strip()
-        if not alias:
+    print("\nAdd GPU nodes:")
+
+    for idx in range(1, n_nodes + 1):
+        default_alias = f"GPU-{idx:02d}"
+
+        while True:
+            alias = input(f"  Node #{idx} alias [{default_alias}]: ").strip() or default_alias
+            address = input(f"  Node #{idx} address (IP or hostname): ").strip()
+            if not address:
+                print("  Address required. Try again.")
+                continue
+            user = input(f"  Node #{idx} SSH user [seil]: ").strip() or "seil"
+            nodes.append({"alias": alias, "address": address, "user": user})
             break
-        address = input(f"  Node #{idx} address (IP or hostname): ").strip()
-        if not address:
-            print("  Address required, skipping.")
-            continue
-        user = input(f"  Node #{idx} SSH user [seil]: ").strip() or "seil"
-        nodes.append({"alias": alias, "address": address, "user": user})
-        idx += 1
 
     if not nodes:
         print("No nodes added. Aborting.")
@@ -824,8 +843,27 @@ def _cmd_update(args: argparse.Namespace) -> int:
     if not args.tui_only:
         print("Next: opensmi --help")
     if not args.cli_only:
-        print("Next: opensmi-tui")
+        print("Next: opensmi")
     return 0
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    try:
+        out = run_uninstall(
+            bin_dir=Path(args.bin_dir).expanduser().resolve() if args.bin_dir else None,
+            uninstall_tui=not bool(args.cli_only),
+            uninstall_cli=not bool(args.tui_only),
+            purge_state=bool(args.purge_state),
+            state_dir=args.state_dir,
+            yes=bool(args.yes),
+            force=bool(args.force),
+            dry_run=bool(args.dry_run),
+        )
+        print(out)
+        return 0
+    except UninstallError as e:
+        print(f"Uninstall failed: {e}", file=sys.stderr)
+        return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -842,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_init = sub.add_parser("init", help="Create default opensmi.json")
     sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
     sp_init.add_argument("--wizard", action="store_true", help="Interactive setup wizard")
+    sp_init.add_argument("--nodes", type=int, default=None, help="Number of nodes (wizard only)")
     sp_init.add_argument(
         "--from-ssh-config",
         default=None,
@@ -852,6 +891,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp_on = sub.add_parser("onboard", help="Interactive onboarding to create opensmi.json")
     sp_on.add_argument("--force", action="store_true", help="Overwrite existing config")
+    sp_on.add_argument("--nodes", type=int, default=None, help="Number of nodes (wizard only)")
     sp_on.add_argument(
         "--from-ssh-config",
         default=None,
@@ -936,6 +976,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp_up.add_argument("--cli-method", default="auto", choices=["auto", "pip", "pyz"], help="CLI method")
     sp_up.add_argument("--no-verify", action="store_true", help="Skip SHA256SUMS verification")
     sp_up.set_defaults(func=_cmd_update)
+
+    sp_un = sub.add_parser("uninstall", help="Uninstall opensmi (CLI and/or TUI) from this machine")
+    sp_un.add_argument("--bin-dir", default=None, help="Bin dir to clean (default: ~/.local/bin)")
+    sp_un.add_argument("--tui-only", action="store_true", help="Remove only opensmi-tui")
+    sp_un.add_argument("--cli-only", action="store_true", help="Remove only opensmi CLI")
+    sp_un.add_argument("--purge-state", action="store_true", help="Also delete state dir (~/.opensmi); requires --yes")
+    sp_un.add_argument("--yes", action="store_true", help="Confirm destructive actions (required for --purge-state)")
+    sp_un.add_argument("--force", action="store_true", help="Force removing opensmi from bin dir even if it doesn't look like our wrapper")
+    sp_un.add_argument("--dry-run", action="store_true", help="Print what would be removed")
+    sp_un.set_defaults(func=_cmd_uninstall)
 
     return p
 
