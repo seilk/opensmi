@@ -9,10 +9,15 @@
 </p>
 
 <p align="center">
+  <a href="README.kr.md">한국어</a>
+</p>
+
+<p align="center">
   <img src="assets/intro_A.png" width="31%" />
   <img src="assets/intro_B.png" width="31%" />
   <img src="assets/intro_C.png" width="31%" />
 </p>
+<p align="center"><sub><em>Screenshots are taken from a real environment; sensitive details (node names, usernames, file paths) have been redacted.</em></sub></p>
 
 ---
 
