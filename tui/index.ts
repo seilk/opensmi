@@ -265,7 +265,27 @@ async function pollCluster(): Promise<void> {
       return;
     }
 
-    snapshot = JSON.parse(stdout) as ClusterSnapshot;
+    const prevSelectedAlias = snapshot?.nodes?.[selectedNodeIdx]?.node_alias;
+
+    const next = JSON.parse(stdout) as ClusterSnapshot;
+    // Keep nodes in a stable A→Z order in the dashboard.
+    next.nodes = [...next.nodes].sort((a, b) =>
+      a.node_alias.localeCompare(b.node_alias, "en", { numeric: true, sensitivity: "base" })
+    );
+
+    snapshot = next;
+
+    // Preserve selection across re-ordering.
+    if (prevSelectedAlias) {
+      const i = snapshot.nodes.findIndex((n) => n.node_alias === prevSelectedAlias);
+      if (i >= 0) selectedNodeIdx = i;
+    }
+    if (snapshot.nodes.length === 0) {
+      selectedNodeIdx = 0;
+    } else if (selectedNodeIdx >= snapshot.nodes.length) {
+      selectedNodeIdx = snapshot.nodes.length - 1;
+    }
+
     lastPollTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
     recomputeKnownUsers();
   } catch (e: any) {
