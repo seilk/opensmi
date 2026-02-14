@@ -56,6 +56,19 @@ opensmi update
 
 If you hit GitHub API rate limits, set `OPENSMI_GITHUB_TOKEN`.
 
+### Uninstall
+
+```bash
+opensmi uninstall           # remove CLI + TUI
+opensmi uninstall --dry-run # preview
+```
+
+To remove state/config too (destructive):
+
+```bash
+opensmi uninstall --purge-state --yes
+```
+
 ---
 
 ## Quick start

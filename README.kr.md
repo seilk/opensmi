@@ -54,6 +54,19 @@ opensmi update
 
 GitHub API rate limit에 걸리면 `OPENSMI_GITHUB_TOKEN`을 설정하세요.
 
+### 제거 (uninstall)
+
+```bash
+opensmi uninstall           # CLI + TUI 제거
+opensmi uninstall --dry-run # 미리보기
+```
+
+state/config까지 삭제하려면(파괴적):
+
+```bash
+opensmi uninstall --purge-state --yes
+```
+
 ---
 
 ## 빠른 시작
