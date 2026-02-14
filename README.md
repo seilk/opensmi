@@ -44,6 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.s
 
 This will place binaries in `~/.local/bin` (and print a PATH hint if needed).
 
+**Requirements:** macOS/Linux, Python 3.8+, SSH access to GPU nodes with `nvidia-smi`.
+
 ### Update
 
 Once installed:
@@ -51,6 +53,8 @@ Once installed:
 ```bash
 opensmi update
 ```
+
+If you hit GitHub API rate limits, set `OPENSMI_GITHUB_TOKEN`.
 
 ---
 
@@ -80,6 +84,7 @@ opensmi
 opensmi poll
 opensmi violations
 opensmi alloc list
+opensmi --help
 ```
 
 ---
