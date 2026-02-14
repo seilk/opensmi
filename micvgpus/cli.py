@@ -544,6 +544,11 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     """Poll periodically, report violations to stdout and optionally Slack."""
     import time
     import urllib.request
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _KST = _tz(_td(hours=9))
+
+    def _kst_time() -> str:
+        return _dt.now(_KST).strftime("%H:%M:%S")
 
     state_dir, cfg = _load_cfg(args)
     interval = int(args.interval)
@@ -590,7 +595,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
             notified = notified & current_keys
 
             if new_viols:
-                ts = time.strftime("%H:%M:%S")
+                ts = _kst_time()
                 lines = [f"[{ts}] ⚠️ {len(new_viols)} new violation(s):"]
                 for v in new_viols:
                     exp = f" (expected: {v.expected})" if v.expected else ""
@@ -601,7 +606,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 print(msg)
                 send_slack(msg)
             else:
-                ts = time.strftime("%H:%M:%S")
+                ts = _kst_time()
                 total = len(viols)
                 if total:
                     print(f"[{ts}] {total} ongoing violation(s), no new.")

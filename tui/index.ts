@@ -4,6 +4,7 @@ import {
   Text,
   BoxRenderable,
   Input,
+  ScrollBox,
   t,
   bold,
   fg,
@@ -65,10 +66,15 @@ let selectedGpuIdx = 0;
 let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" = "dashboard";
 let lastGpuClickKey = "";
 let lastGpuClickAt = 0;
+let lastNodeClickKey = "";
+let lastNodeClickAt = 0;
 let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
 let allocDraftUser = "";
 let allocErrorMsg = "";
 let allocTypingTimer: any = null;
+let allocUserHighlight = "";
+let lastAllocUserClickKey = "";
+let lastAllocUserClickAt = 0;
 let killCtx: { nodeAlias: string; gpuIdx: number; pids: number[]; users: string[] } | null = null;
 let killErrorMsg = "";
 let killOutput = "";
@@ -164,7 +170,7 @@ async function pollCluster(): Promise<void> {
     }
 
     snapshot = JSON.parse(stdout) as ClusterSnapshot;
-    lastPollTime = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+    lastPollTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
     recomputeKnownUsers();
   } catch (e: any) {
     pollError = e.message || String(e);
@@ -244,6 +250,7 @@ function setStatus(msg: string, ttlMs: number = 3000) {
 function openAllocModal(node: NodeSnapshot, gpuIdx: number): void {
   allocCtx = { nodeAlias: node.node_alias, gpuIdx };
   allocErrorMsg = "";
+  allocUserHighlight = "";
 
   const existing = getAllocTarget(node.node_alias, gpuIdx);
   let prefill = existing || "";
@@ -405,9 +412,20 @@ function renderDashboard() {
           onMouseDown: (e: any) => {
             e.preventDefault?.();
             e.stopPropagation?.();
+
+            const now = Date.now();
+            const clickKey = `NODE:${n.node_alias}`;
+            const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
+            lastNodeClickKey = clickKey;
+            lastNodeClickAt = now;
+
             selectedNodeIdx = ni;
             selectedGpuIdx = 0;
-            screen = "detail";
+
+            if (isDouble) {
+              screen = "detail";
+            }
+
             requestRender?.();
           },
         })
@@ -470,9 +488,20 @@ function renderDashboard() {
         onMouseDown: (e: any) => {
           e.preventDefault?.();
           e.stopPropagation?.();
+
+          const now = Date.now();
+          const clickKey = `NODE:${n.node_alias}`;
+          const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
+          lastNodeClickKey = clickKey;
+          lastNodeClickAt = now;
+
           selectedNodeIdx = ni;
           selectedGpuIdx = 0;
-          screen = "detail";
+
+          if (isDouble) {
+            screen = "detail";
+          }
+
           requestRender?.();
         },
       })
@@ -670,12 +699,16 @@ function renderAlloc() {
   const currentAllocStr = currentAlloc ? currentAlloc : "(none)";
   const liveStr = liveUsers.length ? liveUsers.join(", ") : "(idle)";
 
-  const filter = allocDraftUser.trim().toLowerCase();
   const universe = knownUsers.length ? knownUsers : liveUsers;
-  const filteredUsers = (filter
-    ? universe.filter((u) => u.toLowerCase().includes(filter))
-    : universe
-  ).slice(0, 18);
+  const universeSet = new Set(universe);
+
+  // For multi-user draft (comma-separated), filter only by the last segment being typed.
+  const lastSegRaw = (allocDraftUser.split(",").pop() || "");
+  const filterToken = lastSegRaw.trim().toLowerCase();
+
+  const filteredUsers = filterToken
+    ? universe.filter((u) => u.toLowerCase().includes(filterToken))
+    : universe;
 
   const input = Input({
     id: "alloc-user-input",
@@ -699,7 +732,9 @@ function renderAlloc() {
   } else if (!filteredUsers.length) {
     userRows.push(Text({ content: "(no matches)", fg: C.textDim }));
   } else {
-    const currentSet = new Set(_parseTargets(allocDraftUser));
+    const currentSet = new Set(
+      _parseTargets(allocDraftUser).filter((t) => t === "*" || universeSet.has(t))
+    );
 
     for (const u of filteredUsers) {
       const isSel = currentSet.has(u);
@@ -710,7 +745,7 @@ function renderAlloc() {
             height: 1,
             position: "relative",
             paddingLeft: 1,
-            backgroundColor: isSel ? "#3b4261" : C.bg,
+            backgroundColor: allocUserHighlight === u ? "#33467c" : isSel ? "#3b4261" : C.bg,
           },
           Text({ content: `${isSel ? "▸" : " "} ${u}`, fg: isSel ? "#ffffff" : C.text }),
           // Overlay to make the row reliably clickable without triggering text selection.
@@ -725,8 +760,25 @@ function renderAlloc() {
               _e.preventDefault?.();
               _e.stopPropagation?.();
 
+              // Single click: highlight only. Double click: toggle selection (type).
+              const now = Date.now();
+              const clickKey = `USER:${u}`;
+              const isDouble = clickKey === lastAllocUserClickKey && now - lastAllocUserClickAt < 350;
+              lastAllocUserClickKey = clickKey;
+              lastAllocUserClickAt = now;
+
+              allocUserHighlight = u;
+
+              if (!isDouble) {
+                requestRender?.();
+                return;
+              }
+
               // Toggle user in the draft list (multi-user allocations).
-              const set = new Set(_parseTargets(allocDraftUser));
+              // Drop any partial/nonexistent tokens (e.g. while typing after a comma).
+              const set = new Set(
+                _parseTargets(allocDraftUser).filter((t) => t === "*" || universeSet.has(t))
+              );
               if (set.has(u)) set.delete(u);
               else set.add(u);
 
@@ -741,23 +793,39 @@ function renderAlloc() {
   }
 
   const matchesLine = universe.length
-    ? `Filter: ${filter || "(empty)"}   Matches: ${filteredUsers.length}/${universe.length}`
+    ? `Filter: ${filterToken || "(empty)"}   Matches: ${filteredUsers.length}/${universe.length}`
     : "Filter: (no users)";
 
   const leftPanel = Box(
     {
       width: 24,
+      height: "100%",
       flexDirection: "column",
       gap: 0,
       backgroundColor: C.bgAlt,
       padding: 1,
+      overflow: "hidden",
     },
-    Text({ content: "Users (click)", fg: C.textDim }),
-    ...userRows
+    Text({ content: "Users (scroll)  Click=highlight  DblClick=toggle", fg: C.textDim }),
+    ScrollBox(
+      {
+        id: "alloc-users-scroll",
+        flexGrow: 1,
+        width: "100%",
+        overflow: "hidden",
+        scrollY: true,
+        // Force scrollbar visible so it's obvious there are more users.
+        verticalScrollbarOptions: {
+          visible: true,
+          showArrows: false,
+        },
+      },
+      ...userRows
+    )
   );
 
   const rightPanel = Box(
-    { flexDirection: "column", flexGrow: 1, gap: 1 },
+    { flexDirection: "column", flexGrow: 1, height: "100%", gap: 1, overflow: "hidden" },
     Text({ content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}`, fg: C.cyan }),
     Text({ content: `Current allocation: ${currentAllocStr}`, fg: C.textDim }),
     Text({ content: `Live users: ${liveStr}`, fg: C.textDim }),
@@ -772,6 +840,7 @@ function renderAlloc() {
   const modal = Box(
     {
       width: 92,
+      maxHeight: "90%",
       borderStyle: "rounded",
       borderColor: C.border,
       title: "Allocate GPU",
@@ -780,8 +849,13 @@ function renderAlloc() {
       flexDirection: "column",
       gap: 1,
       backgroundColor: C.bg,
+      overflow: "hidden",
     },
-    Box({ flexDirection: "row", gap: 2 }, leftPanel, rightPanel),
+    Box(
+      { flexDirection: "row", gap: 2, flexGrow: 1, width: "100%", overflow: "hidden" },
+      leftPanel,
+      rightPanel
+    ),
     Text({ content: "Tip: click users to toggle. Multi-user saved as comma-separated list.", fg: C.textDim })
   );
 
@@ -1151,7 +1225,11 @@ async function main() {
         const last = (parts.pop() || "").trim();
         const f = last.toLowerCase();
         const universe = knownUsers.length ? knownUsers : [];
-        const match = (f ? universe.find((u) => u.toLowerCase().includes(f)) : universe[0]) || "";
+        // Prefer prefix matches for autocomplete, fall back to substring matches.
+        const match =
+          (f ? universe.find((u) => u.toLowerCase().startsWith(f)) : universe[0]) ||
+          (f ? universe.find((u) => u.toLowerCase().includes(f)) : "") ||
+          "";
 
         if (match) {
           const prefix = parts.map((p) => p.trim()).filter(Boolean);

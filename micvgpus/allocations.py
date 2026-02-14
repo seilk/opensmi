@@ -5,7 +5,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -13,8 +13,11 @@ from typing import Dict, List, Optional
 ALLOCS_VERSION = 1
 
 
+_KST = timezone(timedelta(hours=9))
+
+
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(_KST).isoformat(timespec="seconds")
 
 
 @dataclass

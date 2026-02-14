@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .models import ClusterConfig, ClusterSnapshot, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot
@@ -57,8 +57,11 @@ class SSHError(RuntimeError):
     pass
 
 
+_KST = timezone(timedelta(hours=9))
+
+
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(_KST).isoformat(timespec="seconds")
 
 
 async def _ssh_run(node: NodeConfig, script: str, timeout_s: int) -> Tuple[int, str, str]:
