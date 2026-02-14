@@ -79,6 +79,24 @@ done
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   echo "python not found: $PYTHON" >&2
+  echo "Tip: install Python 3.8+ or set OPENSMI_PYTHON (e.g. OPENSMI_PYTHON=python3.11)." >&2
+  exit 2
+fi
+
+# Require Python 3.8+ (CLI is stdlib-only but uses modern Python features).
+PY_VER="$($PYTHON - <<'PY'
+import sys
+print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")
+PY
+)"
+$PYTHON - <<'PY'
+import sys
+sys.exit(0 if sys.version_info >= (3,8) else 1)
+PY
+if [[ $? -ne 0 ]]; then
+  echo "opensmi requires Python 3.8+ (detected: ${PYTHON} ${PY_VER})." >&2
+  echo "Install a newer Python or re-run with OPENSMI_PYTHON pointing to it." >&2
+  echo "Example: OPENSMI_PYTHON=python3.11 curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash" >&2
   exit 2
 fi
 
@@ -185,8 +203,16 @@ echo "Bin dir: ${BIN_DIR}"
 
 fetch "$API_URL" "$TMP/release.json"
 
-# Parse assets via Python (no jq)
-mapfile -t _RELINFO < <(
+# Basic sanity check: empty or non-JSON responses happen on some networks/proxies.
+if [[ ! -s "$TMP/release.json" ]]; then
+  echo "Failed to fetch GitHub release metadata (empty response)." >&2
+  echo "URL: $API_URL" >&2
+  echo "If you're behind a proxy/firewall or hit rate limits, try setting OPENSMI_GITHUB_TOKEN." >&2
+  exit 2
+fi
+
+# Parse assets via Python (no jq). Keep this robust: fail with a helpful error.
+_RELINFO_STR="$(
   "$PYTHON" - "$OS" "$ARCH" < "$TMP/release.json" <<'PY'
 import json, sys
 os = sys.argv[1]
@@ -219,13 +245,21 @@ print(wheel_url)
 print(pyz_url)
 print(sha_url)
 PY
-)
+)" || {
+  echo "Failed to parse GitHub release metadata (not valid JSON?)." >&2
+  echo "URL: $API_URL" >&2
+  echo "First bytes:" >&2
+  head -c 200 "$TMP/release.json" | tr '\n' ' ' >&2 || true
+  echo >&2
+  echo "Tip: set OPENSMI_GITHUB_TOKEN to avoid API rate limits." >&2
+  exit 2
+}
 
-TAG_NAME="${_RELINFO[0]:-}"
-TUI_URL="${_RELINFO[1]:-}"
-WHEEL_URL="${_RELINFO[2]:-}"
-PYZ_URL="${_RELINFO[3]:-}"
-SHA_URL="${_RELINFO[4]:-}"
+TAG_NAME="$(printf '%s\n' "$_RELINFO_STR" | sed -n '1p')"
+TUI_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '2p')"
+WHEEL_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '3p')"
+PYZ_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '4p')"
+SHA_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '5p')"
 
 if [[ -z "$TAG_NAME" ]]; then
   echo "Failed to detect release tag_name (bad API response?)" >&2
