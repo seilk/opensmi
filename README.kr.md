@@ -8,6 +8,7 @@
   <img src="assets/intro_B.png" width="31%" />
   <img src="assets/intro_C.png" width="31%" />
 </p>
+<p align="center"><sub><em>스크린샷은 실제 환경에서 촬영되었으며, 민감한 정보(노드명, 사용자명, 파일 경로)는 Nano Banana로 마스킹 처리했습니다.</em></sub></p>
 
 ## 핵심 기능
 
