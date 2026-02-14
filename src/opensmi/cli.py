@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import __version__
 from .allocations import Allocation, load_allocations, remove_allocation, save_allocations, upsert_allocation
 from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
 from .config import load_config, save_default_config
@@ -868,6 +869,7 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
+    p.add_argument("--version", action="version", version=f"opensmi {__version__}")
     p.add_argument("--state-dir", default=None, help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)")
     p.add_argument(
         "--config",
