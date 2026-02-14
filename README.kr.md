@@ -1,22 +1,36 @@
-# opensmi
+<p align="center">
+  <h1 align="center">opensmi</h1>
+  <p align="center">에이전트/데몬 없이 동작하는 멀티노드 GPU 할당 관리자 (SSH + nvidia-smi only)</p>
+  <p align="center">
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+    <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-blue.svg">
+    <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
+  </p>
+</p>
 
-에이전트/데몬 없이(=GPU 노드에 아무것도 설치하지 않고) **SSH + `nvidia-smi`만**으로
-멀티노드 GPU 사용 현황을 모니터링하고 할당(Allocation) 정책을 적용하는 터미널 기반 도구입니다.
+<p align="center">
+  <a href="README.md">English</a>
+</p>
 
-<p>
+<p align="center">
   <img src="assets/intro_A.png" width="31%" />
   <img src="assets/intro_B.png" width="31%" />
   <img src="assets/intro_C.png" width="31%" />
 </p>
 <p align="center"><sub><em>스크린샷은 실제 환경에서 촬영되었으며, 민감한 정보(노드명, 사용자명, 파일 경로)는 Nano Banana로 마스킹 처리했습니다.</em></sub></p>
 
-## 핵심 기능
+---
 
-- **TUI**: 대시보드/노드 상세/할당·해제/위반자 kill
+`opensmi`는 GPU 노드에 아무것도 설치하지 않고, 관리자 터미널에서 SSH로 접속해 `nvidia-smi`를 읽어
+클러스터 GPU 사용을 모니터링하고 할당(Allocation) 정책을 적용합니다.
+
+## 제공 기능
+
+- **Interactive TUI**: 대시보드, 노드 상세, 할당/해제, 위반자 kill
 - **CLI**: poll, allocations, violations, watch (Slack 알림)
 - **정책**: 할당되지 않은 GPU 사용 = 위반, `*` = 모두에게 오픈
 - **GPU 노드 무설치** (agentless)
-- **CLI는 Python 표준 라이브러리만 사용** (zero dependencies)
+- **Python 표준 라이브러리만 사용** (CLI zero dependencies)
 
 ---
 
@@ -28,7 +42,7 @@
 curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash
 ```
 
-기본으로 `~/.local/bin`에 설치됩니다.
+기본 설치 경로는 `~/.local/bin`이며, 필요 시 PATH 안내를 출력합니다.
 
 ### 업데이트
 
@@ -70,7 +84,7 @@ opensmi alloc list
 
 ## 설정 (JSON)
 
-템플릿에서 시작하세요:
+설정은 plain JSON 입니다. 템플릿에서 시작하세요:
 
 - [`opensmi.example.json`](opensmi.example.json)
 
