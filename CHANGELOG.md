@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-02-15
+
+### Added
+- Node detail: show per-PID runtime (best-effort from `/proc`)
+
 ## [0.1.0] - 2026-02-15
 
 ### Added
@@ -18,4 +23,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `watch` (Slack webhook notifications)
 - TUI (Bun + OpenTUI): dashboard, node detail, allocation editor, kill action
 
+[0.1.1]: https://github.com/seilk/opensmi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/seilk/opensmi/releases/tag/v0.1.0
