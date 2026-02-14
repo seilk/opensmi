@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Python tooling
+.mypy_cache/
+.pytest_cache/
+ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# TUI / Node
+**/node_modules/
+**/.bun/
+
+# Local state (if you place it inside the repo)
+.micvgpus/
+latest_snapshot.json
+
+# IDE / coding-agent
+.cursor/
+CLAUDE.md
+
+# Misc
+*.log

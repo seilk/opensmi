@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "micvgpus"
+version = "0.1.0"
+description = "Agentless multi-node GPU allocation manager (SSH + nvidia-smi) with CLI + TUI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+
+authors = [
+  { name = "Seil" }
+]
+
+keywords = [
+  "gpu",
+  "tui",
+  "nvidia",
+  "nvidia-smi",
+  "ssh",
+  "cluster",
+  "allocation",
+  "hpc"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Monitoring",
+  "Topic :: System :: Systems Administration",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+]
+
+[project.scripts]
+micvgpus = "micvgpus.cli:main"
+
+[project.urls]
+# Update these after pushing to GitHub
+Homepage = "https://github.com/<org-or-user>/micvgpus"
+Repository = "https://github.com/<org-or-user>/micvgpus"
+Issues = "https://github.com/<org-or-user>/micvgpus/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["micvgpus*"]

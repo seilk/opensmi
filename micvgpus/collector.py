@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+
+from .models import ClusterConfig, ClusterSnapshot, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot
+
+
+REMOTE_SCRIPT = r"""#!/usr/bin/env bash
+set -u
+
+echo "__MICVGPUS_BEGIN__"
+
+# meta
+hn=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)
+echo "hostname=${hn}"
+
+if [ -f /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  echo "os=${PRETTY_NAME:-${NAME:-unknown}}"
+else
+  echo "os=unknown"
+fi
+
+echo "__GPUS__"
+(nvidia-smi --query-gpu=index,uuid,name,memory.total --format=csv,noheader,nounits 2>/dev/null) || true
+
+echo "__PROCS__"
+(nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null) || true
+
+echo "__OWNERS__"
+(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sort -u) | while read -r pid; do
+  [ -n "$pid" ] || continue
+  user=$(stat -c "%U" "/proc/$pid" 2>/dev/null || echo unknown)
+  echo "$pid,$user"
+done
+
+echo "__MICVGPUS_END__"
+"""
+
+
+REMOTE_USERS_SCRIPT = r"""#!/usr/bin/env bash
+set -u
+
+echo "__MICVGPUS_USERS_BEGIN__"
+(getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null || true) | sed 's/:.*//' | sort -u
+echo "__MICVGPUS_USERS_END__"
+"""
+
+
+class SSHError(RuntimeError):
+    pass
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+async def _ssh_run(node: NodeConfig, script: str, timeout_s: int) -> Tuple[int, str, str]:
+    target = f"{node.user}@{node.address}"
+
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        f"ConnectTimeout={node.connect_timeout_s}",
+    ]
+    if node.port and int(node.port) != 22:
+        cmd += ["-p", str(int(node.port))]
+
+    cmd += [target, "bash", "-s"]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(script.encode("utf-8")), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise SSHError(f"Timeout after {timeout_s}s")
+
+    rc = int(proc.returncode or 0)
+    stdout = stdout_b.decode("utf-8", errors="replace")
+    stderr = stderr_b.decode("utf-8", errors="replace")
+    return rc, stdout, stderr
+
+
+def _find_section(lines: List[str], marker: str) -> int:
+    for i, line in enumerate(lines):
+        if line.strip() == marker:
+            return i
+    return -1
+
+
+def _parse_csv_lines(lines: List[str]) -> List[List[str]]:
+    out: List[List[str]] = []
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            continue
+        # nvidia-smi sometimes prints: "No running processes found"
+        if s.lower().startswith("no running processes"):
+            continue
+        reader = csv.reader(io.StringIO(s))
+        row = next(reader)
+        out.append([c.strip() for c in row])
+    return out
+
+
+def _parse_users_output(stdout: str) -> List[str]:
+    lines = stdout.splitlines()
+
+    begin_i = _find_section(lines, "__MICVGPUS_USERS_BEGIN__")
+    end_i = _find_section(lines, "__MICVGPUS_USERS_END__")
+    if begin_i == -1 or end_i == -1 or end_i <= begin_i:
+        # Best-effort fallback: treat entire stdout as username list
+        begin_i, end_i = 0, len(lines)
+
+    users: List[str] = []
+    seen = set()
+    for raw in lines[begin_i + 1 : end_i]:
+        u = raw.strip()
+        if not u:
+            continue
+        if u in seen:
+            continue
+        seen.add(u)
+        users.append(u)
+
+    return users
+
+
+async def fetch_users(config: ClusterConfig, *, timeout_s: int = 10) -> List[str]:
+    # Union usernames across nodes. No sudo required.
+    tasks = [_ssh_run(n, REMOTE_USERS_SCRIPT, timeout_s=timeout_s) for n in config.nodes]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    out: List[str] = []
+    seen = set()
+    for r in results:
+        if isinstance(r, Exception):
+            continue
+        rc, stdout, _stderr = r
+        if int(rc) != 0:
+            continue
+        for u in _parse_users_output(stdout):
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append(u)
+
+    out.sort()
+    return out
+
+
+def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str], List[GPUInfo], List[GPUProcess]]:
+    lines = stdout.splitlines()
+
+    begin_i = _find_section(lines, "__MICVGPUS_BEGIN__")
+    end_i = _find_section(lines, "__MICVGPUS_END__")
+    if begin_i == -1 or end_i == -1 or end_i <= begin_i:
+        raise ValueError("Unexpected remote output (missing begin/end markers)")
+
+    gpus_i = _find_section(lines, "__GPUS__")
+    procs_i = _find_section(lines, "__PROCS__")
+    owners_i = _find_section(lines, "__OWNERS__")
+    if gpus_i == -1 or procs_i == -1 or owners_i == -1:
+        raise ValueError("Unexpected remote output (missing section markers)")
+
+    meta_lines = lines[begin_i + 1 : gpus_i]
+    gpu_lines = lines[gpus_i + 1 : procs_i]
+    proc_lines = lines[procs_i + 1 : owners_i]
+    owner_lines = lines[owners_i + 1 : end_i]
+
+    meta: Dict[str, str] = {}
+    for raw in meta_lines:
+        s = raw.strip()
+        if not s or "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        meta[k.strip()] = v.strip()
+
+    gpus: List[GPUInfo] = []
+    for row in _parse_csv_lines(gpu_lines):
+        # index, uuid, name, memory.total
+        if len(row) < 4:
+            continue
+        try:
+            idx = int(row[0])
+        except ValueError:
+            continue
+        mem: Optional[int]
+        try:
+            mem = int(row[3])
+        except Exception:
+            mem = None
+        gpus.append(GPUInfo(index=idx, uuid=row[1], name=row[2], memory_total_mib=mem))
+
+    owners: Dict[int, str] = {}
+    for row in _parse_csv_lines(owner_lines):
+        if len(row) < 2:
+            continue
+        try:
+            pid = int(row[0])
+        except ValueError:
+            continue
+        owners[pid] = row[1]
+
+    procs: List[GPUProcess] = []
+    for row in _parse_csv_lines(proc_lines):
+        # gpu_uuid,pid,process_name,used_memory
+        if len(row) < 4:
+            continue
+        try:
+            pid = int(row[1])
+        except ValueError:
+            continue
+        used: Optional[int]
+        try:
+            used = int(row[3])
+        except Exception:
+            used = None
+
+        procs.append(
+            GPUProcess(
+                gpu_uuid=row[0],
+                pid=pid,
+                process_name=row[2],
+                used_memory_mib=used,
+                user=owners.get(pid, "unknown"),
+            )
+        )
+
+    return meta, gpus, procs
+
+
+async def poll_node(node: NodeConfig, timeout_s: int) -> NodeSnapshot:
+    snap = NodeSnapshot(node_alias=node.alias, address=node.address)
+    snap.timestamp = _now_iso()
+
+    try:
+        rc, stdout, stderr = await _ssh_run(node, REMOTE_SCRIPT, timeout_s=timeout_s)
+        if rc != 0:
+            # Some SSH failures return rc=255
+            err = (stderr.strip() or stdout.strip() or f"ssh exited {rc}")
+            raise SSHError(err)
+
+        meta, gpus, procs = _parse_remote_output(node, stdout)
+        snap.hostname = meta.get("hostname")
+        snap.os = meta.get("os")
+        snap.gpus = gpus
+        snap.processes = procs
+
+    except Exception as e:
+        snap.error = str(e)
+
+    return snap
+
+
+async def poll_cluster(config: ClusterConfig, *, timeout_s: int = 15) -> ClusterSnapshot:
+    tasks = [poll_node(n, timeout_s=timeout_s) for n in config.nodes]
+    nodes = await asyncio.gather(*tasks)
+
+    return ClusterSnapshot(
+        cluster_name=config.cluster_name,
+        timestamp=_now_iso(),
+        nodes=nodes,
+    )
+
+
+def snapshot_to_jsonable(snapshot: ClusterSnapshot) -> Dict[str, object]:
+    return asdict(snapshot)
