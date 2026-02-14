@@ -15,10 +15,10 @@ def read_pyproject_version() -> str:
 
 
 def read_init_version() -> str:
-    txt = (ROOT / "opensmi" / "__init__.py").read_text(encoding="utf-8")
+    txt = (ROOT / "src" / "opensmi" / "__init__.py").read_text(encoding="utf-8")
     m = re.search(r"^__version__\s*=\s*\"([^\"]+)\"\s*$", txt, re.MULTILINE)
     if not m:
-        raise SystemExit("Could not find __version__ in opensmi/__init__.py")
+        raise SystemExit("Could not find __version__ in src/opensmi/__init__.py")
     return m.group(1)
 
 

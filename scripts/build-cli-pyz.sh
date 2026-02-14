@@ -9,7 +9,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
 
 # Copy the package
-cp -R "$ROOT_DIR/opensmi" "$BUILD_DIR/opensmi"
+cp -R "$ROOT_DIR/src/opensmi" "$BUILD_DIR/opensmi"
 
 # Add a top-level __main__.py for zipapp
 cat > "$BUILD_DIR/__main__.py" <<'PY'

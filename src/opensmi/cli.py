@@ -11,7 +11,7 @@ from typing import Optional
 from .allocations import Allocation, load_allocations, remove_allocation, save_allocations, upsert_allocation
 from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
 from .config import load_config, save_default_config
-from .sshutil import SSHRunError, ssh_bash_script
+from .sshutil import SSHRunError, ssh_bash_script, ssh_run
 from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
 from .update import UpdateError, update as update_release
@@ -22,7 +22,7 @@ def _current_operator() -> str:
     return os.environ.get("SUDO_USER") or os.environ.get("USER") or "unknown"
 
 
-def _is_admin(cfg) -> bool:
+def _is_config_admin(cfg) -> bool:
     admins = dict(getattr(cfg, "admins", {}) or {})
     master = str(admins.get("master") or "").strip()
     members = admins.get("members")
@@ -42,23 +42,86 @@ def _is_admin(cfg) -> bool:
     return op in set(members_list)
 
 
-def _require_admin(cfg, action: str) -> None:
-    if _is_admin(cfg):
+def _remote_sudo_groups(cfg) -> set[str]:
+    admins = dict(getattr(cfg, "admins", {}) or {})
+    raw = admins.get("remote_sudo_groups")
+    if isinstance(raw, str):
+        groups = [raw]
+    elif isinstance(raw, list):
+        groups = [str(x) for x in raw]
+    else:
+        groups = ["sudo", "wheel"]
+
+    return {g.strip() for g in groups if str(g).strip()}
+
+
+def _find_node(cfg, alias: str):
+    for n in cfg.nodes:
+        if n.alias == alias:
+            return n
+    raise ValueError(f"Unknown node alias: {alias}")
+
+
+def _check_remote_sudo_group(cfg, node_alias: str, *, timeout_s: int = 8) -> tuple[bool, list[str]]:
+    """Return (ok, groups) for the SSH user on that node."""
+    node = _find_node(cfg, node_alias)
+
+    rc, stdout, stderr = asyncio.run(ssh_run(node, ["id", "-nG"], timeout_s=timeout_s))
+    if rc != 0:
+        raise SSHRunError(stderr.strip() or f"id -nG failed (rc={rc})")
+
+    groups = [g for g in stdout.strip().split() if g]
+    required = _remote_sudo_groups(cfg)
+    ok = any(g in required for g in groups)
+    return ok, groups
+
+
+def _require_admin(cfg, action: str, *, node_aliases: Optional[list[str]] = None) -> None:
+    """Require admin.
+
+    Policy:
+      - Must be config-admin (admins.master/members)
+      - Must have remote sudo-group membership on target nodes (admins.remote_sudo_groups)
+    """
+    if not _is_config_admin(cfg):
+        op = _current_operator()
+        admins = dict(getattr(cfg, "admins", {}) or {})
+        master = str(admins.get("master") or "").strip()
+        members = admins.get("members")
+        members_list = members if isinstance(members, list) else []
+
+        print(
+            f"Permission denied: '{op}' is not an admin for action '{action}'.\n"
+            f"Configure admins in opensmi.json (admins.master / admins.members).\n"
+            f"Current: master={master!r}, members={members_list!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+
+    if not node_aliases:
         return
 
-    op = _current_operator()
-    admins = dict(getattr(cfg, "admins", {}) or {})
-    master = str(admins.get("master") or "").strip()
-    members = admins.get("members")
-    members_list = members if isinstance(members, list) else []
+    required = ",".join(sorted(_remote_sudo_groups(cfg)))
+    failures: list[str] = []
 
-    print(
-        f"Permission denied: '{op}' is not an admin for action '{action}'.\n"
-        f"Configure admins in opensmi.json (admins.master / admins.members).\n"
-        f"Current: master={master!r}, members={members_list!r}",
-        file=sys.stderr,
-    )
-    raise SystemExit(3)
+    for alias in node_aliases:
+        try:
+            ok, groups = _check_remote_sudo_group(cfg, alias)
+        except Exception as e:
+            failures.append(f"{alias} (check failed: {e})")
+            continue
+
+        if not ok:
+            failures.append(f"{alias} (groups: {' '.join(groups)})")
+
+    if failures:
+        print(
+            "Permission denied: admin actions require the SSH user to be in a sudo-capable group on the target node(s).\n"
+            f"Required groups: {required}\n"
+            "Failing nodes:\n  - " + "\n  - ".join(failures),
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -380,7 +443,7 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
     from .allocations import _now_iso
 
     state_dir, cfg = _load_cfg(args)
-    _require_admin(cfg, "alloc set")
+    _require_admin(cfg, "alloc set", node_aliases=[args.node])
 
     ensure_state_dir(state_dir)
 
@@ -401,7 +464,7 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
 
 def _cmd_alloc_clear(args: argparse.Namespace) -> int:
     state_dir, cfg = _load_cfg(args)
-    _require_admin(cfg, "alloc clear")
+    _require_admin(cfg, "alloc clear", node_aliases=[args.node])
 
     allocs = load_allocations(state_dir)
     before = len(allocs)
@@ -438,16 +501,9 @@ def _cmd_violations(args: argparse.Namespace) -> int:
 
 # ── kill ───────────────────────────────────────────────────────────
 
-def _find_node(cfg, alias: str):
-    for n in cfg.nodes:
-        if n.alias == alias:
-            return n
-    raise ValueError(f"Unknown node alias: {alias}")
-
-
 def _cmd_kill(args: argparse.Namespace) -> int:
     _state_dir, cfg = _load_cfg(args)
-    _require_admin(cfg, "kill")
+    _require_admin(cfg, "kill", node_aliases=[args.node])
 
     try:
         node = _find_node(cfg, args.node)
@@ -556,7 +612,7 @@ def _cmd_alloc_seed(args: argparse.Namespace) -> int:
     from .allocations import _now_iso
 
     state_dir, cfg = _load_cfg(args)
-    _require_admin(cfg, "alloc seed")
+    _require_admin(cfg, "alloc seed", node_aliases=[n.alias for n in cfg.nodes])
     ensure_state_dir(state_dir)
 
     cluster_snap = asyncio.run(poll_cluster(cfg, timeout_s=int(args.timeout)))
@@ -715,6 +771,37 @@ def _cmd_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sudo_check(args: argparse.Namespace) -> int:
+    _state_dir, cfg = _load_cfg(args)
+
+    try:
+        ok, groups = _check_remote_sudo_group(cfg, args.node, timeout_s=int(args.timeout))
+    except Exception as e:
+        if args.json:
+            print(json.dumps({"node": args.node, "ok": False, "error": str(e)}, indent=2))
+        else:
+            print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "node": args.node,
+                    "ok": bool(ok),
+                    "groups": groups,
+                    "required_groups": sorted(_remote_sudo_groups(cfg)),
+                },
+                indent=2,
+            )
+        )
+    else:
+        status = "OK" if ok else "NO"
+        print(f"{args.node}: {status} (groups: {' '.join(groups)})")
+
+    return 0
+
+
 def _cmd_update(args: argparse.Namespace) -> int:
     repo = args.repo or os.environ.get("OPENSMI_REPO") or "seil/opensmi"
 
@@ -833,6 +920,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_u.add_argument("--timeout", default=10, type=int, help="Per-node timeout seconds")
     sp_u.add_argument("--json", action="store_true", help="Print JSON")
     sp_u.set_defaults(func=_cmd_users)
+
+    sp_sc = sub.add_parser("sudo-check", help="Check if the SSH user is in a sudo-capable group on a node")
+    sp_sc.add_argument("node", help="Node alias")
+    sp_sc.add_argument("--timeout", default=8, type=int, help="SSH timeout seconds")
+    sp_sc.add_argument("--json", action="store_true", help="Print JSON")
+    sp_sc.set_defaults(func=_cmd_sudo_check)
 
     sp_up = sub.add_parser("update", help="Update opensmi (CLI and/or TUI) from GitHub Releases")
     sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seil/opensmi)")

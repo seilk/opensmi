@@ -41,8 +41,11 @@ echo "== Python checks =="
 # Ensure version consistency
 "$python_cmd" scripts/verify_version.py
 
+# Ensure src-layout is importable for local dev runs
+export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
+
 # Bytecode compile
-"$python_cmd" -m compileall -q opensmi
+"$python_cmd" -m compileall -q src/opensmi
 
 # Unit tests (stdlib)
 "$python_cmd" -m unittest -v

@@ -28,7 +28,7 @@ typecheck:
 	cd tui && bun install --frozen-lockfile && bun run tsc --noEmit
 
 test:
-	python3 -m unittest -v
+	PYTHONPATH=src python3 -m unittest -v
 
 check:
 	./scripts/check.sh

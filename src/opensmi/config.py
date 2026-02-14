@@ -24,6 +24,9 @@ def default_config_data() -> Dict[str, Any]:
         "admins": {
             "master": "ubuntu",
             "members": ["ubuntu"],
+            # Additional admin hardening: require the SSH user to be in one of these groups on the node.
+            # This is checked on-demand for alloc/kill actions.
+            "remote_sudo_groups": ["sudo", "wheel"],
         },
         # Optional: known user list (can stay empty; we can infer from live processes)
         "users": [],

@@ -57,5 +57,5 @@ Repository = "https://github.com/seil/opensmi"
 Issues = "https://github.com/seil/opensmi/issues"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["opensmi*"]

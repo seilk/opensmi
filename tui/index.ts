@@ -88,6 +88,9 @@ let bootLoading = true;
 const OPERATOR = process.env.SUDO_USER || process.env.USER || "unknown";
 let isAdmin = false;
 let adminHint = "";
+let sudoInfoMsg = "";
+let sudoOkByNode: Record<string, boolean | null> = {};
+let sudoCheckingByNode: Record<string, boolean> = {};
 
 // UI helpers
 let statusMsg = "";
@@ -141,7 +144,7 @@ const DEFAULT_BASE_DIR = new URL("..", import.meta.url).pathname;
 const EXEC_DIR = path.dirname(process.execPath);
 
 function _isRepoRoot(p: string): boolean {
-  return existsSync(`${p}/pyproject.toml`) && existsSync(`${p}/opensmi/__init__.py`);
+  return existsSync(`${p}/pyproject.toml`) && existsSync(`${p}/src/opensmi/__init__.py`);
 }
 
 const BASE_DIR_CANDIDATES = [
@@ -170,11 +173,25 @@ function _resolveCliCommand(): { cmd: string[]; cwd: string | undefined } {
 
 const { cmd: OPENSMI, cwd: OPENSMI_CWD } = _resolveCliCommand();
 
+function _spawnEnv(): Record<string, string> {
+  // In src-layout dev mode, ensure python can import opensmi.
+  const env: Record<string, string> = { ...process.env } as any;
+  if (BASE_DIR && OPENSMI[0] === PYTHON) {
+    const add = `${BASE_DIR}/src`;
+    const cur = env.PYTHONPATH || "";
+    env.PYTHONPATH = cur ? `${add}:${cur}` : add;
+  }
+  return env;
+}
+
+const OPENSMI_ENV = _spawnEnv();
+
 async function runOpensmi(
   args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = spawn([...OPENSMI, ...args], {
     cwd: OPENSMI_CWD,
+    env: OPENSMI_ENV,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -233,6 +250,7 @@ async function pollCluster(): Promise<void> {
   try {
     const proc = spawn([...OPENSMI, "poll", "--json"], {
       cwd: OPENSMI_CWD,
+      env: OPENSMI_ENV,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -434,9 +452,64 @@ function renderToast() {
 }
 
 function requireAdminUI(action: string): boolean {
-  if (isAdmin) return true;
-  setStatus(`Admin only: ${action} (${adminHint})`);
-  return false;
+  if (!isAdmin) {
+    setStatus(`Admin only: ${action} (${adminHint})`);
+    return false;
+  }
+
+  if (screen === "detail") {
+    const node = snapshot?.nodes[selectedNodeIdx];
+    const alias = node?.node_alias;
+    if (alias) {
+      const ok = sudoOkByNode[alias];
+      if (ok === false) {
+        setStatus(`Admin requires sudo-group on ${alias}`);
+        return false;
+      }
+      if (ok === null || ok === undefined) {
+        setStatus(`Checking sudo-group on ${alias}…`);
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+async function checkSudoForNode(nodeAlias: string): Promise<void> {
+  if (sudoCheckingByNode[nodeAlias]) return;
+  sudoCheckingByNode[nodeAlias] = true;
+  sudoOkByNode[nodeAlias] = null;
+  requestRender?.();
+
+  try {
+    const { code, stdout, stderr } = await runOpensmi([
+      "sudo-check",
+      nodeAlias,
+      "--json",
+    ]);
+    if (code !== 0) {
+      sudoOkByNode[nodeAlias] = false;
+      sudoInfoMsg = `sudo-check failed on ${nodeAlias}: ${stderr.trim() || `exit ${code}`}`;
+      requestRender?.();
+      return;
+    }
+
+    const data = JSON.parse(stdout) as any;
+    sudoOkByNode[nodeAlias] = !!data.ok;
+    if (!data.ok) {
+      const groups = Array.isArray(data.groups) ? data.groups.join(" ") : "";
+      sudoInfoMsg = `Read-only: SSH user not in sudo group on ${nodeAlias} (groups: ${groups})`;
+    } else {
+      sudoInfoMsg = "";
+    }
+  } catch (e: any) {
+    sudoOkByNode[nodeAlias] = false;
+    sudoInfoMsg = `sudo-check error on ${nodeAlias}: ${e?.message || String(e)}`;
+  } finally {
+    sudoCheckingByNode[nodeAlias] = false;
+    requestRender?.();
+  }
 }
 
 function renderLoadingBadge() {
@@ -552,6 +625,7 @@ function renderDashboard() {
 
             if (isDouble) {
               screen = "detail";
+              void checkSudoForNode(n.node_alias);
             }
 
             requestRender?.();
@@ -628,6 +702,7 @@ function renderDashboard() {
 
           if (isDouble) {
             screen = "detail";
+            void checkSudoForNode(n.node_alias);
           }
 
           requestRender?.();
@@ -778,6 +853,10 @@ function renderDetail() {
         isAdmin
           ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear alloc  [Shift+K] Kill violators  [Esc] Back  [r] Refresh"
           : "[↑↓] GPU  [Esc] Back  [r] Refresh   (read-only)",
+      fg: C.textDim,
+    }),
+    Text({
+      content: adminHint + (sudoInfoMsg ? ` · ${sudoInfoMsg}` : ""),
       fg: C.textDim,
     }),
     Text({ content: statusMsg ? ` ${statusMsg}` : " ", fg: statusMsg ? C.yellow : C.textDim })
@@ -1264,6 +1343,8 @@ async function main() {
       } else if (key.name === "return") {
         screen = "detail";
         selectedGpuIdx = 0;
+        const node = snapshot?.nodes[selectedNodeIdx];
+        if (node) void checkSudoForNode(node.node_alias);
         render();
       } else if (key.name === "r") {
         await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);

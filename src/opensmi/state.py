@@ -38,13 +38,13 @@ def config_path(state_dir: Path) -> Path:
 
 
 def find_repo_root(start: Optional[Path] = None) -> Optional[Path]:
-    """Find opensmi repo root (pyproject.toml + opensmi/).
+    """Find opensmi repo root (pyproject.toml + src/opensmi/).
 
     This is best-effort and only intended for dev/checkouts.
     """
     start = (start or Path.cwd()).expanduser().resolve()
     for p in (start, *start.parents):
-        if (p / "pyproject.toml").exists() and (p / "opensmi").is_dir():
+        if (p / "pyproject.toml").exists() and (p / "src" / "opensmi").is_dir():
             return p
     return None
 
