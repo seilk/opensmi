@@ -1,11 +1,12 @@
 {
-  "name": "micvgpus-tui",
+  "name": "opensmi-tui",
   "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "bun index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:bin": "bun build --compile index.ts --outfile dist/opensmi-tui"
   },
   "dependencies": {
     "@opentui/core": "^0.1.79",

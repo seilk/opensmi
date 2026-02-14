@@ -1,8 +1,8 @@
 import unittest
 
-from micvgpus.models import ClusterConfig, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot, ClusterSnapshot
-from micvgpus.allocations import Allocation
-from micvgpus.violations import find_violations
+from opensmi.models import ClusterConfig, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot, ClusterSnapshot
+from opensmi.allocations import Allocation
+from opensmi.violations import find_violations
 
 
 class TestViolations(unittest.TestCase):

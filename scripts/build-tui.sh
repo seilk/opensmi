@@ -6,13 +6,13 @@ set -euo pipefail
 # so multi-platform builds should use CI (see .github/workflows/release.yml).
 #
 # Usage:
-#   ./scripts/build-tui.sh              # → dist/micvgpus-tui
+#   ./scripts/build-tui.sh              # → dist/opensmi-tui
 #   ./scripts/build-tui.sh custom-name  # → dist/custom-name
 #
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-outname="${1:-micvgpus-tui}"
+outname="${1:-opensmi-tui}"
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 

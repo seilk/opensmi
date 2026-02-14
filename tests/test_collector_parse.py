@@ -1,14 +1,14 @@
 import unittest
 
-from micvgpus.collector import _parse_remote_output
-from micvgpus.models import NodeConfig
+from opensmi.collector import _parse_remote_output
+from opensmi.models import NodeConfig
 
 
 class TestCollectorParse(unittest.TestCase):
     def test_parse_remote_output_basic(self):
         node = NodeConfig(alias="GPU-01", address="10.0.0.1", user="ubuntu")
 
-        stdout = """__MICVGPUS_BEGIN__
+        stdout = """__OPENSMI_BEGIN__
 hostname=testnode
 os=Ubuntu 22.04
 __GPUS__
@@ -17,7 +17,7 @@ __PROCS__
 GPU-uuid0, 123, python, 1000
 __OWNERS__
 123,alice
-__MICVGPUS_END__
+__OPENSMI_END__
 """
 
         meta, gpus, procs = _parse_remote_output(node, stdout)
@@ -35,7 +35,7 @@ __MICVGPUS_END__
     def test_parse_remote_output_no_processes_line(self):
         node = NodeConfig(alias="GPU-01", address="10.0.0.1", user="ubuntu")
 
-        stdout = """__MICVGPUS_BEGIN__
+        stdout = """__OPENSMI_BEGIN__
 hostname=testnode
 os=Ubuntu 22.04
 __GPUS__
@@ -43,7 +43,7 @@ __GPUS__
 __PROCS__
 No running processes found
 __OWNERS__
-__MICVGPUS_END__
+__OPENSMI_END__
 """
 
         _meta, _gpus, procs = _parse_remote_output(node, stdout)

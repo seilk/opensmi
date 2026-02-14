@@ -8,7 +8,7 @@ Instead, contact the maintainers privately (recommended) or use GitHub's private
 
 ## Operational note
 
-`micvgpus` can execute remote commands via SSH (including signaling processes). Treat the machine where you run it as an admin workstation.
+`opensmi` can execute remote commands via SSH (including signaling processes). Treat the machine where you run it as an admin workstation.
 
 - Prefer SSH keys
 - Limit admin access

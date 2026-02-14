@@ -1,11 +1,11 @@
-# micvgpus TUI
+# opensmi TUI
 
-Interactive terminal dashboard for `micvgpus`, built with [Bun](https://bun.sh) and [OpenTUI](https://github.com/nicholasgasior/opentui).
+Interactive terminal dashboard for `opensmi`, built with [Bun](https://bun.sh) and [OpenTUI](https://github.com/nicholasgasior/opentui).
 
 ## Requirements
 
 - [Bun](https://bun.sh) v1.0+
-- A working `micvgpus` Python CLI (the TUI shells out to `python3 -m micvgpus poll --json`)
+- A working `opensmi` Python CLI (the TUI shells out to `python3 -m opensmi poll --json`)
 
 ## Install & Run
 
@@ -39,5 +39,5 @@ make tui
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MICVGPUS_PYTHON` | `python3` | Python interpreter path |
-| `MICVGPUS_STATE_DIR` | `~/.micvgpus` | State directory |
+| `OPENSMI_PYTHON` | `python3` | Python interpreter path |
+| `OPENSMI_STATE_DIR` | `~/.opensmi` | State directory |

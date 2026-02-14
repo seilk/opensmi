@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "micvgpus"
+name = "opensmi"
 version = "0.1.0"
 description = "Agentless multi-node GPU allocation manager (SSH + nvidia-smi) with CLI + TUI"
 readme = "README.md"
@@ -49,14 +49,13 @@ dev = [
 ]
 
 [project.scripts]
-micvgpus = "micvgpus.cli:main"
+opensmi = "opensmi.cli:main"
 
 [project.urls]
-# Update these after pushing to GitHub
-Homepage = "https://github.com/<org-or-user>/micvgpus"
-Repository = "https://github.com/<org-or-user>/micvgpus"
-Issues = "https://github.com/<org-or-user>/micvgpus/issues"
+Homepage = "https://github.com/<org-or-user>/opensmi"
+Repository = "https://github.com/<org-or-user>/opensmi"
+Issues = "https://github.com/<org-or-user>/opensmi/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["micvgpus*"]
+include = ["opensmi*"]

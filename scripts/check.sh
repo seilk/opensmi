@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-python_cmd=${MICVGPUS_PYTHON:-python3}
+python_cmd=${OPENSMI_PYTHON:-python3}
 
 echo "== Python checks =="
 "$python_cmd" -V
@@ -12,7 +12,7 @@ echo "== Python checks =="
 "$python_cmd" scripts/verify_version.py
 
 # Bytecode compile
-"$python_cmd" -m compileall -q micvgpus
+"$python_cmd" -m compileall -q opensmi
 
 # Unit tests (stdlib)
 "$python_cmd" -m unittest -v

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -11,15 +12,59 @@ from .allocations import Allocation, load_allocations, remove_allocation, save_a
 from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
 from .config import load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script
-from .state import config_path, ensure_state_dir, get_state_dir, latest_snapshot_path
+from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
+
+
+def _current_operator() -> str:
+    # Prefer original user when running under sudo.
+    return os.environ.get("SUDO_USER") or os.environ.get("USER") or "unknown"
+
+
+def _is_admin(cfg) -> bool:
+    admins = dict(getattr(cfg, "admins", {}) or {})
+    master = str(admins.get("master") or "").strip()
+    members = admins.get("members")
+    if isinstance(members, str):
+        members_list = [members]
+    elif isinstance(members, list):
+        members_list = [str(x) for x in members]
+    else:
+        members_list = []
+
+    op = _current_operator()
+    if not op:
+        return False
+
+    if master and op == master:
+        return True
+    return op in set(members_list)
+
+
+def _require_admin(cfg, action: str) -> None:
+    if _is_admin(cfg):
+        return
+
+    op = _current_operator()
+    admins = dict(getattr(cfg, "admins", {}) or {})
+    master = str(admins.get("master") or "").strip()
+    members = admins.get("members")
+    members_list = members if isinstance(members, list) else []
+
+    print(
+        f"Permission denied: '{op}' is not an admin for action '{action}'.\n"
+        f"Configure admins in config.json (admins.master / admins.members).\n"
+        f"Current: master={master!r}, members={members_list!r}",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
     state_dir = get_state_dir(args.state_dir)
     ensure_state_dir(state_dir)
 
-    cfg_path = Path(args.config).expanduser().resolve() if args.config else config_path(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
 
     if args.wizard:
         return _init_wizard(cfg_path)
@@ -29,7 +74,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     save_default_config(cfg_path, force=bool(args.force))
     print(f"Config created: {cfg_path}")
-    print(f"Edit it, then run: micvgpus poll")
+    print(f"Edit it, then run: opensmi poll")
     return 0
 
 
@@ -37,9 +82,9 @@ def _init_wizard(cfg_path: Path) -> int:
     """Interactive setup wizard."""
     import json as _json
 
-    print("=== micvgpus init wizard ===\n")
+    print("=== opensmi init wizard ===\n")
 
-    cluster_name = input("Cluster name [MICV]: ").strip() or "MICV"
+    cluster_name = input("Cluster name [GPU-Cluster]: ").strip() or "GPU-Cluster"
 
     nodes = []
     print("\nAdd GPU nodes (empty alias to finish):")
@@ -77,8 +122,8 @@ def _init_wizard(cfg_path: Path) -> int:
     cfg_path.write_text(_json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     print(f"\n✅ Config written: {cfg_path}")
     print(f"Next steps:")
-    print(f"  micvgpus poll            # verify connectivity")
-    print(f"  micvgpus alloc seed      # seed allocations from live usage")
+    print(f"  opensmi poll            # verify connectivity")
+    print(f"  opensmi alloc seed      # seed allocations from live usage")
     return 0
 
 
@@ -168,7 +213,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
 
     cfg_path.write_text(_json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     print(f"\n✅ Config written: {cfg_path}")
-    print(f"Next: micvgpus poll")
+    print(f"Next: opensmi poll")
     return 0
 
 
@@ -237,10 +282,15 @@ def _render_dashboard(cluster_snap) -> str:
 
 def _cmd_poll(args: argparse.Namespace) -> int:
     state_dir = get_state_dir(args.state_dir)
-    cfg_path = Path(args.config).expanduser().resolve() if args.config else config_path(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
 
     if not cfg_path.exists():
-        print(f"Config not found: {cfg_path}\nRun: micvgpus init", file=sys.stderr)
+        print(
+            f"Config not found: {cfg_path}\n"
+            f"Run: opensmi init (writes ./config.json in the repo, or ~/.opensmi/config.json when installed)\n"
+            f"Tip: override with --config or OPENSMI_CONFIG",
+            file=sys.stderr,
+        )
         return 2
 
     cfg = load_config(cfg_path)
@@ -267,7 +317,7 @@ def _load_cfg(args: argparse.Namespace):
     state_dir = get_state_dir(args.state_dir)
     cfg_path = Path(args.config).expanduser().resolve() if args.config else config_path(state_dir)
     if not cfg_path.exists():
-        print(f"Config not found: {cfg_path}\nRun: micvgpus init", file=sys.stderr)
+        print(f"Config not found: {cfg_path}\nRun: opensmi init", file=sys.stderr)
         raise SystemExit(2)
     return state_dir, load_config(cfg_path)
 
@@ -278,7 +328,7 @@ def _cmd_alloc_list(args: argparse.Namespace) -> int:
     state_dir = get_state_dir(args.state_dir)
     allocs = load_allocations(state_dir)
     if not allocs:
-        print("No allocations yet. Use: micvgpus alloc set <NODE> <GPU#> <USER>")
+        print("No allocations yet. Use: opensmi alloc set <NODE> <GPU#> <USER>")
         return 0
 
     header = ["Node", "GPU", "User", "By", "At", "Notes"]
@@ -304,7 +354,9 @@ def _cmd_alloc_list(args: argparse.Namespace) -> int:
 def _cmd_alloc_set(args: argparse.Namespace) -> int:
     from .allocations import _now_iso
 
-    state_dir = get_state_dir(args.state_dir)
+    state_dir, cfg = _load_cfg(args)
+    _require_admin(cfg, "alloc set")
+
     ensure_state_dir(state_dir)
 
     allocs = load_allocations(state_dir)
@@ -312,7 +364,7 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
         node_alias=args.node,
         gpu_index=int(args.gpu),
         target=args.user,
-        assigned_by=args.by or "admin",
+        assigned_by=args.by or _current_operator() or "admin",
         assigned_at=_now_iso(),
         notes=args.notes or "",
     )
@@ -323,7 +375,9 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
 
 
 def _cmd_alloc_clear(args: argparse.Namespace) -> int:
-    state_dir = get_state_dir(args.state_dir)
+    state_dir, cfg = _load_cfg(args)
+    _require_admin(cfg, "alloc clear")
+
     allocs = load_allocations(state_dir)
     before = len(allocs)
     allocs = remove_allocation(allocs, node_alias=args.node, gpu_index=int(args.gpu))
@@ -368,6 +422,7 @@ def _find_node(cfg, alias: str):
 
 def _cmd_kill(args: argparse.Namespace) -> int:
     _state_dir, cfg = _load_cfg(args)
+    _require_admin(cfg, "kill")
 
     try:
         node = _find_node(cfg, args.node)
@@ -400,7 +455,7 @@ use_sudo=\"{sudo_flag}\"
 
 pids=({pids_str})
 
-echo \"__MICVGPUS_KILL_BEGIN__\"
+echo \"__OPENSMI_KILL_BEGIN__\"
 
 for pid in \"${{pids[@]}}\"; do
   owner=$(stat -c \"%U\" \"/proc/$pid\" 2>/dev/null || echo unknown)
@@ -440,7 +495,7 @@ for pid in \"${{pids[@]}}\"; do
 
 done
 
-echo \"__MICVGPUS_KILL_END__\"
+echo \"__OPENSMI_KILL_END__\"
 """
 
     try:
@@ -476,6 +531,7 @@ def _cmd_alloc_seed(args: argparse.Namespace) -> int:
     from .allocations import _now_iso
 
     state_dir, cfg = _load_cfg(args)
+    _require_admin(cfg, "alloc seed")
     ensure_state_dir(state_dir)
 
     cluster_snap = asyncio.run(poll_cluster(cfg, timeout_s=int(args.timeout)))
@@ -635,8 +691,8 @@ def _cmd_users(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="micvgpus", description="MICV GPU allocation manager")
-    p.add_argument("--state-dir", default=None, help="State dir (default: ~/.micvgpus or MICVGPUS_STATE_DIR)")
+    p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
+    p.add_argument("--state-dir", default=None, help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)")
     p.add_argument("--config", default=None, help="Config path (default: <state-dir>/config.json)")
 
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -662,7 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_al.set_defaults(func=_cmd_alloc_list)
 
     sp_as = alloc_sub.add_parser("set", help="Assign a GPU to a user")
-    sp_as.add_argument("node", help="Node alias (e.g. 'MICV#01')")
+    sp_as.add_argument("node", help="Node alias (e.g. 'GPU-01')")
     sp_as.add_argument("gpu", type=int, help="GPU index (0-3)")
     sp_as.add_argument("user", help="Linux username or '*' for everyone")
     sp_as.add_argument("--by", default=None, help="Admin performing the action")
@@ -689,7 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── kill ──
     sp_k = sub.add_parser("kill", help="Signal (kill) remote PIDs on a node")
-    sp_k.add_argument("node", help="Node alias (e.g. MICV#01)")
+    sp_k.add_argument("node", help="Node alias (e.g. GPU-01)")
     sp_k.add_argument("pids", nargs="+", help="One or more PIDs")
     sp_k.add_argument("--signal", default="TERM", help="Signal: TERM|KILL|INT|HUP (default TERM)")
     sp_k.add_argument("--timeout", default=10, type=int, help="SSH timeout seconds")

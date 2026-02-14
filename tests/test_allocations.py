@@ -1,6 +1,6 @@
 import unittest
 
-from micvgpus.allocations import Allocation, remove_allocation, upsert_allocation
+from opensmi.allocations import Allocation, remove_allocation, upsert_allocation
 
 
 class TestAllocations(unittest.TestCase):

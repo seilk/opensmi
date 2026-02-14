@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">micvgpus</h1>
+  <h1 align="center">opensmi</h1>
   <p align="center">
     Agentless multi-node GPU allocation manager — SSH + nvidia-smi only.
   </p>
@@ -13,7 +13,7 @@
 
 ---
 
-**micvgpus** monitors and manages GPU allocations across a multi-node cluster
+**opensmi** monitors and manages GPU allocations across a multi-node cluster
 entirely from your admin terminal. No agents, no daemons, no databases —
 just SSH and `nvidia-smi`.
 
@@ -31,24 +31,24 @@ just SSH and `nvidia-smi`.
 ### Option A: Pre-built binary (recommended for TUI)
 
 Download the latest release for your platform from
-[**GitHub Releases**](https://github.com/<org-or-user>/micvgpus/releases).
+[**GitHub Releases**](https://github.com/<org-or-user>/opensmi/releases).
 
 | Platform | Binary |
 |----------|--------|
-| Linux x64 | `micvgpus-tui-linux-x64` |
-| Linux ARM64 | `micvgpus-tui-linux-arm64` |
-| macOS Apple Silicon | `micvgpus-tui-darwin-arm64` |
-| macOS Intel | `micvgpus-tui-darwin-x64` |
+| Linux x64 | `opensmi-tui-linux-x64` |
+| Linux ARM64 | `opensmi-tui-linux-arm64` |
+| macOS Apple Silicon | `opensmi-tui-darwin-arm64` |
+| macOS Intel | `opensmi-tui-darwin-x64` |
 
 ```bash
 # Example: Linux x64
-curl -fsSL -o micvgpus-tui \
-  https://github.com/<org-or-user>/micvgpus/releases/latest/download/micvgpus-tui-linux-x64
+curl -fsSL -o opensmi-tui \
+  https://github.com/<org-or-user>/opensmi/releases/latest/download/opensmi-tui-linux-x64
 
-chmod +x micvgpus-tui
+chmod +x opensmi-tui
 
 # (optional) move to PATH
-sudo mv micvgpus-tui /usr/local/bin/
+sudo mv opensmi-tui /usr/local/bin/
 ```
 
 > The TUI binary is **self-contained** — no Bun, Node.js, or npm required.
@@ -57,24 +57,24 @@ sudo mv micvgpus-tui /usr/local/bin/
 ### Option B: pip install (CLI only)
 
 ```bash
-pip install micvgpus
+pip install opensmi
 ```
 
 Or install from source:
 
 ```bash
-git clone https://github.com/<org-or-user>/micvgpus.git
-cd micvgpus
+git clone https://github.com/<org-or-user>/opensmi.git
+cd opensmi
 pip install -e .
 ```
 
-> **Zero dependencies.** micvgpus uses only the Python standard library.
+> **Zero dependencies.** opensmi uses only the Python standard library.
 
 ### Option C: From source (CLI + TUI)
 
 ```bash
-git clone https://github.com/<org-or-user>/micvgpus.git
-cd micvgpus
+git clone https://github.com/<org-or-user>/opensmi.git
+cd opensmi
 
 # CLI
 pip install -e .
@@ -86,8 +86,8 @@ cd tui && bun install
 ### Verify installation
 
 ```bash
-micvgpus --help          # CLI
-micvgpus-tui             # TUI (if using pre-built binary)
+opensmi --help          # CLI
+opensmi-tui             # TUI (if using pre-built binary)
 # or
 cd tui && bun index.ts   # TUI (from source)
 ```
@@ -100,57 +100,57 @@ cd tui && bun index.ts   # TUI (from source)
 
 ```bash
 # Interactive wizard (recommended)
-micvgpus init --wizard
+opensmi init --wizard
 
 # Or import from ~/.ssh/config
-micvgpus init --from-ssh-config ~/.ssh/config
+opensmi init --from-ssh-config ~/.ssh/config
 
 # Or generate default template and edit manually
-micvgpus init
-$EDITOR ~/.micvgpus/config.json
+opensmi init
+$EDITOR ~/.opensmi/config.json
 ```
 
 ### 2. Poll your cluster
 
 ```bash
-micvgpus poll          # cluster dashboard (table)
-micvgpus poll --json   # full JSON snapshot
+opensmi poll          # cluster dashboard (table)
+opensmi poll --json   # full JSON snapshot
 ```
 
 ### 3. Allocate GPUs
 
 ```bash
 # Seed allocations from current live GPU usage
-micvgpus alloc seed --by admin
+opensmi alloc seed --by admin
 
 # Manually assign a GPU
-micvgpus alloc set 'GPU-01' 0 alice --by admin
+opensmi alloc set 'GPU-01' 0 alice --by admin
 
 # Assign to multiple users
-micvgpus alloc set 'GPU-01' 0 'alice,bob' --by admin
+opensmi alloc set 'GPU-01' 0 'alice,bob' --by admin
 
 # Open a GPU to everyone
-micvgpus alloc set 'GPU-01' 1 '*' --by admin
+opensmi alloc set 'GPU-01' 1 '*' --by admin
 
 # List / clear
-micvgpus alloc list
-micvgpus alloc clear 'GPU-01' 0
+opensmi alloc list
+opensmi alloc clear 'GPU-01' 0
 ```
 
 ### 4. Monitor
 
 ```bash
 # One-shot violation check
-micvgpus violations
+opensmi violations
 
 # Continuous watch + Slack alerts
-micvgpus watch --interval 60 --slack-webhook https://hooks.slack.com/services/...
+opensmi watch --interval 60 --slack-webhook https://hooks.slack.com/services/...
 ```
 
 ### 5. Launch the TUI
 
 ```bash
-micvgpus-tui                  # pre-built binary
+opensmi-tui                  # pre-built binary
 # or
 cd tui && bun index.ts        # from source
 ```
@@ -173,12 +173,12 @@ cd tui && bun index.ts        # from source
 
 ```
 Admin Terminal
-  ├─ micvgpus CLI (Python)     ← poll, alloc, violations, kill, watch
+  ├─ opensmi CLI (Python)     ← poll, alloc, violations, kill, watch
   ├─ TUI (Bun + OpenTUI)      ← interactive dashboard (or pre-built binary)
   └─ SSH ──→ GPU Nodes         ← agentless data collection
                └─ nvidia-smi   ← GPU & process info
 
-State: ~/.micvgpus/
+State: ~/.opensmi/
   ├─ config.json               ← cluster topology
   └─ allocations.json          ← GPU assignments (persistent)
 ```
@@ -187,7 +187,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Configuration
 
-`~/.micvgpus/config.json`:
+`~/.opensmi/config.json`:
 
 ```jsonc
 {
@@ -208,9 +208,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 Override state directory:
 
 ```bash
-export MICVGPUS_STATE_DIR=/nfs/shared/.micvgpus
+export OPENSMI_STATE_DIR=/nfs/shared/.opensmi
 # or
-micvgpus --state-dir /path/to/state poll
+opensmi --state-dir /path/to/state poll
 ```
 
 ## Requirements
@@ -238,8 +238,8 @@ micvgpus --state-dir /path/to/state poll
 ## Project Structure
 
 ```
-micvgpus/
-├── micvgpus/             # Python CLI package (zero deps)
+opensmi/
+├── opensmi/             # Python CLI package (zero deps)
 │   ├── cli.py            # Argument parser + subcommands
 │   ├── collector.py      # SSH + nvidia-smi polling
 │   ├── allocations.py    # Allocation CRUD
@@ -309,7 +309,7 @@ See [ROADMAP.md](ROADMAP.md).
 
 ## Security
 
-`micvgpus` executes remote commands via SSH. Treat the admin machine accordingly.
+`opensmi` executes remote commands via SSH. Treat the admin machine accordingly.
 See [SECURITY.md](SECURITY.md).
 
 ## License

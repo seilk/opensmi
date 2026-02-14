@@ -16,7 +16,7 @@ build/
 **/.bun/
 
 # Local state (if you place it inside the repo)
-.micvgpus/
+.opensmi/
 latest_snapshot.json
 
 # IDE / coding-agent

@@ -1,6 +1,6 @@
 # Architecture
 
-`micvgpus` is split into two layers:
+`opensmi` is split into two layers:
 
 1. **Backend (Python CLI)**
    - Poll nodes via SSH
@@ -22,13 +22,13 @@ The backend runs a small bash script over SSH:
 
 ## State
 
-Default state dir: `~/.micvgpus/`
+Default state dir: `~/.opensmi/`
 - `config.json` (cluster topology)
 - `allocations.json` (GPU assignments)
 
 State dir is configurable via:
 - `--state-dir`
-- `MICVGPUS_STATE_DIR`
+- `OPENSMI_STATE_DIR`
 
 ## Safety notes
 

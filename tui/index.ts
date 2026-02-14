@@ -11,6 +11,8 @@ import {
   type KeyEvent,
 } from "@opentui/core";
 import { spawn } from "bun";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -80,6 +82,12 @@ let killErrorMsg = "";
 let killOutput = "";
 let killInProgress = false;
 let isPolling = false;
+let bootLoading = true;
+
+// Permissions
+const OPERATOR = process.env.SUDO_USER || process.env.USER || "unknown";
+let isAdmin = false;
+let adminHint = "";
 
 // UI helpers
 let statusMsg = "";
@@ -89,15 +97,65 @@ let systemUsersLoadedAt = 0;
 let knownUsers: string[] = [];
 let requestRender: (() => void) | null = null;
 
+function getStateDir(): string {
+  const homedir = process.env.HOME || "~";
+  return process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
+}
+
+async function loadAdminStatus(): Promise<void> {
+  try {
+    const cfgPath = `${getStateDir()}/config.json`;
+    const raw = await Bun.file(cfgPath).text();
+    const data = JSON.parse(raw) as any;
+
+    const admins = (data.admins || {}) as any;
+    const master = String(admins.master || "").trim();
+    const membersRaw = admins.members;
+    const members = Array.isArray(membersRaw)
+      ? (membersRaw as any[]).map((x) => String(x))
+      : typeof membersRaw === "string"
+        ? [String(membersRaw)]
+        : [];
+
+    isAdmin = (!!master && OPERATOR === master) || members.includes(OPERATOR);
+    adminHint = isAdmin
+      ? `Admin: ${OPERATOR}`
+      : `Read-only (${OPERATOR} not in admins)`;
+  } catch {
+    isAdmin = false;
+    adminHint = `Read-only (${OPERATOR}); config.json missing`;
+  }
+}
+
 const PYTHON = "python3";
-const BASE_DIR = new URL("..", import.meta.url).pathname;
-const MICVGPUS = [PYTHON, "-m", "micvgpus"];
+
+// For dev (repo checkout), running from tui/ we want to point one level up.
+// For a compiled binary, the source tree may not exist; in that case we should NOT force cwd.
+const DEFAULT_BASE_DIR = new URL("..", import.meta.url).pathname;
+const EXEC_DIR = path.dirname(process.execPath);
+
+function _isRepoRoot(p: string): boolean {
+  return existsSync(`${p}/pyproject.toml`) && existsSync(`${p}/opensmi/__init__.py`);
+}
+
+const BASE_DIR_CANDIDATES = [
+  process.env.OPENSMI_BASE_DIR,
+  DEFAULT_BASE_DIR,
+  // If running a locally built binary from tui/dist, repo root is typically ../../
+  path.resolve(EXEC_DIR, "..", ".."),
+  process.cwd(),
+].filter(Boolean) as string[];
+
+const BASE_DIR = BASE_DIR_CANDIDATES.find(_isRepoRoot) || "";
+const OPENSMI_CWD = BASE_DIR ? BASE_DIR : undefined;
+
+const OPENSMI = [PYTHON, "-m", "opensmi"];
 
 async function runMicvgpus(
   args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = spawn([...MICVGPUS, ...args], {
-    cwd: BASE_DIR,
+  const proc = spawn([...OPENSMI, ...args], {
+    cwd: OPENSMI_CWD,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -154,8 +212,8 @@ async function pollCluster(): Promise<void> {
   pollError = "";
 
   try {
-    const proc = spawn([...MICVGPUS, "poll", "--json"], {
-      cwd: BASE_DIR,
+    const proc = spawn([...OPENSMI, "poll", "--json"], {
+      cwd: OPENSMI_CWD,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -183,7 +241,7 @@ async function loadAllocations(): Promise<void> {
   try {
     // We load from the JSON file directly (source of truth for the TUI)
     const homedir = process.env.HOME || "~";
-    const stateDir = process.env.MICVGPUS_STATE_DIR || `${homedir}/.micvgpus`;
+    const stateDir = process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
     const allocPath = `${stateDir}/allocations.json`;
     try {
       const raw = await Bun.file(allocPath).text();
@@ -356,6 +414,32 @@ function renderToast() {
   );
 }
 
+function requireAdminUI(action: string): boolean {
+  if (isAdmin) return true;
+  setStatus(`Admin only: ${action} (${adminHint})`);
+  return false;
+}
+
+function renderLoadingBadge() {
+  if (!bootLoading && snapshot) return null;
+
+  const msg = bootLoading ? "Loading..." : "Loading...";
+  return Box(
+    {
+      position: "absolute",
+      left: 1,
+      top: 0,
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+      borderStyle: "rounded",
+      borderColor: C.border,
+      zIndex: 10_000,
+    },
+    Text({ content: msg, fg: C.textDim })
+  );
+}
+
 function renderDashboard() {
   if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "Loading..." }));
 
@@ -387,7 +471,7 @@ function renderDashboard() {
       backgroundColor: C.bgAlt,
     },
     Text({
-      content: t`${bold(fg(C.blue)(snapshot.cluster_name))} ${fg(C.textDim)("· micvgpus")}`,
+      content: t`${bold(fg(C.blue)(snapshot.cluster_name))} ${fg(C.textDim)("· opensmi")}`,
     }),
     Text({
       content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
@@ -672,7 +756,9 @@ function renderDetail() {
   children.push(
     Text({
       content:
-        "[↑↓] GPU  [a] Allocate  [x] Clear alloc  [Shift+K] Kill violators  [Esc] Back  [r] Refresh",
+        isAdmin
+          ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear alloc  [Shift+K] Kill violators  [Esc] Back  [r] Refresh"
+          : "[↑↓] GPU  [Esc] Back  [r] Refresh   (read-only)",
       fg: C.textDim,
     }),
     Text({ content: statusMsg ? ` ${statusMsg}` : " ", fg: statusMsg ? C.yellow : C.textDim })
@@ -687,7 +773,7 @@ function renderDetail() {
 function renderHelp() {
   return Box(
     { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
-    Text({ content: t`${bold(fg(C.blue)("micvgpus — Help"))}` }),
+    Text({ content: t`${bold(fg(C.blue)("opensmi — Help"))}` }),
     Text({ content: "" }),
     Text({ content: t`${fg(C.cyan)("Dashboard:")}` }),
     Text({ content: "  ↑/↓ or j/k   Navigate nodes" }),
@@ -932,7 +1018,7 @@ function renderKill() {
 
   const outPreview = (killOutput || "")
     .split("\n")
-    .filter((l) => l.trim() && !l.includes("__MICVGPUS_KILL_"))
+    .filter((l) => l.trim() && !l.includes("__OPENSMI_KILL_"))
     .slice(-6)
     .join("\n");
 
@@ -1072,10 +1158,12 @@ async function main() {
 
     // Wrap the screen in a relative container so we can overlay toast UI.
     const toast = renderToast();
+    const loading = renderLoadingBadge();
     const root = Box(
       { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
       newNode,
-      ...(toast ? [toast] : [])
+      ...(toast ? [toast] : []),
+      ...(loading ? [loading] : [])
     );
     container.add(root);
 
@@ -1090,8 +1178,17 @@ async function main() {
   }
   requestRender = render;
 
+  // Render immediately so the user sees "Loading..." during the first poll.
+  render();
+
   // Initial load
-  await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
+  await Promise.all([
+    loadAdminStatus(),
+    pollCluster(),
+    loadAllocations(),
+    loadSystemUsers(true),
+  ]);
+  bootLoading = false;
   render();
 
   // Auto-refresh every 15s (disabled while editing allocations)
@@ -1141,6 +1238,8 @@ async function main() {
           render();
         }
       } else if (key.name === "a") {
+        if (!requireAdminUI("allocate")) return;
+
         // Prevent the triggering keypress from being delivered to the newly focused Input.
         // OpenTUI dispatches global handlers first; if we re-render/focus during this handler,
         // the new Input may otherwise receive the same in-flight key event.
@@ -1152,7 +1251,28 @@ async function main() {
         if (!node || node.error) return;
 
         openAllocModal(node, selectedGpuIdx);
+      } else if (key.name === "*") {
+        if (!requireAdminUI("open-to-all")) return;
+
+        // Open-to-all allocation shortcut
+        key.preventDefault();
+        key.stopPropagation();
+
+        if (!snapshot) return;
+        const node = snapshot.nodes[selectedNodeIdx];
+        if (!node || node.error) return;
+
+        try {
+          await allocSet(node.node_alias, selectedGpuIdx, "*");
+          setStatus(`Saved allocation: ${node.node_alias} GPU${selectedGpuIdx} → *`);
+          await Promise.all([pollCluster(), loadAllocations()]);
+          render();
+        } catch (e: any) {
+          setStatus(e?.message ? `Alloc failed: ${e.message}` : "Alloc failed");
+        }
       } else if (key.name === "x") {
+        if (!requireAdminUI("clear allocation")) return;
+
         // Clear allocation for selected GPU
         if (!snapshot) return;
         const node = snapshot.nodes[selectedNodeIdx];
@@ -1161,10 +1281,13 @@ async function main() {
         if (!existing) return;
         try {
           await allocClear(node.node_alias, selectedGpuIdx);
+          setStatus(`Cleared allocation: ${node.node_alias} GPU${selectedGpuIdx}`);
           await loadAllocations();
           render();
         } catch {}
       } else if (key.name === "k" && key.shift) {
+        if (!requireAdminUI("kill")) return;
+
         // Kill violator processes on selected GPU
         if (!snapshot) return;
         const node = snapshot.nodes[selectedNodeIdx];

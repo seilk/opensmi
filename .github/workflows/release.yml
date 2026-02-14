@@ -64,13 +64,13 @@ jobs:
           bun build \
             --compile \
             --production \
-            --outfile=dist/micvgpus-tui-${{ matrix.suffix }} \
+            --outfile=dist/opensmi-tui-${{ matrix.suffix }} \
             tui/index.ts
 
       - uses: actions/upload-artifact@v4
         with:
           name: tui-${{ matrix.suffix }}
-          path: dist/micvgpus-tui-${{ matrix.suffix }}
+          path: dist/opensmi-tui-${{ matrix.suffix }}
 
   # ── Create GitHub Release ──────────────────────────────────────
   release:

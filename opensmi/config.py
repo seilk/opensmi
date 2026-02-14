@@ -11,7 +11,7 @@ def default_config_data() -> Dict[str, Any]:
     """Default config template.
 
     NOTE: This is intentionally generic for open-source distribution.
-    Use `micvgpus init --wizard` or `micvgpus init --from-ssh-config ~/.ssh/config`
+    Use `opensmi init --wizard` or `opensmi init --from-ssh-config ~/.ssh/config`
     to generate a config for your environment.
     """
 

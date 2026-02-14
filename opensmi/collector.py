@@ -13,7 +13,7 @@ from .models import ClusterConfig, ClusterSnapshot, GPUInfo, GPUProcess, NodeCon
 REMOTE_SCRIPT = r"""#!/usr/bin/env bash
 set -u
 
-echo "__MICVGPUS_BEGIN__"
+echo "__OPENSMI_BEGIN__"
 
 # meta
 hn=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)
@@ -40,16 +40,16 @@ echo "__OWNERS__"
   echo "$pid,$user"
 done
 
-echo "__MICVGPUS_END__"
+echo "__OPENSMI_END__"
 """
 
 
 REMOTE_USERS_SCRIPT = r"""#!/usr/bin/env bash
 set -u
 
-echo "__MICVGPUS_USERS_BEGIN__"
+echo "__OPENSMI_USERS_BEGIN__"
 (getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null || true) | sed 's/:.*//' | sort -u
-echo "__MICVGPUS_USERS_END__"
+echo "__OPENSMI_USERS_END__"
 """
 
 
@@ -125,8 +125,8 @@ def _parse_csv_lines(lines: List[str]) -> List[List[str]]:
 def _parse_users_output(stdout: str) -> List[str]:
     lines = stdout.splitlines()
 
-    begin_i = _find_section(lines, "__MICVGPUS_USERS_BEGIN__")
-    end_i = _find_section(lines, "__MICVGPUS_USERS_END__")
+    begin_i = _find_section(lines, "__OPENSMI_USERS_BEGIN__")
+    end_i = _find_section(lines, "__OPENSMI_USERS_END__")
     if begin_i == -1 or end_i == -1 or end_i <= begin_i:
         # Best-effort fallback: treat entire stdout as username list
         begin_i, end_i = 0, len(lines)
@@ -171,8 +171,8 @@ async def fetch_users(config: ClusterConfig, *, timeout_s: int = 10) -> List[str
 def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str], List[GPUInfo], List[GPUProcess]]:
     lines = stdout.splitlines()
 
-    begin_i = _find_section(lines, "__MICVGPUS_BEGIN__")
-    end_i = _find_section(lines, "__MICVGPUS_END__")
+    begin_i = _find_section(lines, "__OPENSMI_BEGIN__")
+    end_i = _find_section(lines, "__OPENSMI_END__")
     if begin_i == -1 or end_i == -1 or end_i <= begin_i:
         raise ValueError("Unexpected remote output (missing begin/end markers)")
 

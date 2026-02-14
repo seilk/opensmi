@@ -1,4 +1,4 @@
-# Releasing micvgpus
+# Releasing opensmi
 
 This project uses **Semantic Versioning** and **git tags**.
 
@@ -6,7 +6,7 @@ This project uses **Semantic Versioning** and **git tags**.
 
 Version must be identical in both files:
 - `pyproject.toml` → `[project].version`
-- `micvgpus/__init__.py` → `__version__`
+- `opensmi/__init__.py` → `__version__`
 
 Run `python scripts/verify_version.py` to check consistency.
 
@@ -22,12 +22,12 @@ Each tagged release produces:
 
 | Artifact | Description |
 |----------|-------------|
-| `micvgpus-X.Y.Z.tar.gz` | Python sdist |
-| `micvgpus-X.Y.Z-py3-none-any.whl` | Python wheel |
-| `micvgpus-tui-linux-x64` | TUI binary (Linux x64) |
-| `micvgpus-tui-linux-arm64` | TUI binary (Linux ARM64) |
-| `micvgpus-tui-darwin-arm64` | TUI binary (macOS Apple Silicon) |
-| `micvgpus-tui-darwin-x64` | TUI binary (macOS Intel) |
+| `opensmi-X.Y.Z.tar.gz` | Python sdist |
+| `opensmi-X.Y.Z-py3-none-any.whl` | Python wheel |
+| `opensmi-tui-linux-x64` | TUI binary (Linux x64) |
+| `opensmi-tui-linux-arm64` | TUI binary (Linux ARM64) |
+| `opensmi-tui-darwin-arm64` | TUI binary (macOS Apple Silicon) |
+| `opensmi-tui-darwin-x64` | TUI binary (macOS Intel) |
 
 ## Full release process
 
@@ -47,7 +47,7 @@ Edit `CHANGELOG.md`:
 # pyproject.toml
 version = "X.Y.Z"
 
-# micvgpus/__init__.py
+# opensmi/__init__.py
 __version__ = "X.Y.Z"
 ```
 
@@ -83,5 +83,5 @@ Build for your current platform only:
 
 ```bash
 ./scripts/build-tui.sh
-# → dist/micvgpus-tui-<os>-<arch>
+# → dist/opensmi-tui-<os>-<arch>
 ```
