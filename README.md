@@ -17,7 +17,7 @@
   <img src="assets/intro_B.png" width="31%" />
   <img src="assets/intro_C.png" width="31%" />
 </p>
-<p align="center"><sub><em>Screenshots are taken from a real environment; sensitive details (node names, usernames, file paths) have been redacted.</em></sub></p>
+<p align="center"><sub><em>Screenshots are taken from a real environment; sensitive details (node names, usernames, file paths) have been redacted with Nano Banana.</em></sub></p>
 
 ---
 
