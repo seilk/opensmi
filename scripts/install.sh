@@ -29,6 +29,30 @@ CLI_METHOD="auto"  # auto|pip|pyz
 PYTHON="${OPENSMI_PYTHON:-python3}"
 TOKEN="${OPENSMI_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 
+# ── logging helpers ───────────────────────────────────────────────
+IS_TTY=0
+if [[ -t 1 ]]; then IS_TTY=1; fi
+
+C_RESET=""
+C_BLUE=""
+C_GREEN=""
+C_YELLOW=""
+C_RED=""
+
+if [[ $IS_TTY -eq 1 ]]; then
+  C_RESET=$'\033[0m'
+  C_BLUE=$'\033[34m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+fi
+
+say()  { printf '%s\n' "$*"; }
+info() { say "${C_BLUE}==>${C_RESET} $*"; }
+ok()   { say "${C_GREEN}✓${C_RESET} $*"; }
+warn() { say "${C_YELLOW}warning:${C_RESET} $*" >&2; }
+die()  { say "${C_RED}error:${C_RESET} $*" >&2; exit 2; }
+
 usage() {
   cat <<EOF
 opensmi installer
@@ -70,17 +94,17 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       usage; exit 0 ;;
     *)
-      echo "Unknown argument: $1" >&2
+      warn "Unknown argument: $1"
       usage
       exit 2
       ;;
   esac
 done
 
+info "opensmi installer"
+
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
-  echo "python not found: $PYTHON" >&2
-  echo "Tip: install Python 3.8+ or set OPENSMI_PYTHON (e.g. OPENSMI_PYTHON=python3.11)." >&2
-  exit 2
+  die "python not found: $PYTHON (set OPENSMI_PYTHON, e.g. python3.11)"
 fi
 
 # Require Python 3.8+ (CLI is stdlib-only but uses modern Python features).
@@ -106,7 +130,7 @@ if ! py_is_38plus "$PYTHON"; then
   for cand in python3.12 python3.11 python3.10 python3.9 python3.8; do
     if command -v "$cand" >/dev/null 2>&1; then
       if py_is_38plus "$cand"; then
-        echo "WARN: ${PYTHON} is ${PY_VER}; using ${cand} ($(py_version "$cand")) instead." >&2
+        warn "${PYTHON} is ${PY_VER}; using ${cand} ($(py_version "$cand")) instead."
         PYTHON="$cand"
         PY_VER="$(py_version "$PYTHON")"
         break
@@ -116,10 +140,7 @@ if ! py_is_38plus "$PYTHON"; then
 fi
 
 if ! py_is_38plus "$PYTHON"; then
-  echo "opensmi requires Python 3.8+ (detected: ${PYTHON} ${PY_VER})." >&2
-  echo "Install a newer Python or re-run with OPENSMI_PYTHON pointing to it." >&2
-  echo "Example: OPENSMI_PYTHON=python3.11 curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash" >&2
-  exit 2
+  die "opensmi requires Python 3.8+ (detected: ${PYTHON} ${PY_VER}). Install a newer Python or set OPENSMI_PYTHON (e.g. python3.11)."
 fi
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -128,16 +149,14 @@ case "$ARCH_RAW" in
   x86_64) ARCH="x64" ;;
   aarch64|arm64) ARCH="arm64" ;;
   *)
-    echo "Unsupported architecture: ${ARCH_RAW}" >&2
-    exit 2
+    die "Unsupported architecture: ${ARCH_RAW}"
     ;;
  esac
 
 case "$OS" in
   linux|darwin) ;;
   *)
-    echo "Unsupported OS: ${OS}" >&2
-    exit 2
+    die "Unsupported OS: ${OS}"
     ;;
 esac
 
@@ -152,16 +171,13 @@ PY
 
 if [[ -z "$BIN_DIR" ]]; then
   # Common user-writable bin dir used by many OSS installers
-  BIN_DIR="$HOME/.local/bin"
+  BIN_DIR="${HOME%/}/.local/bin"
 fi
 
 mkdir -p "$BIN_DIR"
 
 if [[ ! -w "$BIN_DIR" ]]; then
-  echo "Bin dir is not writable: $BIN_DIR" >&2
-  echo "Tip: use --bin-dir $HOME/.local/bin (recommended)" >&2
-  echo "Or run the installer with sudo (not recommended for curl|bash installs)." >&2
-  exit 2
+  die "Bin dir is not writable: $BIN_DIR (use --bin-dir ${HOME%/}/.local/bin)"
 fi
 
 # downloader
@@ -188,8 +204,7 @@ fetch() {
     return 0
   fi
 
-  echo "Need curl or wget" >&2
-  return 2
+  die "Need curl or wget"
 }
 
 # sha256 helper (mac uses shasum)
@@ -218,19 +233,16 @@ else
   API_URL="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
 fi
 
-echo "Repo:    ${REPO}"
-echo "Version: ${VERSION}"
-echo "OS/Arch: ${OS}/${ARCH}"
-echo "Bin dir: ${BIN_DIR}"
+info "Target:  ${REPO} (${VERSION})"
+info "System:  ${OS}/${ARCH}"
+info "Python:  ${PYTHON} (${PY_VER})"
+info "Prefix:  ${BIN_DIR}"
 
 fetch "$API_URL" "$TMP/release.json"
 
 # Basic sanity check: empty or non-JSON responses happen on some networks/proxies.
 if [[ ! -s "$TMP/release.json" ]]; then
-  echo "Failed to fetch GitHub release metadata (empty response)." >&2
-  echo "URL: $API_URL" >&2
-  echo "If you're behind a proxy/firewall or hit rate limits, try setting OPENSMI_GITHUB_TOKEN." >&2
-  exit 2
+  die "Failed to fetch GitHub release metadata (empty response). URL: $API_URL"
 fi
 
 # Parse assets via Python (no jq). Keep this robust: fail with a helpful error.
@@ -272,13 +284,10 @@ print(pyz_url)
 print(sha_url)
 PY
 )" || {
-  echo "Failed to parse GitHub release metadata (not valid JSON?)." >&2
-  echo "URL: $API_URL" >&2
-  echo "First bytes:" >&2
-  head -c 200 "$TMP/release.json" | tr '\n' ' ' >&2 || true
-  echo >&2
-  echo "Tip: set OPENSMI_GITHUB_TOKEN to avoid API rate limits." >&2
-  exit 2
+  warn "Failed to parse GitHub release metadata (not valid JSON?)."
+  warn "URL: $API_URL"
+  warn "First bytes: $(head -c 200 "$TMP/release.json" | tr '\n' ' ' 2>/dev/null || true)"
+  die "Try setting OPENSMI_GITHUB_TOKEN to avoid API rate limits."
 }
 
 TAG_NAME="$(printf '%s\n' "$_RELINFO_STR" | sed -n '1p')"
@@ -288,37 +297,31 @@ PYZ_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '4p')"
 SHA_URL="$(printf '%s\n' "$_RELINFO_STR" | sed -n '5p')"
 
 if [[ -z "$TAG_NAME" ]]; then
-  echo "Failed to detect release tag_name (bad API response?)" >&2
-  exit 2
+  die "Failed to detect release tag_name (bad API response?)"
 fi
 
+info "Release:  ${TAG_NAME}"
+
 if [[ $INSTALL_TUI -eq 1 && -z "$TUI_URL" ]]; then
-  echo "TUI asset not found in release: ${TUI_ASSET}" >&2
-  echo "Hint: ensure the Release workflow built/attached it." >&2
-  exit 2
+  die "TUI asset not found in release: ${TUI_ASSET}"
 fi
 
 if [[ $INSTALL_CLI -eq 1 ]]; then
   if [[ "$CLI_METHOD" == "pip" && -z "$WHEEL_URL" ]]; then
-    echo "Python wheel asset not found in release." >&2
-    echo "Hint: ensure the Release workflow built/attached it." >&2
-    exit 2
+    die "Python wheel asset not found in release."
   fi
   if [[ "$CLI_METHOD" == "pyz" && -z "$PYZ_URL" ]]; then
-    echo "opensmi.pyz asset not found in release." >&2
-    echo "Hint: ensure the Release workflow built/attached it." >&2
-    exit 2
+    die "opensmi.pyz asset not found in release."
   fi
   if [[ "$CLI_METHOD" == "auto" && -z "$WHEEL_URL" && -z "$PYZ_URL" ]]; then
-    echo "No CLI asset found in release (wheel or opensmi.pyz)." >&2
-    exit 2
+    die "No CLI asset found in release (wheel or opensmi.pyz)."
   fi
 fi
 
 # Optional: download checksums
 if [[ $VERIFY -eq 1 ]]; then
   if [[ -z "$SHA_URL" ]]; then
-    echo "WARN: SHA256SUMS not found; skipping verification." >&2
+    warn "SHA256SUMS not found; skipping verification."
     VERIFY=0
   else
     fetch "$SHA_URL" "$TMP/SHA256SUMS.txt"
@@ -336,14 +339,14 @@ verify_one() {
   local expected
   expected=$(grep -E "[[:xdigit:]]{64}  ${name}$" "$TMP/SHA256SUMS.txt" | head -n 1 | awk '{print $1}')
   if [[ -z "$expected" ]]; then
-    echo "WARN: no checksum entry for ${name}; skipping." >&2
+    warn "no checksum entry for ${name}; skipping."
     return 0
   fi
 
   local actual
   actual=$(sha256_file "$file" || true)
   if [[ -z "$actual" ]]; then
-    echo "WARN: sha256 tool not found; skipping verification." >&2
+    warn "sha256 tool not found; skipping verification."
     return 0
   fi
 
@@ -357,7 +360,7 @@ verify_one() {
 
 # Install TUI
 if [[ $INSTALL_TUI -eq 1 ]]; then
-  echo "\n== Installing opensmi-tui =="
+  info "Installing TUI"
   fetch "$TUI_URL" "$TMP/${TUI_ASSET}"
   chmod +x "$TMP/${TUI_ASSET}"
   verify_one "$TUI_ASSET" "$TMP/${TUI_ASSET}"
@@ -365,13 +368,12 @@ if [[ $INSTALL_TUI -eq 1 ]]; then
   mv "$TMP/${TUI_ASSET}" "$BIN_DIR/${TUI_ASSET}"
   ln -sf "$BIN_DIR/${TUI_ASSET}" "$BIN_DIR/opensmi-tui"
 
-  echo "Installed: $BIN_DIR/${TUI_ASSET}"
-  echo "Symlink:   $BIN_DIR/opensmi-tui"
+  ok "opensmi-tui → $BIN_DIR/opensmi-tui"
 fi
 
 # Install CLI
 if [[ $INSTALL_CLI -eq 1 ]]; then
-  echo "\n== Installing opensmi (CLI) =="
+  info "Installing CLI"
 
   # Decide method in auto mode
   if [[ "$CLI_METHOD" == "auto" ]]; then
@@ -386,12 +388,10 @@ if [[ $INSTALL_CLI -eq 1 ]]; then
   fi
 
   if [[ "$CLI_METHOD" == "pip" ]]; then
-    echo "Method: pip (wheel)"
-    echo "Using: $PYTHON -m pip install --user"
+    info "CLI method: pip (wheel)"
 
     if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
-      echo "pip is not available for $PYTHON. Retry with: --cli-method pyz" >&2
-      exit 2
+      die "pip is not available for ${PYTHON}. Retry with: --cli-method pyz"
     fi
 
     WHEEL_ASSET="$(basename "$WHEEL_URL")"
@@ -399,16 +399,16 @@ if [[ $INSTALL_CLI -eq 1 ]]; then
     verify_one "$WHEEL_ASSET" "$TMP/$WHEEL_ASSET"
 
     "$PYTHON" -m pip install --user --upgrade "$TMP/$WHEEL_ASSET"
-    echo "Installed Python package from: $WHEEL_ASSET"
+    ok "opensmi (pip) installed"
 
     # Ensure the opensmi entrypoint is reachable from BIN_DIR
     if [[ -x "$PY_USER_BIN/opensmi" && "$PY_USER_BIN" != "$BIN_DIR" ]]; then
       ln -sf "$PY_USER_BIN/opensmi" "$BIN_DIR/opensmi" || true
-      echo "Symlink:   $BIN_DIR/opensmi"
+      ok "opensmi → $BIN_DIR/opensmi"
     fi
 
   elif [[ "$CLI_METHOD" == "pyz" ]]; then
-    echo "Method: pyz (zipapp)"
+    info "CLI method: pyz (zipapp)"
 
     PYZ_ASSET="$(basename "$PYZ_URL")"
     fetch "$PYZ_URL" "$TMP/$PYZ_ASSET"
@@ -425,29 +425,29 @@ if [[ $INSTALL_CLI -eq 1 ]]; then
 set -euo pipefail
 
 PYTHON_BIN="${OPENSMI_PYTHON:-python3}"
-exec "$PYTHON_BIN" "${HOME}/.local/share/opensmi/opensmi.pyz" "$@"
+HOME_DIR="${HOME%/}"
+exec "$PYTHON_BIN" "${HOME_DIR}/.local/share/opensmi/opensmi.pyz" "$@"
 SH
     chmod 0755 "$BIN_DIR/opensmi"
 
-    echo "Installed: $SHARE_DIR/opensmi.pyz"
-    echo "Wrapper:   $BIN_DIR/opensmi"
+    ok "opensmi → $BIN_DIR/opensmi"
 
   else
-    echo "Unknown --cli-method: $CLI_METHOD (expected: auto|pip|pyz)" >&2
-    exit 2
+    die "Unknown --cli-method: $CLI_METHOD (expected: auto|pip|pyz)"
   fi
 fi
 
 # PATH hint
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-  echo "\nNOTE: '$BIN_DIR' is not in your PATH." >&2
-  echo "Add this to your shell profile (~/.bashrc, ~/.zshrc):" >&2
-  echo "  export PATH=\"$BIN_DIR:\$PATH\"" >&2
+  warn "'$BIN_DIR' is not in your PATH"
+  warn "Add this to your shell profile (~/.bashrc, ~/.zshrc):"
+  warn "  export PATH=\"$BIN_DIR:\$PATH\""
 fi
 
-echo "\n✅ opensmi installation complete."
-echo "Next:" 
-echo "  opensmi init --wizard" 
-echo "  opensmi poll" 
-echo "  opensmi          # launches the TUI (opensmi-tui)" 
-echo "  opensmi --help   # CLI usage" 
+ok "Installation complete"
+
+say "Next:"
+say "  opensmi onboard"
+say "  opensmi poll"
+say "  opensmi        # TUI"
+say "  opensmi --help" 
