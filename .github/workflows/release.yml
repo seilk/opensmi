@@ -46,7 +46,7 @@ jobs:
             suffix: linux-arm64
           - runner: macos-latest
             suffix: darwin-arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             suffix: darwin-x64
 
     runs-on: ${{ matrix.runner }}
