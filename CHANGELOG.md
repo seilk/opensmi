@@ -18,4 +18,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `watch` (Slack webhook notifications)
 - TUI (Bun + OpenTUI): dashboard, node detail, allocation editor, kill action
 
-[0.1.0]: https://github.com/seil/opensmi/releases/tag/v0.1.0
+[0.1.0]: https://github.com/seilk/opensmi/releases/tag/v0.1.0

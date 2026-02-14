@@ -10,14 +10,14 @@ set -euo pipefail
 #   bash scripts/install.sh --version v0.1.0
 #
 # Options:
-#   --repo OWNER/REPO        (default: seil/opensmi)
+#   --repo OWNER/REPO        (default: seilk/opensmi)
 #   --version TAG|latest     (default: latest)
 #   --bin-dir PATH           (default: ~/.local/bin)
 #   --tui-only               install only TUI binary
 #   --cli-only               install only Python CLI
 #   --no-verify              skip SHA256SUMS verification
 
-REPO_DEFAULT="seil/opensmi"
+REPO_DEFAULT="seilk/opensmi"
 REPO="${OPENSMI_REPO:-$REPO_DEFAULT}"
 VERSION="${OPENSMI_VERSION:-latest}"
 BIN_DIR="${OPENSMI_BIN_DIR:-}"

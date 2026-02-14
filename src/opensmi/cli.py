@@ -803,7 +803,7 @@ def _cmd_sudo_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    repo = args.repo or os.environ.get("OPENSMI_REPO") or "seil/opensmi"
+    repo = args.repo or os.environ.get("OPENSMI_REPO") or "seilk/opensmi"
 
     try:
         tag, bin_dir = update_release(
@@ -928,7 +928,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_sc.set_defaults(func=_cmd_sudo_check)
 
     sp_up = sub.add_parser("update", help="Update opensmi (CLI and/or TUI) from GitHub Releases")
-    sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seil/opensmi)")
+    sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seilk/opensmi)")
     sp_up.add_argument("--version", default="latest", help="Tag (e.g. v0.1.0) or 'latest' (default)")
     sp_up.add_argument("--bin-dir", default=None, help="Install dir for binaries (default: ~/.local/bin)")
     sp_up.add_argument("--tui-only", action="store_true", help="Update only opensmi-tui")
@@ -979,7 +979,7 @@ def _launch_tui() -> None:
         print(
             "opensmi-tui not found. Install it via the installer or set OPENSMI_TUI_BIN.\n"
             "Examples:\n"
-            "  curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash\n"
+            "  curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash\n"
             "  OPENSMI_TUI_BIN=/path/to/opensmi-tui opensmi\n",
             file=sys.stderr,
         )

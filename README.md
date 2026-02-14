@@ -39,7 +39,7 @@ It runs from your terminal, connects over SSH, and reads `nvidia-smi`.
 Recommended (installs both CLI + TUI):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash
 ```
 
 This will place binaries in `~/.local/bin` (and print a PATH hint if needed).

@@ -39,7 +39,7 @@
 권장 (CLI + TUI 함께 설치):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash
 ```
 
 기본 설치 경로는 `~/.local/bin`이며, 필요 시 PATH 안내를 출력합니다.
