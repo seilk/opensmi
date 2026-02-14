@@ -34,10 +34,20 @@ echo "__PROCS__"
 (nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null) || true
 
 echo "__OWNERS__"
+up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo "")
+hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
 (nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sort -u) | while read -r pid; do
   [ -n "$pid" ] || continue
   user=$(stat -c "%U" "/proc/$pid" 2>/dev/null || echo unknown)
-  echo "$pid,$user"
+
+  # Best-effort runtime (seconds) from /proc
+  st=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || echo "")
+  runtime=""
+  if [ -n "$up" ] && [ -n "$st" ] && [ -n "$hz" ]; then
+    runtime=$(awk -v up="$up" -v st="$st" -v hz="$hz" 'BEGIN{ if(hz==0){print ""} else { r=up-(st/hz); if(r<0) r=0; printf "%.0f", r } }')
+  fi
+
+  echo "$pid,$user,$runtime"
 done
 
 echo "__OPENSMI_END__"
@@ -212,6 +222,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
         gpus.append(GPUInfo(index=idx, uuid=row[1], name=row[2], memory_total_mib=mem))
 
     owners: Dict[int, str] = {}
+    runtimes: Dict[int, Optional[int]] = {}
     for row in _parse_csv_lines(owner_lines):
         if len(row) < 2:
             continue
@@ -220,6 +231,14 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
         except ValueError:
             continue
         owners[pid] = row[1]
+
+        rt: Optional[int] = None
+        if len(row) >= 3:
+            try:
+                rt = int(row[2]) if str(row[2]).strip() else None
+            except Exception:
+                rt = None
+        runtimes[pid] = rt
 
     procs: List[GPUProcess] = []
     for row in _parse_csv_lines(proc_lines):
@@ -243,6 +262,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
                 process_name=row[2],
                 used_memory_mib=used,
                 user=owners.get(pid, "unknown"),
+                runtime_s=runtimes.get(pid),
             )
         )
 

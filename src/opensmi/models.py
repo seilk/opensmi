@@ -37,6 +37,7 @@ class GPUProcess:
     process_name: str
     used_memory_mib: Optional[int] = None
     user: str = "unknown"
+    runtime_s: Optional[int] = None
 
 
 @dataclass

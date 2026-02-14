@@ -29,6 +29,7 @@ interface GPUProcess {
   process_name: string;
   used_memory_mib: number | null;
   user: string;
+  runtime_s?: number | null;
 }
 
 interface NodeSnapshot {
@@ -359,6 +360,20 @@ function isViolation(nodeAlias: string, gpuIdx: number, user: string): boolean {
 function gpuMemStr(mib: number | null): string {
   if (mib === null) return "?";
   return `${Math.round(mib / 1024)}G`;
+}
+
+function runtimeStr(sec: number | null | undefined): string {
+  if (sec === null || sec === undefined) return "";
+  const s = Math.max(0, Math.floor(sec));
+
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+
+  if (d > 0) return `${d}d${h}h`;
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
 }
 
 function setStatus(msg: string, ttlMs: number = 3000) {
@@ -835,9 +850,11 @@ function renderDetail() {
         const viol = isViolation(node.node_alias, g.index, p.user);
         const mem = p.used_memory_mib !== null ? `${p.used_memory_mib} MiB` : "?";
         const violMark = viol ? " ⚠" : "";
+        const rt = runtimeStr(p.runtime_s);
+        const rtCol = rt ? rt.padStart(6) : " ".repeat(6);
         children.push(
           Text({
-            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)}  ${p.process_name}${violMark}`,
+            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  ${p.process_name}${violMark}`,
             fg: viol ? C.red : C.text,
           })
         );
