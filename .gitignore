@@ -9,15 +9,22 @@ __pycache__/
 ruff_cache/
 dist/
 build/
+.build/
 *.egg-info/
 
 # TUI / Node
 **/node_modules/
 **/.bun/
+# Local compiled binaries
+tui/dist/
 
 # Local state (if you place it inside the repo)
 .opensmi/
 latest_snapshot.json
+
+# Local config (DO NOT COMMIT real cluster topology)
+opensmi.json
+config.json
 
 # IDE / coding-agent
 .cursor/

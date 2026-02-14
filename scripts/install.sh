@@ -24,8 +24,10 @@ BIN_DIR="${OPENSMI_BIN_DIR:-}"
 INSTALL_TUI=1
 INSTALL_CLI=1
 VERIFY=1
+CLI_METHOD="auto"  # auto|pip|pyz
 
 PYTHON="${OPENSMI_PYTHON:-python3}"
+TOKEN="${OPENSMI_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 
 usage() {
   cat <<EOF
@@ -40,11 +42,12 @@ Options:
   --bin-dir PATH           Install directory for binaries (default: ~/.local/bin)
   --tui-only               Install only opensmi-tui
   --cli-only               Install only opensmi (Python CLI)
+  --cli-method auto|pip|pyz Choose CLI install method (default: auto)
   --no-verify              Skip SHA256SUMS verification
   -h, --help               Show help
 
 Env:
-  OPENSMI_REPO, OPENSMI_VERSION, OPENSMI_BIN_DIR, OPENSMI_PYTHON
+  OPENSMI_REPO, OPENSMI_VERSION, OPENSMI_BIN_DIR, OPENSMI_PYTHON, OPENSMI_GITHUB_TOKEN
 EOF
 }
 
@@ -60,6 +63,8 @@ while [[ $# -gt 0 ]]; do
       INSTALL_CLI=0; shift ;;
     --cli-only)
       INSTALL_TUI=0; shift ;;
+    --cli-method)
+      CLI_METHOD="$2"; shift 2 ;;
     --no-verify)
       VERIFY=0; shift ;;
     -h|--help)
@@ -112,18 +117,37 @@ fi
 
 mkdir -p "$BIN_DIR"
 
+if [[ ! -w "$BIN_DIR" ]]; then
+  echo "Bin dir is not writable: $BIN_DIR" >&2
+  echo "Tip: use --bin-dir $HOME/.local/bin (recommended)" >&2
+  echo "Or run the installer with sudo (not recommended for curl|bash installs)." >&2
+  exit 2
+fi
+
 # downloader
 fetch() {
   local url="$1"
   local out="$2"
+
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "$out" "$url"
+    local args=(-fsSL --retry 3 --retry-delay 1 -o "$out")
+    # Optional token to avoid GitHub API rate limiting.
+    if [[ -n "${TOKEN}" && "$url" == https://api.github.com/* ]]; then
+      args+=(-H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json")
+    fi
+    curl "${args[@]}" "$url"
     return 0
   fi
+
   if command -v wget >/dev/null 2>&1; then
-    wget -qO "$out" "$url"
+    local args=(-qO "$out")
+    if [[ -n "${TOKEN}" && "$url" == https://api.github.com/* ]]; then
+      args+=(--header="Authorization: Bearer ${TOKEN}" --header="Accept: application/vnd.github+json")
+    fi
+    wget "${args[@]}" "$url"
     return 0
   fi
+
   echo "Need curl or wget" >&2
   return 2
 }
@@ -176,6 +200,7 @@ want_tui = f"opensmi-tui-{os}-{arch}"
 
 tui_url = ""
 wheel_url = ""
+pyz_url = ""
 sha_url = ""
 
 for name, url in assets:
@@ -183,12 +208,15 @@ for name, url in assets:
         tui_url = url
     if name and name.endswith(".whl") and not wheel_url:
         wheel_url = url
+    if name == "opensmi.pyz":
+        pyz_url = url
     if name in ("SHA256SUMS.txt", "SHA256SUMS"):
         sha_url = url
 
 print(tag)
 print(tui_url)
 print(wheel_url)
+print(pyz_url)
 print(sha_url)
 PY
 )
@@ -196,7 +224,8 @@ PY
 TAG_NAME="${_RELINFO[0]:-}"
 TUI_URL="${_RELINFO[1]:-}"
 WHEEL_URL="${_RELINFO[2]:-}"
-SHA_URL="${_RELINFO[3]:-}"
+PYZ_URL="${_RELINFO[3]:-}"
+SHA_URL="${_RELINFO[4]:-}"
 
 if [[ -z "$TAG_NAME" ]]; then
   echo "Failed to detect release tag_name (bad API response?)" >&2
@@ -209,10 +238,21 @@ if [[ $INSTALL_TUI -eq 1 && -z "$TUI_URL" ]]; then
   exit 2
 fi
 
-if [[ $INSTALL_CLI -eq 1 && -z "$WHEEL_URL" ]]; then
-  echo "Python wheel asset not found in release." >&2
-  echo "Hint: ensure the Release workflow built/attached it." >&2
-  exit 2
+if [[ $INSTALL_CLI -eq 1 ]]; then
+  if [[ "$CLI_METHOD" == "pip" && -z "$WHEEL_URL" ]]; then
+    echo "Python wheel asset not found in release." >&2
+    echo "Hint: ensure the Release workflow built/attached it." >&2
+    exit 2
+  fi
+  if [[ "$CLI_METHOD" == "pyz" && -z "$PYZ_URL" ]]; then
+    echo "opensmi.pyz asset not found in release." >&2
+    echo "Hint: ensure the Release workflow built/attached it." >&2
+    exit 2
+  fi
+  if [[ "$CLI_METHOD" == "auto" && -z "$WHEEL_URL" && -z "$PYZ_URL" ]]; then
+    echo "No CLI asset found in release (wheel or opensmi.pyz)." >&2
+    exit 2
+  fi
 fi
 
 # Optional: download checksums
@@ -271,21 +311,70 @@ fi
 
 # Install CLI
 if [[ $INSTALL_CLI -eq 1 ]]; then
-  echo "\n== Installing opensmi (Python CLI) =="
-  echo "Using: $PYTHON -m pip install --user"
-  "$PYTHON" -m pip install -U pip >/dev/null 2>&1 || true
+  echo "\n== Installing opensmi (CLI) =="
 
-  WHEEL_ASSET="$(basename "$WHEEL_URL")"
-  fetch "$WHEEL_URL" "$TMP/$WHEEL_ASSET"
-  verify_one "$WHEEL_ASSET" "$TMP/$WHEEL_ASSET"
+  # Decide method in auto mode
+  if [[ "$CLI_METHOD" == "auto" ]]; then
+    # Prefer pyz when available: works without pip and keeps installs simple.
+    if [[ -n "$PYZ_URL" ]]; then
+      CLI_METHOD="pyz"
+    elif "$PYTHON" -m pip --version >/dev/null 2>&1 && [[ -n "$WHEEL_URL" ]]; then
+      CLI_METHOD="pip"
+    else
+      CLI_METHOD="pyz"
+    fi
+  fi
 
-  "$PYTHON" -m pip install --user --upgrade "$TMP/$WHEEL_ASSET"
-  echo "Installed Python package from: $WHEEL_ASSET"
+  if [[ "$CLI_METHOD" == "pip" ]]; then
+    echo "Method: pip (wheel)"
+    echo "Using: $PYTHON -m pip install --user"
 
-  # Ensure the opensmi entrypoint is reachable from BIN_DIR
-  if [[ -x "$PY_USER_BIN/opensmi" && "$PY_USER_BIN" != "$BIN_DIR" ]]; then
-    ln -sf "$PY_USER_BIN/opensmi" "$BIN_DIR/opensmi" || true
-    echo "Symlink:   $BIN_DIR/opensmi"
+    if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+      echo "pip is not available for $PYTHON. Retry with: --cli-method pyz" >&2
+      exit 2
+    fi
+
+    WHEEL_ASSET="$(basename "$WHEEL_URL")"
+    fetch "$WHEEL_URL" "$TMP/$WHEEL_ASSET"
+    verify_one "$WHEEL_ASSET" "$TMP/$WHEEL_ASSET"
+
+    "$PYTHON" -m pip install --user --upgrade "$TMP/$WHEEL_ASSET"
+    echo "Installed Python package from: $WHEEL_ASSET"
+
+    # Ensure the opensmi entrypoint is reachable from BIN_DIR
+    if [[ -x "$PY_USER_BIN/opensmi" && "$PY_USER_BIN" != "$BIN_DIR" ]]; then
+      ln -sf "$PY_USER_BIN/opensmi" "$BIN_DIR/opensmi" || true
+      echo "Symlink:   $BIN_DIR/opensmi"
+    fi
+
+  elif [[ "$CLI_METHOD" == "pyz" ]]; then
+    echo "Method: pyz (zipapp)"
+
+    PYZ_ASSET="$(basename "$PYZ_URL")"
+    fetch "$PYZ_URL" "$TMP/$PYZ_ASSET"
+    verify_one "$PYZ_ASSET" "$TMP/$PYZ_ASSET"
+
+    SHARE_DIR="$HOME/.local/share/opensmi"
+    mkdir -p "$SHARE_DIR"
+
+    mv "$TMP/$PYZ_ASSET" "$SHARE_DIR/opensmi.pyz"
+    chmod 0755 "$SHARE_DIR/opensmi.pyz"
+
+    cat > "$BIN_DIR/opensmi" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+PYTHON_BIN="${OPENSMI_PYTHON:-python3}"
+exec "$PYTHON_BIN" "${HOME}/.local/share/opensmi/opensmi.pyz" "$@"
+SH
+    chmod 0755 "$BIN_DIR/opensmi"
+
+    echo "Installed: $SHARE_DIR/opensmi.pyz"
+    echo "Wrapper:   $BIN_DIR/opensmi"
+
+  else
+    echo "Unknown --cli-method: $CLI_METHOD (expected: auto|pip|pyz)" >&2
+    exit 2
   fi
 fi
 

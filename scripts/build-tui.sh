@@ -37,6 +37,16 @@ bun build \
   --outfile="${outfile}" \
   tui/index.ts
 
+# Smoke test (best-effort) to catch runtime crashes early.
+# Disable native rendering to make it CI/terminal-safe.
+if [[ -x "${outfile}" ]]; then
+  echo "Running smoke test..."
+  OTUI_NO_NATIVE_RENDER=1 OTUI_USE_ALTERNATE_SCREEN=0 "${outfile}" --smoke-test || {
+    echo "Smoke test failed." >&2
+    exit 2
+  }
+fi
+
 echo ""
 ls -lh "${outfile}"
 echo "✅ Done: ${outfile}"

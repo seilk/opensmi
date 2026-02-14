@@ -107,9 +107,7 @@ async function loadAdminStatus(): Promise<void> {
     const candidates = [
       process.env.OPENSMI_CONFIG,
       BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
-      BASE_DIR ? `${BASE_DIR}/config.json` : undefined,
       `${getStateDir()}/opensmi.json`,
-      `${getStateDir()}/config.json`,
     ].filter(Boolean) as string[];
 
     const cfgPath = candidates.find((p) => existsSync(p)) || candidates[0]!;
@@ -135,7 +133,7 @@ async function loadAdminStatus(): Promise<void> {
   }
 }
 
-const PYTHON = "python3";
+const PYTHON = process.env.OPENSMI_PYTHON || "python3";
 
 // For dev (repo checkout), running from tui/ we want to point one level up.
 // For a compiled binary, the source tree may not exist; in that case we should NOT force cwd.
@@ -149,15 +147,28 @@ function _isRepoRoot(p: string): boolean {
 const BASE_DIR_CANDIDATES = [
   process.env.OPENSMI_BASE_DIR,
   DEFAULT_BASE_DIR,
-  // If running a locally built binary from tui/dist, repo root is typically ../../
   path.resolve(EXEC_DIR, "..", ".."),
   process.cwd(),
 ].filter(Boolean) as string[];
 
 const BASE_DIR = BASE_DIR_CANDIDATES.find(_isRepoRoot) || "";
-const OPENSMI_CWD = BASE_DIR ? BASE_DIR : undefined;
 
-const OPENSMI = [PYTHON, "-m", "opensmi"];
+// Decide how to invoke the CLI:
+//  1) In dev (repo checkout): python3 -m opensmi (with cwd = repo root)
+//  2) Installed binary:       opensmi (from PATH — works for pip, pyz, any install method)
+function _resolveCliCommand(): { cmd: string[]; cwd: string | undefined } {
+  // Explicit override
+  const explicit = process.env.OPENSMI_CLI;
+  if (explicit) return { cmd: [explicit], cwd: undefined };
+
+  // Dev mode: repo root found → use python3 -m
+  if (BASE_DIR) return { cmd: [PYTHON, "-m", "opensmi"], cwd: BASE_DIR };
+
+  // Installed: call opensmi command directly (pip entrypoint, pyz wrapper, etc.)
+  return { cmd: ["opensmi"], cwd: undefined };
+}
+
+const { cmd: OPENSMI, cwd: OPENSMI_CWD } = _resolveCliCommand();
 
 async function runOpensmi(
   args: string[]
@@ -1079,7 +1090,38 @@ function renderKill() {
 
 // ── Main ───────────────────────────────────────────────────────────
 
+const SMOKE_TEST = process.argv.includes("--smoke-test") || process.env.OPENSMI_SMOKE_TEST === "1";
+
 async function main() {
+  // Smoke test mode: initialize renderer and exit immediately.
+  // Used in CI/release to catch Bun/OpenTUI runtime crashes early.
+  if (SMOKE_TEST) {
+    const renderer = await createCliRenderer({
+      exitOnCtrlC: false,
+      useMouse: false,
+      useConsole: false,
+      useAlternateScreen: false,
+      openConsoleOnError: false,
+    });
+
+    // Render a single frame worth of UI.
+    const container = new BoxRenderable(renderer, {
+      id: "smoke-container",
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      backgroundColor: C.bg,
+    });
+    renderer.root.add(container);
+    container.add(Text({ content: "opensmi-tui smoke test ok" }));
+    renderer.requestRender();
+
+    // Let one tick happen then destroy.
+    await new Promise((r) => setTimeout(r, 50));
+    renderer.destroy();
+    process.exit(0);
+  }
+
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
   });

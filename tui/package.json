@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun index.ts",
     "typecheck": "tsc --noEmit",
-    "build:bin": "bun build --compile index.ts --outfile dist/opensmi-tui"
+    "build:bin": "bun build --compile --production index.ts --outfile dist/opensmi-tui",
+    "smoke": "OTUI_NO_NATIVE_RENDER=1 OTUI_USE_ALTERNATE_SCREEN=0 bun index.ts --smoke-test"
   },
   "dependencies": {
     "@opentui/core": "^0.1.79",

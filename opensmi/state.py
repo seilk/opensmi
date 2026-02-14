@@ -8,7 +8,6 @@ ENV_STATE_DIR = "OPENSMI_STATE_DIR"
 ENV_CONFIG_PATH = "OPENSMI_CONFIG"
 DEFAULT_STATE_DIRNAME = ".opensmi"
 DEFAULT_CONFIG_NAME = "opensmi.json"
-LEGACY_CONFIG_NAME = "config.json"
 
 
 def get_state_dir(state_dir: Optional[str] = None) -> Path:
@@ -68,23 +67,9 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
 
     repo = find_repo_root()
     if repo:
-        preferred = (repo / DEFAULT_CONFIG_NAME)
-        if preferred.exists():
-            return preferred.resolve()
-        legacy = (repo / LEGACY_CONFIG_NAME)
-        if legacy.exists():
-            return legacy.resolve()
-        return preferred.resolve()
+        return (repo / DEFAULT_CONFIG_NAME).resolve()
 
-    preferred = config_path(state_dir)
-    if preferred.exists():
-        return preferred
-
-    legacy = (state_dir / LEGACY_CONFIG_NAME)
-    if legacy.exists():
-        return legacy
-
-    return preferred
+    return config_path(state_dir)
 
 
 def latest_snapshot_path(state_dir: Path) -> Path:

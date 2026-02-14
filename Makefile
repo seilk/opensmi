@@ -1,4 +1,4 @@
-.PHONY: help install tui build typecheck test check
+.PHONY: help install tui build typecheck test check build-cli install-cli
 
 help:
 	@echo "Targets:"
@@ -11,6 +11,12 @@ help:
 
 install:
 	python3 -m pip install -e .
+
+build-cli:
+	./scripts/build-cli-pyz.sh
+
+install-cli:
+	./scripts/install-cli.sh
 
 tui:
 	cd tui && bun index.ts

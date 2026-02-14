@@ -14,6 +14,7 @@ from .config import load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script
 from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
+from .update import UpdateError, update as update_release
 
 
 def _current_operator() -> str:
@@ -714,6 +715,32 @@ def _cmd_users(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_update(args: argparse.Namespace) -> int:
+    repo = args.repo or os.environ.get("OPENSMI_REPO") or "seil/opensmi"
+
+    try:
+        tag, bin_dir = update_release(
+            repo=repo,
+            version=str(args.version),
+            bin_dir=Path(args.bin_dir).expanduser().resolve() if args.bin_dir else None,
+            install_tui_flag=not bool(args.cli_only),
+            install_cli_flag=not bool(args.tui_only),
+            cli_method=str(args.cli_method),
+            verify=not bool(args.no_verify),
+        )
+    except UpdateError as e:
+        print(f"Update failed: {e}", file=sys.stderr)
+        return 2
+
+    print(f"✅ Updated to {tag}")
+    print(f"Bin dir: {bin_dir}")
+    if not args.tui_only:
+        print("Next: opensmi --help")
+    if not args.cli_only:
+        print("Next: opensmi-tui")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
     p.add_argument("--state-dir", default=None, help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)")
@@ -723,7 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Config path (default: ./opensmi.json in a repo checkout, else <state-dir>/opensmi.json; override with OPENSMI_CONFIG)",
     )
 
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=False)
 
     sp_init = sub.add_parser("init", help="Create default opensmi.json")
     sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
@@ -807,11 +834,81 @@ def build_parser() -> argparse.ArgumentParser:
     sp_u.add_argument("--json", action="store_true", help="Print JSON")
     sp_u.set_defaults(func=_cmd_users)
 
+    sp_up = sub.add_parser("update", help="Update opensmi (CLI and/or TUI) from GitHub Releases")
+    sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seil/opensmi)")
+    sp_up.add_argument("--version", default="latest", help="Tag (e.g. v0.1.0) or 'latest' (default)")
+    sp_up.add_argument("--bin-dir", default=None, help="Install dir for binaries (default: ~/.local/bin)")
+    sp_up.add_argument("--tui-only", action="store_true", help="Update only opensmi-tui")
+    sp_up.add_argument("--cli-only", action="store_true", help="Update only opensmi CLI")
+    sp_up.add_argument("--cli-method", default="auto", choices=["auto", "pip", "pyz"], help="CLI method")
+    sp_up.add_argument("--no-verify", action="store_true", help="Skip SHA256SUMS verification")
+    sp_up.set_defaults(func=_cmd_update)
+
     return p
 
 
+def _find_tui_binary() -> Optional[str]:
+    import shutil
+    from pathlib import Path
+
+    # Allow explicit override
+    env = os.environ.get("OPENSMI_TUI_BIN")
+    if env:
+        return env
+
+    # Prefer sibling next to the current launcher script
+    try:
+        here = Path(sys.argv[0]).expanduser().resolve()
+        if here.parent.exists():
+            cand = here.parent / "opensmi-tui"
+            if cand.exists() and os.access(str(cand), os.X_OK):
+                return str(cand)
+    except Exception:
+        pass
+
+    # Common default install path
+    cand = Path.home() / ".local" / "bin" / "opensmi-tui"
+    if cand.exists() and os.access(str(cand), os.X_OK):
+        return str(cand)
+
+    # PATH
+    return shutil.which("opensmi-tui")
+
+
+def _launch_tui() -> None:
+    # Only auto-launch in an interactive TTY.
+    if not sys.stdout.isatty():
+        print("No subcommand provided. Use --help for CLI usage.", file=sys.stderr)
+        raise SystemExit(2)
+
+    tui = _find_tui_binary()
+    if not tui:
+        print(
+            "opensmi-tui not found. Install it via the installer or set OPENSMI_TUI_BIN.\n"
+            "Examples:\n"
+            "  curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.sh | bash\n"
+            "  OPENSMI_TUI_BIN=/path/to/opensmi-tui opensmi\n",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    os.execvp(tui, [tui])
+
+
 def main(argv: Optional[list] = None) -> None:
+    argv = list(argv) if argv is not None else sys.argv[1:]
+
+    # If the user runs just `opensmi`, launch the TUI.
+    if len(argv) == 0:
+        _launch_tui()
+
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if not getattr(args, "cmd", None):
+        # Still no subcommand (e.g., only global flags were used) → show help.
+        parser.print_help()
+        raise SystemExit(0)
+
     rc = int(args.func(args))
     raise SystemExit(rc)
