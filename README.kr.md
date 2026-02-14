@@ -44,11 +44,15 @@ curl -fsSL https://raw.githubusercontent.com/seil/opensmi/main/scripts/install.s
 
 기본 설치 경로는 `~/.local/bin`이며, 필요 시 PATH 안내를 출력합니다.
 
+**요구사항:** macOS/Linux, Python 3.8+, (GPU 노드에) `nvidia-smi`가 있고 SSH로 접근 가능해야 합니다.
+
 ### 업데이트
 
 ```bash
 opensmi update
 ```
+
+GitHub API rate limit에 걸리면 `OPENSMI_GITHUB_TOKEN`을 설정하세요.
 
 ---
 
@@ -78,6 +82,7 @@ opensmi
 opensmi poll
 opensmi violations
 opensmi alloc list
+opensmi --help
 ```
 
 ---
