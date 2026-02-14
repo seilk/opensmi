@@ -332,13 +332,18 @@ def _users_on_gpu(node_snap, gpu_uuid: str):
 
 
 def _render_dashboard(cluster_snap) -> str:
-    # simple fixed layout: alias + 4 GPU columns + free count
-    header = ["Node", "GPU0", "GPU1", "GPU2", "GPU3", "Free"]
+    # Dynamic layout: pick the union of GPU indices across the cluster so
+    # nodes with different GPU counts still render in one table.
+    gpu_indices = sorted(
+        {g.index for n in cluster_snap.nodes if not n.error for g in n.gpus}
+    )
+
+    header = ["Node"] + [f"GPU{i}" for i in gpu_indices] + ["Free"]
     rows = []
 
     for n in cluster_snap.nodes:
         if n.error:
-            rows.append([n.node_alias, "ERR", "ERR", "ERR", "ERR", "-"])
+            rows.append([n.node_alias] + ["ERR"] * len(gpu_indices) + ["-"])
             continue
 
         # Map index -> uuid
@@ -346,11 +351,15 @@ def _render_dashboard(cluster_snap) -> str:
 
         gpu_cells = []
         free = 0
-        for i in range(4):
+        total = 0
+
+        for i in gpu_indices:
             uuid = idx_to_uuid.get(i)
             if not uuid:
                 gpu_cells.append("-")
                 continue
+
+            total += 1
             users = _users_on_gpu(n, uuid)
             if not users:
                 gpu_cells.append("-")
@@ -361,7 +370,11 @@ def _render_dashboard(cluster_snap) -> str:
                     cell = cell[:13] + "…"
                 gpu_cells.append(cell)
 
-        rows.append([n.node_alias] + gpu_cells + [f"{free}/4"])
+        # Fallback if gpu_indices is empty (or all GPUs are non-standard indices)
+        if total == 0:
+            total = len(n.gpus)
+
+        rows.append([n.node_alias] + gpu_cells + [f"{free}/{total}"])
 
     # column widths
     widths = [len(h) for h in header]
