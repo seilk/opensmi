@@ -235,12 +235,16 @@ fi
 
 # Parse assets via Python (no jq). Keep this robust: fail with a helpful error.
 _RELINFO_STR="$(
-  "$PYTHON" - "$OS" "$ARCH" < "$TMP/release.json" <<'PY'
+  # NOTE: We pass the JSON file path as an argv because stdin is used for the Python program via heredoc.
+  "$PYTHON" - "$OS" "$ARCH" "$TMP/release.json" <<'PY'
 import json, sys
 os = sys.argv[1]
 arch = sys.argv[2]
+path = sys.argv[3]
 
-data = json.load(sys.stdin)
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
 tag = data.get("tag_name", "")
 assets = [(a.get("name"), a.get("browser_download_url")) for a in data.get("assets", [])]
 
