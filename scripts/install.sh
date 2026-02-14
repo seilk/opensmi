@@ -84,16 +84,38 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
 fi
 
 # Require Python 3.8+ (CLI is stdlib-only but uses modern Python features).
-PY_VER="$($PYTHON - <<'PY'
+py_version() {
+  local bin="$1"
+  "$bin" - <<'PY'
 import sys
 print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")
 PY
-)"
-$PYTHON - <<'PY'
+}
+
+py_is_38plus() {
+  local bin="$1"
+  "$bin" - <<'PY'
 import sys
 sys.exit(0 if sys.version_info >= (3,8) else 1)
 PY
-if [[ $? -ne 0 ]]; then
+}
+
+PY_VER="$(py_version "$PYTHON")"
+if ! py_is_38plus "$PYTHON"; then
+  # Try common alternative python names automatically.
+  for cand in python3.12 python3.11 python3.10 python3.9 python3.8; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      if py_is_38plus "$cand"; then
+        echo "WARN: ${PYTHON} is ${PY_VER}; using ${cand} ($(py_version "$cand")) instead." >&2
+        PYTHON="$cand"
+        PY_VER="$(py_version "$PYTHON")"
+        break
+      fi
+    fi
+  done
+fi
+
+if ! py_is_38plus "$PYTHON"; then
   echo "opensmi requires Python 3.8+ (detected: ${PYTHON} ${PY_VER})." >&2
   echo "Install a newer Python or re-run with OPENSMI_PYTHON pointing to it." >&2
   echo "Example: OPENSMI_PYTHON=python3.11 curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash" >&2
