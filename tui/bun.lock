@@ -6,6 +6,8 @@
       "name": "tui",
       "dependencies": {
         "@opentui/core": "^0.1.79",
+        "@opentui/core-linux-arm64": "^0.1.79",
+        "@opentui/core-linux-x64": "^0.1.79",
       },
       "devDependencies": {
         "@types/bun": "latest",

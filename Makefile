@@ -1,9 +1,10 @@
-.PHONY: help install dev tui typecheck test check
+.PHONY: help install tui build typecheck test check
 
 help:
 	@echo "Targets:"
-	@echo "  install     - install Python package (editable)"
-	@echo "  tui         - run TUI"
+	@echo "  install     - install Python CLI (editable)"
+	@echo "  tui         - run TUI from source"
+	@echo "  build       - build TUI standalone binary"
 	@echo "  typecheck   - TypeScript typecheck"
 	@echo "  test        - run Python unit tests"
 	@echo "  check       - run all checks"
@@ -13,6 +14,9 @@ install:
 
 tui:
 	cd tui && bun index.ts
+
+build:
+	./scripts/build-tui.sh
 
 typecheck:
 	cd tui && bun install --frozen-lockfile && bun run tsc --noEmit

@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Python sdist + wheel ────────────────────────────────────────
+  python:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -25,14 +25,78 @@ jobs:
           python -m pip install -U pip build
           python -m build
 
-      - name: Create GitHub Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  # ── TUI binaries (one per platform) ────────────────────────────
+  tui:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            suffix: linux-x64
+          - runner: ubuntu-24.04-arm
+            suffix: linux-arm64
+          - runner: macos-latest
+            suffix: darwin-arm64
+          - runner: macos-13
+            suffix: darwin-x64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "latest"
+
+      - name: Install TUI deps
+        run: cd tui && bun install --frozen-lockfile
+
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          bun build \
+            --compile \
+            --production \
+            --outfile=dist/micvgpus-tui-${{ matrix.suffix }} \
+            tui/index.ts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tui-${{ matrix.suffix }}
+          path: dist/micvgpus-tui-${{ matrix.suffix }}
+
+  # ── Create GitHub Release ──────────────────────────────────────
+  release:
+    needs: [python, tui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: |
-            dist/*
+            artifacts/*
 
       # Optional: publish to PyPI
       # - name: Publish to PyPI
       #   uses: pypa/gh-action-pypi-publish@release/v1
       #   with:
       #     password: ${{ secrets.PYPI_API_TOKEN }}
+      #     packages-dir: artifacts/

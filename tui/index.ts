@@ -221,10 +221,35 @@ function getAllocTarget(nodeAlias: string, gpuIdx: number): string | null {
 }
 
 function _parseTargets(target: string): string[] {
-  return target
+  // Keep order (do NOT sort) and allow comma-separated multi-user values.
+  const parts = target
     .split(/[\s,]+/g)
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const p of parts) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
+function _filteredDraftList(raw: string, universeSet: Set<string>): string[] {
+  return _parseTargets(raw).filter((t) => t === "*" || universeSet.has(t));
+}
+
+function _toggleDraftUser(raw: string, user: string, universeSet: Set<string>): string {
+  const cur = _filteredDraftList(raw, universeSet);
+  const idx = cur.indexOf(user);
+  if (idx >= 0) {
+    cur.splice(idx, 1);
+  } else {
+    cur.push(user);
+  }
+  return cur.join(",");
 }
 
 function isViolation(nodeAlias: string, gpuIdx: number, user: string): boolean {
@@ -712,7 +737,7 @@ function renderAlloc() {
 
   const input = Input({
     id: "alloc-user-input",
-    width: 28,
+    width: "100%",
     value: allocDraftUser,
     placeholder: "username or *",
     backgroundColor: C.bgAlt,
@@ -732,9 +757,7 @@ function renderAlloc() {
   } else if (!filteredUsers.length) {
     userRows.push(Text({ content: "(no matches)", fg: C.textDim }));
   } else {
-    const currentSet = new Set(
-      _parseTargets(allocDraftUser).filter((t) => t === "*" || universeSet.has(t))
-    );
+    const currentSet = new Set(_filteredDraftList(allocDraftUser, universeSet));
 
     for (const u of filteredUsers) {
       const isSel = currentSet.has(u);
@@ -774,15 +797,7 @@ function renderAlloc() {
                 return;
               }
 
-              // Toggle user in the draft list (multi-user allocations).
-              // Drop any partial/nonexistent tokens (e.g. while typing after a comma).
-              const set = new Set(
-                _parseTargets(allocDraftUser).filter((t) => t === "*" || universeSet.has(t))
-              );
-              if (set.has(u)) set.delete(u);
-              else set.add(u);
-
-              allocDraftUser = [...set].sort((a, b) => a.localeCompare(b)).join(",");
+              allocDraftUser = _toggleDraftUser(allocDraftUser, u, universeSet);
               allocErrorMsg = "";
               requestRender?.();
             },
@@ -824,14 +839,34 @@ function renderAlloc() {
     )
   );
 
+  const selectedUsers = _filteredDraftList(allocDraftUser, universeSet);
+  const selectedRows: any[] = selectedUsers.length
+    ? selectedUsers.map((u) => Text({ content: `  ${u}`, fg: C.text }))
+    : [Text({ content: "  (none)", fg: C.textDim })];
+
   const rightPanel = Box(
     { flexDirection: "column", flexGrow: 1, height: "100%", gap: 1, overflow: "hidden" },
-    Text({ content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}`, fg: C.cyan }),
+    Text({
+      content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}${gpuInfo ? ` — ${gpuInfo.name} (${gpuMemStr(gpuInfo.memory_total_mib)})` : ""}`,
+      fg: C.cyan,
+    }),
     Text({ content: `Current allocation: ${currentAllocStr}`, fg: C.textDim }),
     Text({ content: `Live users: ${liveStr}`, fg: C.textDim }),
+    Text({ content: "Selected users:", fg: C.textDim }),
+    ScrollBox(
+      {
+        id: "alloc-selected-scroll",
+        height: 6,
+        width: "100%",
+        overflow: "hidden",
+        scrollY: true,
+        verticalScrollbarOptions: { visible: true, showArrows: false },
+      },
+      ...selectedRows
+    ),
     Text({ content: "Enter username (or * for everyone):", fg: C.textDim }),
     input,
-    Text({ content: "[Tab] Autocomplete from matches", fg: C.textDim }),
+    Text({ content: "[Tab] Autocomplete last segment", fg: C.textDim }),
     Text({ content: matchesLine, fg: C.textDim }),
     errorNode,
     Text({ content: "[Enter] Save    [Esc] Cancel", fg: C.textDim })
@@ -1233,8 +1268,17 @@ async function main() {
 
         if (match) {
           const prefix = parts.map((p) => p.trim()).filter(Boolean);
-          const set = new Set([...prefix, match]);
-          allocDraftUser = [...set].sort((a, b) => a.localeCompare(b)).join(",");
+          const out: string[] = [];
+          const seen = new Set<string>();
+
+          for (const p of prefix) {
+            if (seen.has(p)) continue;
+            seen.add(p);
+            out.push(p);
+          }
+          if (!seen.has(match)) out.push(match);
+
+          allocDraftUser = out.join(",");
           render();
         }
       } else if (key.name === "return") {
