@@ -1127,7 +1127,7 @@ function renderDashboard() {
         content: runnerInputTyping
           ? t`${fg(C.yellow)("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
           : (runnerFocused
-              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
+              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Shift+click]")} Select GPU  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
               : (runnerPaneFolded
                   ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`
                   : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`)),
@@ -1215,7 +1215,28 @@ function renderDetail() {
 
             selectedGpuIdx = g.index;
 
-            // Ctrl+click to toggle GPU for launch selection
+            // Shift+click when runner focused: toggle GPU for runner launch
+            if (e?.shift && runnerFocused) {
+              const gpuKey = { node: node.node_alias, gpu: g.index };
+              const idx = launchManualGpus.findIndex(
+                (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+              );
+              
+              if (idx >= 0) {
+                launchManualGpus.splice(idx, 1);
+              } else {
+                launchManualGpus.push(gpuKey);
+              }
+              
+              // Auto-switch to selected mode and update
+              launchGpuMode = "selected";
+              launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+              
+              requestRender?.();
+              return;
+            }
+
+            // Ctrl+click to toggle GPU for launch selection (modal mode)
             if (e?.ctrl) {
               const gpuKey = { node: node.node_alias, gpu: g.index };
               const idx = launchManualGpus.findIndex(
