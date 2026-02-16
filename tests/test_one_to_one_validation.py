@@ -9,11 +9,12 @@ verify the validation rules that should be enforced:
 """
 
 import unittest
+from typing import List, Tuple
 
 
 def validate_one_to_one_commands(
-    commands: list[str], num_gpus: int
-) -> tuple[bool, str]:
+    commands: List[str], num_gpus: int
+) -> Tuple[bool, str]:
     """
     Validation logic for one-to-one mode.
     Returns (is_valid, error_message).
