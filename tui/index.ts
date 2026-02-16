@@ -2957,7 +2957,7 @@ async function main() {
           selectedGpuIdx = idxs[pos + 1]!;
           render();
         }
-      } else if (key.name === "a") {
+      } else if (key.name === "return" || key.name === "a") {
         if (!requireAdminUI("allocate")) return;
 
         // Prevent the triggering keypress from being delivered to the newly focused Input.
