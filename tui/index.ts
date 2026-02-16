@@ -1598,7 +1598,12 @@ function renderKill() {
 }
 
 function renderRunnerPane() {
-  const height = runnerPaneFolded ? 3 : 13;
+  const baseHeight = 3;
+  const modeLineCount = 3;
+  const inputHeight = launchDistMode === "one-to-one" ? launchNumGpus : 1;
+  const errorHeight = launchErrorMsg ? 1 : 0;
+  const height = runnerPaneFolded ? baseHeight : (baseHeight + modeLineCount + inputHeight + errorHeight + 2);
+  
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
   const focusIndicator = runnerFocused 
     ? (runnerInputTyping ? "⌨ typing" : "● focused") 
@@ -1670,25 +1675,62 @@ function renderRunnerPane() {
     ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
     : null;
   
-  const inputLabel = Text({ content: "Command:", fg: C.textDim });
+  const commandNodes: any[] = [];
   
-  let cmdInput: any;
-  if (runnerFocused) {
-    cmdInput = Input({
-      id: "runner-cmd-input",
-      width: "100%",
-      value: runnerInputBuffer,
-      placeholder: "type command and press Enter...",
-      backgroundColor: C.bgAlt,
-      focusedBackgroundColor: "#3b4261",
-      textColor: "#ffffff",
-      cursorColor: C.green,
-    });
+  if (launchDistMode === "single") {
+    commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
+    
+    if (runnerFocused) {
+      commandNodes.push(Input({
+        id: "runner-cmd-input",
+        width: "100%",
+        value: runnerInputBuffer,
+        placeholder: "type command and press Enter...",
+        backgroundColor: C.bgAlt,
+        focusedBackgroundColor: "#3b4261",
+        textColor: "#ffffff",
+        cursorColor: C.green,
+      }));
+    } else {
+      commandNodes.push(Text({
+        content: `> ${launchCommand || "(not set)"}`,
+        fg: C.textDim,
+      }));
+    }
   } else {
-    cmdInput = Text({
-      content: `> ${launchCommand || "(not set)"}`,
-      fg: C.textDim,
-    });
+    // one-to-one mode
+    commandNodes.push(Text({ 
+      content: `Commands (${launchNumGpus} lines, one per GPU):`, 
+      fg: C.textDim 
+    }));
+    
+    if (runnerFocused) {
+      for (let i = 0; i < launchNumGpus; i++) {
+        const value = launchCommands[i] || "";
+        const gpu = launchSelectedGpus[i];
+        const label = gpu ? `${gpu.node}:GPU${gpu.gpu}` : `GPU ${i}`;
+        commandNodes.push(Input({
+          id: `runner-cmd-input-${i}`,
+          value,
+          width: "100%",
+          backgroundColor: C.bgAlt,
+          focusedBackgroundColor: "#3b4261",
+          textColor: "#ffffff",
+          cursorColor: C.green,
+          placeholder: `${label} command...`,
+        }));
+      }
+    } else {
+      for (let i = 0; i < launchNumGpus; i++) {
+        const cmd = launchCommands[i] || "";
+        const gpu = launchSelectedGpus[i];
+        const label = gpu ? `${gpu.node}:GPU${gpu.gpu}` : `GPU ${i}`;
+        commandNodes.push(Text({
+          content: `${label}: ${cmd || "(empty)"}`,
+          fg: cmd.trim() ? C.textDim : C.red,
+        }));
+      }
+    }
   }
 
   const contentNodes = [
@@ -1696,8 +1738,7 @@ function renderRunnerPane() {
     modeInfo,
     gpuText,
     Text({ content: " " }),
-    inputLabel,
-    cmdInput,
+    ...commandNodes,
     ...(errorText ? [errorText] : [])
   ];
 
@@ -2351,10 +2392,20 @@ async function main() {
           runnerInputTyping = false;
           render();
         } else if (key.name === "return") {
-          // Execute command
-          const inputAny: any = container.findDescendantById("runner-cmd-input");
-          runnerInputBuffer = String(inputAny?.value ?? "");
-          launchCommand = runnerInputBuffer;
+          // Capture input values
+          if (launchDistMode === "single") {
+            const inputAny: any = container.findDescendantById("runner-cmd-input");
+            runnerInputBuffer = String(inputAny?.value ?? "");
+            launchCommand = runnerInputBuffer;
+          } else {
+            for (let i = 0; i < launchNumGpus; i++) {
+              const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+              if (inputAny) {
+                launchCommands[i] = String(inputAny?.value ?? "");
+              }
+            }
+          }
+          
           runnerInputTyping = false;
           runnerFocused = false;
           await executeLaunch();
@@ -2402,18 +2453,40 @@ async function main() {
       if (runnerFocused) {
         if (key.name === "escape") {
           runnerFocused = false;
-          const inputAny: any = container.findDescendantById("runner-cmd-input");
-          runnerInputBuffer = String(inputAny?.value ?? "");
-          launchCommand = runnerInputBuffer;
+          
+          // Capture input values
+          if (launchDistMode === "single") {
+            const inputAny: any = container.findDescendantById("runner-cmd-input");
+            runnerInputBuffer = String(inputAny?.value ?? "");
+            launchCommand = runnerInputBuffer;
+          } else {
+            for (let i = 0; i < launchNumGpus; i++) {
+              const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+              if (inputAny) {
+                launchCommands[i] = String(inputAny?.value ?? "");
+              }
+            }
+          }
+          
           render();
           return;
         }
         
         if (key.name === "return") {
-          // Execute command
-          const inputAny: any = container.findDescendantById("runner-cmd-input");
-          runnerInputBuffer = String(inputAny?.value ?? "");
-          launchCommand = runnerInputBuffer;
+          // Capture input values
+          if (launchDistMode === "single") {
+            const inputAny: any = container.findDescendantById("runner-cmd-input");
+            runnerInputBuffer = String(inputAny?.value ?? "");
+            launchCommand = runnerInputBuffer;
+          } else {
+            for (let i = 0; i < launchNumGpus; i++) {
+              const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+              if (inputAny) {
+                launchCommands[i] = String(inputAny?.value ?? "");
+              }
+            }
+          }
+          
           runnerFocused = false;
           await executeLaunch();
           render();
