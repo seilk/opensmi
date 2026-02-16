@@ -1009,13 +1009,51 @@ function renderDashboard() {
         continue;
       }
 
+      const isSelected = launchManualGpus.some(
+        (x) => x.node === n.node_alias && x.gpu === i
+      );
+      const dot = isSelected ? "● " : "";
+
       const users = usersOnGpu(n, g.uuid);
       if (users.length === 0) {
         const alloc = getAllocation(n.node_alias, i);
         const remain = expiresInShort(alloc?.expires_at);
         const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : "idle";
-        const display = label.length > w - 1 ? label.slice(0, w - 2) + "…" : label;
-        gpuCells.push(Text({ content: display.padEnd(w), fg: C.textDim }));
+        const display = (dot + label).length > w - 1 ? (dot + label).slice(0, w - 2) + "…" : (dot + label);
+        gpuCells.push(
+          Box(
+            { width: w, height: 1, position: "relative" },
+            Text({ content: display.padEnd(w), fg: isSelected ? C.yellow : C.textDim }),
+            runnerFocused ? Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 1000,
+              onMouseDown: (e: any) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                
+                const gpuKey = { node: n.node_alias, gpu: i };
+                const idx = launchManualGpus.findIndex(
+                  (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+                );
+                
+                if (idx >= 0) {
+                  launchManualGpus.splice(idx, 1);
+                } else {
+                  launchManualGpus.push(gpuKey);
+                }
+                
+                launchGpuMode = "selected";
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                
+                requestRender?.();
+              },
+            }) : undefined
+          )
+        );
         free++;
       } else {
         const hasViolation = users.some((u) => isViolation(n.node_alias, i, u));
@@ -1023,12 +1061,43 @@ function renderDashboard() {
         const utilVal = gpuUtilPct(g);
         const util = utilVal !== null ? ` ${utilVal}%` : "";
         const label = `${cell}${util}`;
-        const display = label.length > w - 1 ? label.slice(0, w - 2) + "…" : label;
+        const display = (dot + label).length > w - 1 ? (dot + label).slice(0, w - 2) + "…" : (dot + label);
         gpuCells.push(
-          Text({
-            content: display.padEnd(w),
-            fg: hasViolation ? C.red : C.green,
-          })
+          Box(
+            { width: w, height: 1, position: "relative" },
+            Text({
+              content: display.padEnd(w),
+              fg: isSelected ? C.yellow : (hasViolation ? C.red : C.green),
+            }),
+            runnerFocused ? Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 1000,
+              onMouseDown: (e: any) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                
+                const gpuKey = { node: n.node_alias, gpu: i };
+                const idx = launchManualGpus.findIndex(
+                  (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+                );
+                
+                if (idx >= 0) {
+                  launchManualGpus.splice(idx, 1);
+                } else {
+                  launchManualGpus.push(gpuKey);
+                }
+                
+                launchGpuMode = "selected";
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                
+                requestRender?.();
+              },
+            }) : undefined
+          )
         );
       }
     }
@@ -1195,19 +1264,17 @@ function renderDetail() {
     const inLaunchSelection = launchManualGpus.some(
       (x) => x.node === node.node_alias && x.gpu === g.index
     );
-    const prefix = isSel ? "▸" : " ";
+    const prefix = isSel ? "▸" : (inLaunchSelection ? "●" : " ");
     children.push(
       Box(
         { 
           width: "100%", 
           height: 1, 
           position: "relative",
-          borderStyle: inLaunchSelection ? "single" : undefined,
-          borderColor: inLaunchSelection ? C.yellow : undefined,
         },
         Text({
           content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}  |  ${activityStr}`,
-          fg: isSel ? "#ffffff" : C.cyan,
+          fg: isSel ? "#ffffff" : (inLaunchSelection ? C.yellow : C.cyan),
         }),
         Box({
           position: "absolute",
