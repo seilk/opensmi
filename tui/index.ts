@@ -2805,13 +2805,33 @@ async function main() {
         }
         
         if (key.name === "+" || key.name === "=") {
+          const oldMode = launchGpuMode;
+          const oldCount = launchNumGpus;
+          
           launchNumGpus = Math.min(launchNumGpus + 1, 16);
+          
+          // Get next best GPU via auto selection
+          launchGpuMode = "auto";
+          await refreshLaunchGpuSelection();
+          
+          // Add the new GPU to manual selection
+          if (launchSelectedGpus.length > oldCount) {
+            const newGpu = launchSelectedGpus[launchSelectedGpus.length - 1];
+            if (newGpu && !launchManualGpus.some(g => g.node === newGpu.node && g.gpu === newGpu.gpu)) {
+              launchManualGpus.push({ node: newGpu.node, gpu: newGpu.gpu });
+            }
+          }
+          
+          // Switch to selected mode to show marking
+          launchGpuMode = "selected";
+          launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+          
           if (launchDistMode === "one-to-one") {
             while (launchCommands.length < launchNumGpus) {
               launchCommands.push("");
             }
           }
-          await refreshLaunchGpuSelection();
+          
           render();
           return;
         }
