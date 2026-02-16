@@ -2608,23 +2608,11 @@ async function main() {
           return;
         }
         
-        // Start typing when alphanumeric key pressed
-        if (key.sequence && key.sequence.length === 1 && /[a-zA-Z0-9 ]/.test(key.sequence)) {
+        // Detect typing when any printable key is pressed
+        if (key.sequence && key.sequence.length === 1) {
           runnerInputTyping = true;
-          render();
-          setTimeout(() => {
-            if (launchDistMode === "single") {
-              const inputAny: any = container.findDescendantById("runner-cmd-input");
-              if (inputAny) inputAny.focus();
-            } else {
-              const inputAny: any = container.findDescendantById("runner-cmd-input-0");
-              if (inputAny) inputAny.focus();
-            }
-          }, 50);
-          return;
+          // Let the key pass through to input
         }
-        
-        // Block all other keys
         return;
       }
       
