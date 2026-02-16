@@ -1283,10 +1283,15 @@ function renderDetail() {
 
   children.push(
     Text({
-      content:
-        isAdmin
-          ? "[↑↓] GPU  [Ctrl+click] Launch select  [a] Allocate  [*] Open-to-all  [x] Clear  [Shift+K] Kill  [Esc] Back"
-          : "[↑↓] GPU  [Ctrl+click] Launch select  [Esc] Back  [r] Refresh   (read-only)",
+      content: runnerInputTyping
+        ? t`${fg(C.yellow)("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
+        : (runnerFocused
+            ? (isAdmin
+                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
+                : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Esc]")} Back`)
+            : (isAdmin
+                ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear  [Shift+K] Kill  [ctrl+x ↓] Runner  [Esc] Back"
+                : "[↑↓] GPU  [ctrl+x ↓] Runner  [Esc] Back  [r] Refresh   (read-only)")),
       fg: C.textDim,
     }),
     Text({
@@ -1297,8 +1302,12 @@ function renderDetail() {
   );
 
   return Box(
-    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
-    ...children
+    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
+      ...children
+    ),
+    renderRunnerPane()
   );
 }
 
@@ -1604,12 +1613,12 @@ function renderKill() {
 }
 
 function renderRunnerPane() {
-  const baseHeight = 3;
-  const modeLineCount = 3;
+  const baseHeight = 4; // Increased from 3 (+33%, rounded to nearest int)
+  const modeLineCount = 4; // Increased from 3 (+33%, rounded)
   const inputHeight = launchDistMode === "one-to-one" ? launchNumGpus : 1;
   const tmuxHeight = launchMode === "tmux" ? 2 : 0;
   const errorHeight = launchErrorMsg ? 1 : 0;
-  const height = runnerPaneFolded ? baseHeight : (baseHeight + modeLineCount + inputHeight + tmuxHeight + errorHeight + 3);
+  const height = runnerPaneFolded ? baseHeight : (baseHeight + modeLineCount + inputHeight + tmuxHeight + errorHeight + 4); // +1 additional line
   
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
   const focusIndicator = runnerFocused 
