@@ -112,7 +112,7 @@ const runnerMaxHeight = 40;
 let runnerMaximized = false;
 
 let launchCommand = "";
-let launchNumGpus = 1;
+let launchNumGpus = 0; // Start with 0, user adds GPUs via + or click
 let launchErrorMsg = "";
 let launchErrorTimeout: any = null;
 let launchOutput = "";
@@ -120,7 +120,7 @@ let launchSelectedGpus: Array<{ node: string; gpu: number }> = [];
 let launchMode: "direct" | "tmux" = "direct";
 let launchTmuxSession = "";
 let launchDistMode: "single" | "one-to-one" = "one-to-one";
-let launchCommands: string[] = [""]; // Initialize with one empty command for default
+let launchCommands: string[] = []; // Empty initially, populated when GPUs added
 let launchGpuMode: "auto" | "selected" = "auto";
 let launchManualGpus: Array<{ node: string; gpu: number }> = [];
 let launchSelectionReasoning = "";
@@ -1776,7 +1776,14 @@ function renderRunnerPane() {
   
   const commandNodes: any[] = [];
   
-  if (launchDistMode === "single") {
+  // Show hint if no GPUs selected
+  if (launchSelectedGpus.length === 0) {
+    commandNodes.push(Text({ content: " ", fg: C.textDim }));
+    commandNodes.push(Text({ 
+      content: "No GPUs selected. Press [+] or click GPU cells to add.", 
+      fg: C.yellow 
+    }));
+  } else if (launchDistMode === "single") {
     commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
     
     const isCmdFocused = runnerFocused && runnerFocusedInputIdx === 0;
