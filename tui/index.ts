@@ -112,6 +112,7 @@ let runnerMaximized = false;
 let launchCommand = "";
 let launchNumGpus = 1;
 let launchErrorMsg = "";
+let launchErrorTimeout: any = null;
 let launchOutput = "";
 let launchSelectedGpus: Array<{ node: string; gpu: number }> = [];
 let launchMode: "direct" | "tmux" = "direct";
@@ -146,6 +147,7 @@ let sudoCheckingByNode: Record<string, boolean> = {};
 
 // UI helpers
 let statusMsg = "";
+let statusMsgTimeout: any = null;
 let statusUntil = 0;
 let systemUsers: string[] = [];
 let systemUsersLoadedAt = 0;
@@ -252,6 +254,15 @@ async function runOpensmi(
   const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   return { code, stdout, stderr };
+}
+
+function setLaunchError(msg: string): void {
+  launchErrorMsg = msg;
+  if (launchErrorTimeout) clearTimeout(launchErrorTimeout);
+  launchErrorTimeout = setTimeout(() => {
+    launchErrorMsg = "";
+    requestRender?.();
+  }, 1000);
 }
 
 async function refreshLaunchGpuSelection(): Promise<void> {
@@ -720,7 +731,7 @@ function runtimeStr(sec: number | null | undefined): string {
   return `${s}s`;
 }
 
-function setStatus(msg: string, ttlMs: number = 3000) {
+function setStatus(msg: string, ttlMs: number = 1000) {
   statusMsg = msg;
   statusUntil = Date.now() + ttlMs;
   requestRender?.();
@@ -1893,9 +1904,20 @@ function renderRunnerPane() {
     gpuText,
     Text({ content: " " }),
     ...commandNodes,
-    ...tmuxNodes,
-    ...(errorText ? [errorText] : [])
+    ...tmuxNodes
   ];
+
+  const errorBox = errorText ? Box(
+    {
+      position: "absolute",
+      bottom: 1,
+      right: 2,
+      backgroundColor: C.bgAlt,
+      padding: 0,
+      zIndex: 1001,
+    },
+    errorText
+  ) : null;
 
   return Box(
     {
@@ -1921,7 +1943,8 @@ function renderRunnerPane() {
         }
       },
     },
-    ...contentNodes
+    ...contentNodes,
+    ...(errorBox ? [errorBox] : [])
   );
 }
 
@@ -2091,27 +2114,27 @@ async function executeLaunch(): Promise<void> {
   runnerStartTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
   
   if (!snapshot) {
-    launchErrorMsg = "No snapshot available";
+    setLaunchError("No snapshot available");
     runnerState = "failed";
     return;
   }
   
   if (launchSelectedGpus.length === 0) {
-    launchErrorMsg = "No GPUs available";
+    setLaunchError("No GPUs available");
     runnerState = "failed";
     return;
   }
   
   if (launchDistMode === "single") {
     if (!launchCommand.trim()) {
-      launchErrorMsg = "Command cannot be empty";
+      setLaunchError("Command cannot be empty");
       runnerState = "failed";
       return;
     }
   } else {
     const nonEmpty = launchCommands.filter(c => c.trim()).length;
     if (nonEmpty === 0) {
-      launchErrorMsg = "At least one command must be provided";
+      setLaunchError("At least one command must be provided");
       runnerState = "failed";
       return;
     }
@@ -2241,7 +2264,7 @@ async function executeLaunchOneToOne(): Promise<void> {
       const checkCode = await checkProc.exited;
       
       if (checkCode !== 0) {
-        launchErrorMsg = "tmux is not installed or not found in PATH";
+        setLaunchError("tmux is not installed or not found in PATH");
         return;
       }
       
@@ -2309,7 +2332,7 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
   const checkCode = await checkProc.exited;
   
   if (checkCode !== 0) {
-    launchErrorMsg = "tmux is not installed or not found in PATH";
+    setLaunchError("tmux is not installed or not found in PATH");
     return;
   }
   
