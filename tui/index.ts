@@ -1088,13 +1088,16 @@ function renderDetail() {
     const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
 
     const isSel = g.index === selectedGpuIdx;
-    const prefix = isSel ? "▸" : " ";
+    const inLaunchSelection = launchManualGpus.some(
+      (x) => x.node === node.node_alias && x.gpu === g.index
+    );
+    const prefix = isSel ? "▸" : inLaunchSelection ? "★" : " ";
     children.push(
       Box(
         { width: "100%", height: 1, position: "relative" },
         Text({
           content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}`,
-          fg: isSel ? "#ffffff" : C.cyan,
+          fg: isSel ? "#ffffff" : inLaunchSelection ? C.yellow : C.cyan,
         }),
         Box({
           position: "absolute",
@@ -1108,6 +1111,27 @@ function renderDetail() {
             e.stopPropagation?.();
 
             selectedGpuIdx = g.index;
+
+            // Ctrl+click to toggle GPU for launch selection
+            if (e?.ctrl) {
+              const gpuKey = { node: node.node_alias, gpu: g.index };
+              const idx = launchManualGpus.findIndex(
+                (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+              );
+              
+              if (idx >= 0) {
+                launchManualGpus.splice(idx, 1);
+              } else {
+                launchManualGpus.push(gpuKey);
+              }
+              
+              if (launchGpuMode === "selected") {
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+              }
+              
+              requestRender?.();
+              return;
+            }
 
             // Double-click to open Allocate modal.
             const now = Date.now();
@@ -1152,8 +1176,8 @@ function renderDetail() {
     Text({
       content:
         isAdmin
-          ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear alloc  [Shift+K] Kill violators  [Esc] Back  [r] Refresh"
-          : "[↑↓] GPU  [Esc] Back  [r] Refresh   (read-only)",
+          ? "[↑↓] GPU  [Ctrl+click] Launch select  [a] Allocate  [*] Open-to-all  [x] Clear  [Shift+K] Kill  [Esc] Back"
+          : "[↑↓] GPU  [Ctrl+click] Launch select  [Esc] Back  [r] Refresh   (read-only)",
       fg: C.textDim,
     }),
     Text({
@@ -1584,7 +1608,7 @@ function renderLaunch() {
     : Text({ content: " ", fg: C.textDim });
   
   const footer = Text({
-    content: "[Tab] Exec    [Shift+Tab] Dist    [+/-] GPU    [Enter] Launch    [Esc] Cancel",
+    content: "[g] GPU Mode    [Tab] Exec    [Shift+Tab] Dist    [+/-] GPU    [Enter] Launch    [Esc] Cancel",
     fg: C.textDim,
   });
   
@@ -1601,6 +1625,7 @@ function renderLaunch() {
       backgroundColor: C.bg,
     },
     header,
+    gpuModeLabel,
     modeLabel,
     Text({ content: " " }),
     ...commandNodes,
@@ -2114,6 +2139,7 @@ async function main() {
         launchTmuxSession = "";
         launchDistMode = "single";
         launchCommands = [];
+        launchGpuMode = "auto";
         await refreshLaunchGpuSelection();
         render();
       } else if (key.name === "q") {
@@ -2422,6 +2448,19 @@ async function main() {
         }
         
         await refreshLaunchGpuSelection();
+        render();
+      } else if (key.sequence === "g") {
+        key.preventDefault();
+        key.stopPropagation();
+        
+        launchGpuMode = launchGpuMode === "auto" ? "selected" : "auto";
+        
+        if (launchGpuMode === "auto") {
+          await refreshLaunchGpuSelection();
+        } else {
+          launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+        }
+        
         render();
       } else if (key.name === "return") {
         key.preventDefault();
