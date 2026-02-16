@@ -269,7 +269,11 @@ function setLaunchError(msg: string): void {
 
 function getGpuCommandPlaceholder(gpu: { node: string; gpu: number } | undefined): string {
   if (!gpu) return "";
-  return `${gpu.node}:GPU${gpu.gpu}: (click to edit)`;
+  return ""; // Empty string for storage, display handled in render
+}
+
+function getGpuLabel(gpu: { node: string; gpu: number }): string {
+  return `${gpu.node}:GPU${gpu.gpu}`;
 }
 
 async function refreshLaunchGpuSelection(): Promise<void> {
