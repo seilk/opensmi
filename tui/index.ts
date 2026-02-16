@@ -68,6 +68,7 @@ interface Allocation {
 
 let snapshot: ClusterSnapshot | null = null;
 let allocations: Allocation[] = [];
+let gpuIdleStart: Record<string, number> = {}; // Key: "node:gpuUuid", Value: timestamp
 let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
@@ -432,10 +433,36 @@ async function pollCluster(): Promise<void> {
 
     lastPollTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
     recomputeKnownUsers();
+    updateGpuIdleTracking();
   } catch (e: any) {
     pollError = e.message || String(e);
   } finally {
     isPolling = false;
+  }
+}
+
+function updateGpuIdleTracking(): void {
+  if (!snapshot) return;
+  
+  const now = Date.now();
+  
+  for (const node of snapshot.nodes) {
+    if (node.error) continue;
+    
+    for (const gpu of node.gpus) {
+      const key = `${node.node_alias}:${gpu.uuid}`;
+      const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
+      
+      if (procs.length === 0) {
+        // GPU is idle
+        if (!gpuIdleStart[key]) {
+          gpuIdleStart[key] = now;
+        }
+      } else {
+        // GPU has processes - reset idle tracking
+        delete gpuIdleStart[key];
+      }
+    }
   }
 }
 
@@ -525,29 +552,33 @@ function expiresInShort(expiresAt: string | null | undefined): string {
 }
 
 function gpuActivityStatus(node: NodeSnapshot, gpuUuid: string): string {
-  // Find processes on this GPU
   const procs = node.processes.filter(p => p.gpu_uuid === gpuUuid);
   
-  if (procs.length === 0) {
-    return "idle";
+  if (procs.length > 0) {
+    // GPU is in use
+    return "in use";
   }
   
-  // Find longest running process
-  const maxRuntime = Math.max(...procs.map(p => p.runtime_s ?? 0));
+  // GPU is idle - check how long
+  const key = `${node.node_alias}:${gpuUuid}`;
+  const idleStartTime = gpuIdleStart[key];
   
-  if (maxRuntime <= 0) {
-    return "active <1m";
+  if (!idleStartTime) {
+    return "idle (new)";
   }
   
-  const totalMin = Math.floor(maxRuntime / 60);
+  const idleMs = Date.now() - idleStartTime;
+  if (idleMs < 0) return "idle (new)";
+  
+  const totalMin = Math.floor(idleMs / 60_000);
   const day = Math.floor(totalMin / (60 * 24));
   const hour = Math.floor((totalMin % (60 * 24)) / 60);
   const min = totalMin % 60;
   
-  if (day > 0) return `active ${day}d${hour}h`;
-  if (hour > 0) return `active ${hour}h${min}m`;
-  if (min > 0) return `active ${min}m`;
-  return "active <1m";
+  if (day > 0) return `idle ${day}d${hour}h`;
+  if (hour > 0) return `idle ${hour}h${min}m`;
+  if (min > 0) return `idle ${min}m`;
+  return "idle <1m";
 }
 
 function countExpiringWithin(hours: number): number {
