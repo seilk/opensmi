@@ -80,7 +80,7 @@ let lastNodeClickAt = 0;
 let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
 
 // Command runner pane state
-let runnerPaneOpen = false;
+let runnerPaneOpen = true;
 let runnerPaneHeight = 15; // lines
 let runnerPaneMaximized = false;
 let allocDraftUser = "";
@@ -1038,8 +1038,8 @@ function renderDashboard() {
       { flexDirection: "row", paddingTop: 1 },
       Text({
         content: runnerPaneOpen 
-          ? t`${fg(C.textDim)("[ctrl+r]")} Close runner  ${fg(C.textDim)("[ctrl+j/k]")} Resize  ${fg(C.textDim)("[ctrl+l]")} Maximize  ${fg(C.textDim)("[Enter]")} Launch  ${fg(C.textDim)("[l]")} Full screen`
-          : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+r]")} Runner  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
+          ? t`${fg(C.textDim)("[R]")} Close runner  ${fg(C.textDim)("[J/K]")} Resize  ${fg(C.textDim)("[L]")} Maximize  ${fg(C.textDim)("[Enter]")} Launch  ${fg(C.textDim)("[l]")} Full screen`
+          : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[R]")} Runner  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
       })
     )
   );
@@ -1540,7 +1540,7 @@ function renderRunnerPane(compact: boolean = true) {
     : null;
   
   const footer = Text({
-    content: "[l] Full screen  [ctrl+r] Close  [ctrl+j/k] Resize  [ctrl+l] Maximize  [Enter] Launch",
+    content: "[l] Full screen  [R] Close  [J/K] Resize  [L] Maximize  [Enter] Launch",
     fg: C.textDim,
   });
 
@@ -2215,23 +2215,23 @@ async function main() {
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
         render();
-      } else if (key.name === "r" && key.ctrl) {
+      } else if (key.name === "R" && key.shift) {
         runnerPaneOpen = !runnerPaneOpen;
         if (runnerPaneOpen) {
           await refreshLaunchGpuSelection();
         }
         render();
-      } else if (key.name === "j" && key.ctrl) {
+      } else if (key.name === "J" && key.shift) {
         if (runnerPaneOpen && !runnerPaneMaximized) {
           runnerPaneHeight = Math.max(5, runnerPaneHeight - 2);
           render();
         }
-      } else if (key.name === "k" && key.ctrl) {
+      } else if (key.name === "K" && key.shift) {
         if (runnerPaneOpen && !runnerPaneMaximized) {
           runnerPaneHeight = Math.min(30, runnerPaneHeight + 2);
           render();
         }
-      } else if (key.name === "l" && key.ctrl) {
+      } else if (key.name === "L" && key.shift) {
         if (runnerPaneOpen) {
           runnerPaneMaximized = !runnerPaneMaximized;
           render();
