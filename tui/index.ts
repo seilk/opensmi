@@ -267,6 +267,11 @@ function setLaunchError(msg: string): void {
   }, 1000);
 }
 
+function getGpuCommandPlaceholder(gpu: { node: string; gpu: number } | undefined): string {
+  if (!gpu) return "";
+  return `${gpu.node}:GPU${gpu.gpu}: (click to edit)`;
+}
+
 async function refreshLaunchGpuSelection(): Promise<void> {
   if (!snapshot) {
     launchSelectedGpus = [];
@@ -1070,7 +1075,9 @@ function renderDashboard() {
                     launchNumGpus = launchManualGpus.length;
                     if (launchDistMode === "one-to-one") {
                       while (launchCommands.length < launchNumGpus) {
-                        launchCommands.push("");
+                        const cmdIdx = launchCommands.length;
+                        const gpu = launchManualGpus[cmdIdx];
+                        launchCommands.push(getGpuCommandPlaceholder(gpu));
                       }
                     }
                   }
@@ -1124,7 +1131,9 @@ function renderDashboard() {
                     launchNumGpus = launchManualGpus.length;
                     if (launchDistMode === "one-to-one") {
                       while (launchCommands.length < launchNumGpus) {
-                        launchCommands.push("");
+                        const cmdIdx = launchCommands.length;
+                        const gpu = launchManualGpus[cmdIdx];
+                        launchCommands.push(getGpuCommandPlaceholder(gpu));
                       }
                     }
                   }
@@ -2647,9 +2656,7 @@ async function main() {
           for (let i = 0; i < launchCommands.length; i++) {
             if (!launchCommands[i] || launchCommands[i] === "") {
               const gpu = launchSelectedGpus[i];
-              if (gpu) {
-                launchCommands[i] = `# ${gpu.node}:GPU${gpu.gpu}`;
-              }
+              launchCommands[i] = getGpuCommandPlaceholder(gpu);
             }
           }
         }
@@ -2885,7 +2892,7 @@ async function main() {
             launchCommands = [];
             for (let i = 0; i < launchNumGpus; i++) {
               const gpu = launchSelectedGpus[i];
-              launchCommands.push(gpu ? `# ${gpu.node}:GPU${gpu.gpu}` : "");
+              launchCommands.push(getGpuCommandPlaceholder(gpu));
             }
             runnerFocusedInputIdx = 0;
           } else {
@@ -2922,7 +2929,7 @@ async function main() {
             while (launchCommands.length < launchNumGpus) {
               const idx = launchCommands.length;
               const gpu = launchSelectedGpus[idx];
-              launchCommands.push(gpu ? `# ${gpu.node}:GPU${gpu.gpu}` : "");
+              launchCommands.push(getGpuCommandPlaceholder(gpu));
             }
           }
           
@@ -3364,7 +3371,9 @@ async function main() {
         
         if (launchDistMode === "one-to-one") {
           while (launchCommands.length < launchNumGpus) {
-            launchCommands.push("");
+            const cmdIdx = launchCommands.length;
+            const gpu = launchSelectedGpus[cmdIdx];
+            launchCommands.push(getGpuCommandPlaceholder(gpu));
           }
         }
         
@@ -3384,7 +3393,9 @@ async function main() {
         
         if (launchDistMode === "one-to-one") {
           while (launchCommands.length < launchNumGpus) {
-            launchCommands.push("");
+            const cmdIdx = launchCommands.length;
+            const gpu = launchSelectedGpus[cmdIdx];
+            launchCommands.push(getGpuCommandPlaceholder(gpu));
           }
         }
         
