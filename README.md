@@ -102,6 +102,40 @@ opensmi --help
 
 ---
 
+## Command Runner
+
+The TUI includes an integrated command runner for launching GPU workloads with automatic GPU selection and orchestration.
+
+### Quick access
+
+Press `l` or `Ctrl+R` in the TUI to open the runner pane.
+
+### Key features
+
+- **Auto GPU selection**: Ranks available GPUs by last-used time, active processes, and utilization
+- **Execution modes**: Direct background execution or tmux session orchestration
+- **Distribution modes**: 
+  - **single**: One command across multiple GPUs (`CUDA_VISIBLE_DEVICES=0,1,2`)
+  - **one-to-one**: Different command per GPU (e.g., cross-validation folds)
+- **Preflight checks**: Validates tmux availability, command syntax, GPU availability
+- **Status tracking**: Real-time state (QUEUED → PREPARING → SENT → RUNNING/FAILED)
+- **Multiline paste**: Supports pasting multiple commands for one-to-one mode
+
+### Example workflow
+
+1. Press `l` to open the runner
+2. Paste your training command(s)
+3. Adjust GPU count with `+`/`-`
+4. Toggle modes: `Tab` (direct/tmux), `Shift+Tab` (single/one-to-one)
+5. Review auto-selected GPUs and preflight status
+6. Press `Enter` to execute
+
+For tmux mode, the runner displays the attach command (e.g., `tmux attach -t opensmi-1739742482`).
+
+**Full documentation**: See [`tui/README.md`](tui/README.md#command-runner) for keybindings, examples, and advanced usage.
+
+---
+
 ## Configuration
 
 The config is plain JSON. Start from the template:
