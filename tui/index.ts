@@ -1213,7 +1213,7 @@ function renderDashboard() {
       { flexDirection: "row", paddingTop: 1 },
       Text({
         content: runnerInputTyping
-          ? t`${fg(C.yellow)("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
+          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
           : (runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
               : (runnerPaneFolded
@@ -1349,7 +1349,7 @@ function renderDetail() {
   children.push(
     Text({
       content: runnerInputTyping
-        ? t`${fg(C.yellow)("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
         : (runnerFocused
             ? (isAdmin
                 ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
@@ -1692,7 +1692,7 @@ function renderRunnerPane() {
   
   const headerText = Text({ 
     content: `${foldIcon} Command Runner  ${focusIndicator}`, 
-    fg: runnerFocused ? C.green : C.cyan 
+    fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.cyan)
   });
   
   const helpText = Text({ 
@@ -1778,7 +1778,7 @@ function renderRunnerPane() {
           { width: "100%", height: 1, position: "relative" },
           Text({
             content: `> ${launchCommand || "(click to edit)"}`,
-            fg: runnerFocused ? C.green : C.textDim,
+            fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
           }),
           runnerFocused ? Box({
             position: "absolute",
@@ -1830,7 +1830,7 @@ function renderRunnerPane() {
             { width: "100%", height: 1, position: "relative" },
             Text({
               content: `${label}: ${cmd || "(click to edit)"}`,
-              fg: isFocusedLine ? C.green : (cmd.trim() ? C.textDim : C.red),
+              fg: (runnerInputTyping && isFocusedLine) ? "#9b59d6" : (isFocusedLine ? C.green : (cmd.trim() ? C.textDim : C.red)),
             }),
             runnerFocused ? Box({
               position: "absolute",
@@ -1873,7 +1873,7 @@ function renderRunnerPane() {
           { width: "100%", height: 1, position: "relative" },
           Text({
             content: `> ${launchTmuxSession || "(click to edit)"}`,
-            fg: runnerFocused ? C.green : C.textDim,
+            fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
           }),
           runnerFocused ? Box({
             position: "absolute",
@@ -1910,7 +1910,7 @@ function renderRunnerPane() {
       width: "100%",
       height: height,
       borderStyle: "rounded",
-      borderColor: runnerFocused ? C.green : C.border,
+      borderColor: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.border),
       backgroundColor: C.bgAlt,
       padding: 1,
       flexDirection: "column",
