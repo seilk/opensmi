@@ -284,6 +284,9 @@ async function refreshLaunchGpuSelection(): Promise<void> {
     const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
     
+    const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
+    await Bun.write(allocFile, JSON.stringify(allocations));
+    
     const rankScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -335,7 +338,12 @@ class SimpleSnap:
 snap = SimpleSnap(snap_data)
 state_dir = get_state_dir()
 history = load_history(state_dir)
-gpus = select_top_gpus(snap, ${launchNumGpus}, history)
+
+with open("${allocFile}", "r") as f:
+    alloc_data = json.loads(f.read())
+
+current_user = "${OPERATOR}"
+gpus = select_top_gpus(snap, ${launchNumGpus}, history, alloc_data, current_user)
 print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
 `;
     
@@ -356,7 +364,7 @@ print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
     }
     
     try {
-      await Bun.$`rm -f ${tmpFile}`;
+      await Bun.$`rm -f ${tmpFile} ${allocFile}`;
     } catch {}
   } catch {
     launchSelectedGpus = [];

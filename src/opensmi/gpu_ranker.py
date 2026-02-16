@@ -72,6 +72,8 @@ def select_top_gpus(
     snapshot: ClusterSnapshot,
     n: int,
     launch_history: Optional[Dict[str, Dict[int, str]]] = None,
+    allocations: Optional[List[Dict]] = None,
+    current_user: Optional[str] = None,
 ) -> List[Tuple[str, int]]:
     """Select the top N GPUs for allocation.
 
@@ -79,9 +81,38 @@ def select_top_gpus(
         snapshot: Current cluster state
         n: Number of GPUs to select
         launch_history: Optional launch history
+        allocations: Optional list of allocation dicts
+        current_user: Optional current user name
 
     Returns:
-        List of (node_alias, gpu_index) tuples for the top N GPUs
+        List of (node_alias, gpu_index) tuples for the top N GPUs,
+        prioritizing GPUs allocated to current_user
     """
+    allocations = allocations or []
+    current_user = current_user or ""
+    
+    # Build set of (node_alias, gpu_index) allocated to current user
+    my_gpus = set()
+    if current_user:
+        for alloc in allocations:
+            target = alloc.get("target", "")
+            if target == current_user or target == "*":
+                node = alloc.get("node_alias", "")
+                gpu_idx = alloc.get("gpu_index", -1)
+                if node and gpu_idx >= 0:
+                    my_gpus.add((node, gpu_idx))
+    
     ranked = rank_gpus(snapshot, launch_history)
-    return [(alias, idx) for alias, idx, _ in ranked[:n]]
+    
+    # Split into own allocations and others
+    own_alloc = []
+    others = []
+    for alias, idx, gpu in ranked:
+        if (alias, idx) in my_gpus:
+            own_alloc.append((alias, idx))
+        else:
+            others.append((alias, idx))
+    
+    # Return own allocations first, then others
+    result = own_alloc + others
+    return result[:n]
