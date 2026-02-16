@@ -1238,8 +1238,8 @@ function renderDashboard() {
           : (runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
               : (runnerPaneFolded
-                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`
-                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`)),
+                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
+                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
       })
     )
   );
@@ -1718,7 +1718,7 @@ function renderRunnerPane() {
       ? "[Esc] Stop  [ctrl+x Enter] Execute"
       : (runnerFocused
           ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/g] Options"
-          : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold  [l] Full screen"),
+          : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
     fg: C.textDim 
   });
   
@@ -3021,8 +3021,9 @@ async function main() {
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
         render();
+      }
       // [l] Launch modal disabled — pane replaces full-screen modal
-      // } else if (key.name === "l") {
+      // else if (key.name === "l") {
       //   screen = "launch";
       //   launchCommand = "";
       //   launchNumGpus = 1;
@@ -3035,7 +3036,12 @@ async function main() {
       //   launchGpuMode = "auto";
       //   await refreshLaunchGpuSelection();
       //   render();
-      // } else if (key.name === "q") {
+      // }
+      
+      if (prefixKeyPressed && key.name === "q") {
+        // ctrl+x q: quit
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         clearInterval(refreshInterval);
         renderer.destroy();
         process.exit(0);
@@ -3143,11 +3149,13 @@ async function main() {
       } else if (key.name === "r") {
         await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
         render();
-      } else if (key.name === "q") {
-        clearInterval(refreshInterval);
-        renderer.destroy();
-        process.exit(0);
       }
+      // Quit via ctrl+x q (unified shortcut)
+      // } else if (key.name === "q") {
+      //   clearInterval(refreshInterval);
+      //   renderer.destroy();
+      //   process.exit(0);
+      // }
     } else if (screen === "kill") {
       if (key.name === "escape") {
         screen = "detail";
