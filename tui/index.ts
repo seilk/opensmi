@@ -2741,6 +2741,19 @@ async function main() {
         runnerFocused = true;
         runnerInputBuffer = launchCommand;
         runnerFocusedInputIdx = 0; // Start at first input
+        
+        // Initialize commands with GPU info if not already set
+        if (launchDistMode === "one-to-one") {
+          for (let i = 0; i < launchCommands.length; i++) {
+            if (!launchCommands[i] || launchCommands[i] === "") {
+              const gpu = launchSelectedGpus[i];
+              if (gpu) {
+                launchCommands[i] = `# ${gpu.node}:GPU${gpu.gpu}`;
+              }
+            }
+          }
+        }
+        
         render();
         setTimeout(() => {
           if (launchDistMode === "single") {
@@ -2859,7 +2872,11 @@ async function main() {
           key.preventDefault();
           if (launchDistMode === "single") {
             launchDistMode = "one-to-one";
-            launchCommands = new Array(launchNumGpus).fill("");
+            launchCommands = [];
+            for (let i = 0; i < launchNumGpus; i++) {
+              const gpu = launchSelectedGpus[i];
+              launchCommands.push(gpu ? `# ${gpu.node}:GPU${gpu.gpu}` : "");
+            }
             runnerFocusedInputIdx = 0;
           } else {
             launchDistMode = "single";
