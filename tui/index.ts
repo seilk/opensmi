@@ -85,6 +85,7 @@ let runnerPaneFolded = false;
 let runnerFocused = false;
 let runnerInputTyping = false; // True when actively typing text
 let runnerInputBuffer = "";
+let runnerFocusedInputIdx = 0; // Which input line is focused in one-to-one mode
 
 // Prefix key system (ctrl+x)
 let prefixKeyPressed = false;
@@ -2494,10 +2495,16 @@ async function main() {
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         runnerFocused = true;
         runnerInputBuffer = launchCommand;
+        runnerFocusedInputIdx = 0; // Start at first input
         render();
         setTimeout(() => {
-          const inputAny: any = container.findDescendantById("runner-cmd-input");
-          if (inputAny) inputAny.focus();
+          if (launchDistMode === "single") {
+            const inputAny: any = container.findDescendantById("runner-cmd-input");
+            if (inputAny) inputAny.focus();
+          } else {
+            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+            if (inputAny) inputAny.focus();
+          }
         }, 50);
         return;
       }
@@ -2581,6 +2588,7 @@ async function main() {
           if (launchDistMode === "single") {
             launchDistMode = "one-to-one";
             launchCommands = new Array(launchNumGpus).fill("");
+            runnerFocusedInputIdx = 0;
           } else {
             launchDistMode = "single";
             launchCommands = [];
@@ -2608,6 +2616,28 @@ async function main() {
           }
           await refreshLaunchGpuSelection();
           render();
+          return;
+        }
+        
+        if (key.name === "down" && launchDistMode === "one-to-one" && !runnerInputTyping) {
+          // Navigate to next input line
+          runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
+          render();
+          setTimeout(() => {
+            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+            if (inputAny) inputAny.focus();
+          }, 50);
+          return;
+        }
+        
+        if (key.name === "up" && launchDistMode === "one-to-one" && !runnerInputTyping) {
+          // Navigate to previous input line
+          runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
+          render();
+          setTimeout(() => {
+            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+            if (inputAny) inputAny.focus();
+          }, 50);
           return;
         }
         
