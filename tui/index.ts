@@ -1073,8 +1073,15 @@ function renderDashboard() {
                 );
                 
                 if (idx >= 0) {
+                  // Unselect GPU
                   launchManualGpus.splice(idx, 1);
+                  // Sync count and commands
+                  launchNumGpus = launchManualGpus.length;
+                  if (launchDistMode === "one-to-one") {
+                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  }
                 } else {
+                  // Select GPU
                   launchManualGpus.push(gpuKey);
                   // Sync count: increase if selection exceeds current count
                   if (launchManualGpus.length > launchNumGpus) {
@@ -1129,8 +1136,15 @@ function renderDashboard() {
                 );
                 
                 if (idx >= 0) {
+                  // Unselect GPU
                   launchManualGpus.splice(idx, 1);
+                  // Sync count and commands
+                  launchNumGpus = launchManualGpus.length;
+                  if (launchDistMode === "one-to-one") {
+                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  }
                 } else {
+                  // Select GPU
                   launchManualGpus.push(gpuKey);
                   // Sync count: increase if selection exceeds current count
                   if (launchManualGpus.length > launchNumGpus) {
