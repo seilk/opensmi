@@ -79,6 +79,8 @@ let lastGpuClickAt = 0;
 let lastNodeClickKey = "";
 let lastNodeClickAt = 0;
 let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
+let allocUserListFocused = false; // True when focus is on user list
+let allocUserListIdx = 0; // Selected user index in list
 
 // Command runner pane state
 let runnerPaneFolded = false;
@@ -1464,8 +1466,10 @@ function renderAlloc() {
   } else {
     const currentSet = new Set(_filteredDraftList(allocDraftUser, universeSet));
 
-    for (const u of filteredUsers) {
+    for (let idx = 0; idx < filteredUsers.length; idx++) {
+      const u = filteredUsers[idx];
       const isSel = currentSet.has(u);
+      const isFocused = allocUserListFocused && idx === allocUserListIdx;
       userRows.push(
         Box(
           {
@@ -1473,9 +1477,9 @@ function renderAlloc() {
             height: 1,
             position: "relative",
             paddingLeft: 1,
-            backgroundColor: allocUserHighlight === u ? "#33467c" : isSel ? "#3b4261" : C.bg,
+            backgroundColor: isFocused ? C.green : (allocUserHighlight === u ? "#33467c" : isSel ? "#3b4261" : C.bg),
           },
-          Text({ content: `${isSel ? "▸" : " "} ${u}`, fg: isSel ? "#ffffff" : C.text }),
+          Text({ content: `${isSel ? "▸" : " "} ${u}`, fg: isFocused ? "#000000" : (isSel ? "#ffffff" : C.text) }),
           // Overlay to make the row reliably clickable without triggering text selection.
           Box({
             position: "absolute",
@@ -1786,7 +1790,7 @@ function renderRunnerPane() {
             content: `> ${launchCommand || "(click to edit)"}`,
             fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
           }),
-          runnerFocused ? Box({
+          Box({
             position: "absolute",
             top: 0,
             left: 0,
@@ -1794,11 +1798,13 @@ function renderRunnerPane() {
             height: "100%",
             zIndex: 999,
             onMouseDown: () => {
-              runnerInputTyping = true;
-              runnerInputBuffer = launchCommand;
+              if (!runnerFocused) {
+                runnerFocused = true;
+                runnerInputBuffer = launchCommand;
+              }
               requestRender?.();
             },
-          }) : undefined
+          })
         )
       );
     }
@@ -1838,7 +1844,7 @@ function renderRunnerPane() {
               content: `${label}: ${cmd || "(click to edit)"}`,
               fg: (runnerInputTyping && isFocusedLine) ? "#9b59d6" : (isFocusedLine ? C.green : (cmd.trim() ? C.textDim : C.red)),
             }),
-            runnerFocused ? Box({
+            Box({
               position: "absolute",
               top: 0,
               left: 0,
@@ -1846,11 +1852,13 @@ function renderRunnerPane() {
               height: "100%",
               zIndex: 999,
               onMouseDown: () => {
-                runnerInputTyping = true;
+                if (!runnerFocused) {
+                  runnerFocused = true;
+                }
                 runnerFocusedInputIdx = i;
                 requestRender?.();
               },
-            }) : undefined
+            })
           )
         );
       }
@@ -1881,7 +1889,7 @@ function renderRunnerPane() {
             content: `> ${launchTmuxSession || "(click to edit)"}`,
             fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
           }),
-          runnerFocused ? Box({
+          Box({
             position: "absolute",
             top: 0,
             left: 0,
@@ -1889,10 +1897,12 @@ function renderRunnerPane() {
             height: "100%",
             zIndex: 999,
             onMouseDown: () => {
-              runnerInputTyping = true;
+              if (!runnerFocused) {
+                runnerFocused = true;
+              }
               requestRender?.();
             },
-          }) : undefined
+          })
         )
       );
     }
@@ -2851,7 +2861,9 @@ async function main() {
           
           if (launchDistMode === "one-to-one") {
             while (launchCommands.length < launchNumGpus) {
-              launchCommands.push("");
+              const idx = launchCommands.length;
+              const gpu = launchSelectedGpus[idx];
+              launchCommands.push(gpu ? `# ${gpu.node}:GPU${gpu.gpu}` : "");
             }
           }
           
@@ -3113,7 +3125,53 @@ async function main() {
         screen = "detail";
         allocCtx = null;
         allocErrorMsg = "";
+        allocUserListFocused = false;
+        allocUserListIdx = 0;
         render();
+      } else if (key.name === "left") {
+        // Move focus from input to user list
+        if (!allocUserListFocused) {
+          key.preventDefault();
+          key.stopPropagation();
+          allocUserListFocused = true;
+          allocUserListIdx = 0;
+          render();
+        }
+      } else if (key.name === "right") {
+        // Move focus from user list to input
+        if (allocUserListFocused) {
+          key.preventDefault();
+          key.stopPropagation();
+          allocUserListFocused = false;
+          render();
+          setTimeout(() => {
+            const inputAny: any = container.findDescendantById("alloc-user-input");
+            if (inputAny) inputAny.focus();
+          }, 50);
+        }
+      } else if (key.name === "up" && allocUserListFocused) {
+        key.preventDefault();
+        allocUserListIdx = Math.max(allocUserListIdx - 1, 0);
+        render();
+      } else if (key.name === "down" && allocUserListFocused) {
+        key.preventDefault();
+        const maxIdx = knownUsers.length - 1;
+        allocUserListIdx = Math.min(allocUserListIdx + 1, maxIdx);
+        render();
+      } else if (key.name === "return" && allocUserListFocused) {
+        // Select user from list
+        key.preventDefault();
+        key.stopPropagation();
+        const selectedUser = knownUsers[allocUserListIdx];
+        if (selectedUser) {
+          allocDraftUser = selectedUser;
+          allocUserListFocused = false;
+          render();
+          setTimeout(() => {
+            const inputAny: any = container.findDescendantById("alloc-user-input");
+            if (inputAny) inputAny.focus();
+          }, 50);
+        }
       } else if (key.name === "tab") {
         key.preventDefault();
         key.stopPropagation();
