@@ -8,7 +8,7 @@ verify the validation rules that should be enforced:
 3. Command count must match GPU count
 """
 
-import pytest
+import unittest
 
 
 def validate_one_to_one_commands(
@@ -32,65 +32,59 @@ def validate_one_to_one_commands(
     return True, ""
 
 
-def test_valid_one_to_one():
-    """All commands provided, matches GPU count."""
-    commands = ["python train.py", "python eval.py", "python test.py"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert is_valid
-    assert error == ""
+class TestOneToOneValidation(unittest.TestCase):
+    def test_valid_one_to_one(self):
+        """All commands provided, matches GPU count."""
+        commands = ["python train.py", "python eval.py", "python test.py"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertTrue(is_valid)
+        self.assertEqual(error, "")
 
+    def test_empty_commands_rejected(self):
+        """Empty command list should be rejected."""
+        commands = []
+        is_valid, error = validate_one_to_one_commands(commands, 2)
+        self.assertFalse(is_valid)
+        self.assertIn("at least one command", error.lower())
 
-def test_empty_commands_rejected():
-    """Empty command list should be rejected."""
-    commands = []
-    is_valid, error = validate_one_to_one_commands(commands, 2)
-    assert not is_valid
-    assert "at least one command" in error.lower()
+    def test_all_whitespace_rejected(self):
+        """All whitespace commands should be rejected."""
+        commands = ["   ", "  ", "\t\n"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertFalse(is_valid)
+        self.assertIn("at least one command", error.lower())
 
+    def test_count_mismatch_too_few(self):
+        """Fewer commands than GPUs should be rejected."""
+        commands = ["python train.py", "python eval.py"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertFalse(is_valid)
+        self.assertIn("Expected 3 commands, got 2", error)
 
-def test_all_whitespace_rejected():
-    """All whitespace commands should be rejected."""
-    commands = ["   ", "  ", "\t\n"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert not is_valid
-    assert "at least one command" in error.lower()
+    def test_count_mismatch_too_many(self):
+        """More commands than GPUs should be rejected."""
+        commands = ["cmd1", "cmd2", "cmd3", "cmd4"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertFalse(is_valid)
+        self.assertIn("Expected 3 commands, got 4", error)
 
+    def test_mixed_empty_and_valid(self):
+        """Mix of empty and valid commands with count mismatch."""
+        commands = ["python train.py", "  ", "python test.py"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertFalse(is_valid)
+        self.assertIn("Expected 3 commands, got 2", error)
 
-def test_count_mismatch_too_few():
-    """Fewer commands than GPUs should be rejected."""
-    commands = ["python train.py", "python eval.py"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert not is_valid
-    assert "Expected 3 commands, got 2" in error
+    def test_single_gpu_single_command(self):
+        """Edge case: single GPU with single command."""
+        commands = ["python train.py"]
+        is_valid, error = validate_one_to_one_commands(commands, 1)
+        self.assertTrue(is_valid)
+        self.assertEqual(error, "")
 
-
-def test_count_mismatch_too_many():
-    """More commands than GPUs should be rejected."""
-    commands = ["cmd1", "cmd2", "cmd3", "cmd4"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert not is_valid
-    assert "Expected 3 commands, got 4" in error
-
-
-def test_mixed_empty_and_valid():
-    """Mix of empty and valid commands with count mismatch."""
-    commands = ["python train.py", "  ", "python test.py"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert not is_valid
-    assert "Expected 3 commands, got 2" in error
-
-
-def test_single_gpu_single_command():
-    """Edge case: single GPU with single command."""
-    commands = ["python train.py"]
-    is_valid, error = validate_one_to_one_commands(commands, 1)
-    assert is_valid
-    assert error == ""
-
-
-def test_whitespace_trimming():
-    """Commands with leading/trailing whitespace should still be valid."""
-    commands = ["  python train.py  ", " python eval.py\n", "\tpython test.py"]
-    is_valid, error = validate_one_to_one_commands(commands, 3)
-    assert is_valid
-    assert error == ""
+    def test_whitespace_trimming(self):
+        """Commands with leading/trailing whitespace should still be valid."""
+        commands = ["  python train.py  ", " python eval.py\n", "\tpython test.py"]
+        is_valid, error = validate_one_to_one_commands(commands, 3)
+        self.assertTrue(is_valid)
+        self.assertEqual(error, "")
