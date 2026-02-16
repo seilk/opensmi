@@ -72,7 +72,7 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" = "dashboard";
 let lastGpuClickKey = "";
 let lastGpuClickAt = 0;
 let lastNodeClickKey = "";
@@ -90,6 +90,14 @@ let killOutput = "";
 let killInProgress = false;
 let isPolling = false;
 let bootLoading = true;
+
+let launchCommand = "";
+let launchNumGpus = 1;
+let launchErrorMsg = "";
+let launchOutput = "";
+let launchSelectedGpus: Array<{ node: string; gpu: number }> = [];
+let launchMode: "direct" | "tmux" = "direct";
+let launchTmuxSession = "";
 
 // Permissions
 const OPERATOR = process.env.SUDO_USER || process.env.USER || "unknown";
@@ -207,6 +215,95 @@ async function runOpensmi(
   const stderr = await new Response(proc.stderr).text();
   const code = await proc.exited;
   return { code, stdout, stderr };
+}
+
+async function refreshLaunchGpuSelection(): Promise<void> {
+  if (!snapshot) {
+    launchSelectedGpus = [];
+    return;
+  }
+  
+  try {
+    const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(snapshot));
+    
+    const rankScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.gpu_ranker import select_top_gpus
+from opensmi.launch_history import load_history
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    snap_data = json.loads(f.read())
+
+class SimpleGPU:
+    def __init__(self, d):
+        self.index = d['index']
+        self.uuid = d['uuid']
+        self.name = d['name']
+        self.memory_total_mib = d.get('memory_total_mib')
+        self.memory_used_mib = d.get('memory_used_mib')
+        self.memory_free_mib = d.get('memory_free_mib')
+        self.utilization_gpu_percent = d.get('utilization_gpu_percent')
+        self.temperature_c = d.get('temperature_c')
+        self.power_draw_w = d.get('power_draw_w')
+
+class SimpleProc:
+    def __init__(self, d):
+        self.gpu_uuid = d['gpu_uuid']
+        self.pid = d['pid']
+        self.process_name = d['process_name']
+        self.used_memory_mib = d.get('used_memory_mib')
+        self.user = d.get('user', 'unknown')
+        self.runtime_s = d.get('runtime_s')
+
+class SimpleNode:
+    def __init__(self, d):
+        self.node_alias = d['node_alias']
+        self.address = d['address']
+        self.hostname = d.get('hostname')
+        self.os = d.get('os')
+        self.timestamp = d.get('timestamp')
+        self.gpus = [SimpleGPU(g) for g in d.get('gpus', [])]
+        self.processes = [SimpleProc(p) for p in d.get('processes', [])]
+        self.error = d.get('error')
+
+class SimpleSnap:
+    def __init__(self, d):
+        self.cluster_name = d['cluster_name']
+        self.timestamp = d['timestamp']
+        self.nodes = [SimpleNode(n) for n in d['nodes']]
+
+snap = SimpleSnap(snap_data)
+state_dir = get_state_dir()
+history = load_history(state_dir)
+gpus = select_top_gpus(snap, ${launchNumGpus}, history)
+print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
+`;
+    
+    const rankProc = Bun.spawn([PYTHON, "-c", rankScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const rankStdout = await new Response(rankProc.stdout).text();
+    const rankCode = await rankProc.exited;
+    
+    if (rankCode === 0) {
+      launchSelectedGpus = JSON.parse(rankStdout);
+    } else {
+      launchSelectedGpus = [];
+    }
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+  } catch {
+    launchSelectedGpus = [];
+  }
 }
 
 async function allocSet(
@@ -1048,6 +1145,7 @@ function renderHelp() {
     Text({ content: t`${fg(C.cyan)("Dashboard:")}` }),
     Text({ content: "  ↑/↓ or j/k   Navigate nodes" }),
     Text({ content: "  Enter         Node detail view" }),
+    Text({ content: "  l             Launch command (auto GPU assign)" }),
     Text({ content: "  r             Refresh (poll all nodes)" }),
     Text({ content: "  q / Ctrl+C    Quit" }),
     Text({ content: "" }),
@@ -1340,6 +1438,263 @@ function renderKill() {
   );
 }
 
+function renderLaunch() {
+  const header = Text({ content: "Launch Command with Auto GPU Assignment", fg: C.cyan });
+  
+  const modeLabel = Text({ 
+    content: `Mode: ${launchMode === "direct" ? "Direct" : "Tmux"} [Tab to toggle]`, 
+    fg: C.textDim 
+  });
+  
+  const commandLabel = Text({ content: "Command:", fg: C.textDim });
+  const commandInput = Input({
+    id: "launch-command-input",
+    value: launchCommand,
+    width: "100%",
+    backgroundColor: C.bgAlt,
+    focusedBackgroundColor: "#3b4261",
+    textColor: "#ffffff",
+    cursorColor: C.green,
+  });
+  commandInput.focus();
+  
+  const tmuxNodes: any[] = [];
+  if (launchMode === "tmux") {
+    tmuxNodes.push(
+      Text({ content: " " }),
+      Text({ content: "Tmux session name (empty = auto):", fg: C.textDim }),
+      Input({
+        id: "launch-tmux-session-input",
+        value: launchTmuxSession,
+        width: "100%",
+        backgroundColor: C.bgAlt,
+        focusedBackgroundColor: "#3b4261",
+        textColor: "#ffffff",
+        cursorColor: C.green,
+      })
+    );
+  }
+  
+  const numGpusLabel = Text({ content: `Number of GPUs: ${launchNumGpus}`, fg: C.textDim });
+  
+  const selectedGpusList = launchSelectedGpus.length
+    ? launchSelectedGpus.map((g) => `${g.node}:GPU${g.gpu}`).join(", ")
+    : "";
+  
+  const gpuPreview = selectedGpusList
+    ? Text({ content: `Selected GPUs: ${selectedGpusList}`, fg: C.green })
+    : Text({ content: "Computing GPU selection...", fg: C.textDim });
+  
+  const errorNode = launchErrorMsg
+    ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
+    : Text({ content: " ", fg: C.textDim });
+  
+  const outputNode = launchOutput
+    ? Text({ content: `Output:\n${launchOutput}`, fg: C.textDim })
+    : Text({ content: " ", fg: C.textDim });
+  
+  const footer = Text({
+    content: "[Tab] Mode    [+/-] GPU count    [Enter] Launch    [Esc] Cancel",
+    fg: C.textDim,
+  });
+  
+  const modal = Box(
+    {
+      width: 100,
+      borderStyle: "rounded",
+      borderColor: C.border,
+      title: "Launch Command",
+      titleAlignment: "center",
+      padding: 1,
+      flexDirection: "column",
+      gap: 1,
+      backgroundColor: C.bg,
+    },
+    header,
+    modeLabel,
+    Text({ content: " " }),
+    commandLabel,
+    commandInput,
+    ...tmuxNodes,
+    Text({ content: " " }),
+    numGpusLabel,
+    Text({ content: "[+/-] or [↑/↓] to adjust", fg: C.textDim }),
+    Text({ content: " " }),
+    gpuPreview,
+    errorNode,
+    outputNode,
+    footer
+  );
+  
+  return Box(
+    {
+      width: "100%",
+      height: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: C.bg,
+    },
+    modal
+  );
+}
+
+async function executeLaunch(command: string): Promise<void> {
+  if (!snapshot) {
+    launchErrorMsg = "No snapshot available";
+    return;
+  }
+  
+  if (!command.trim()) {
+    launchErrorMsg = "Command cannot be empty";
+    return;
+  }
+  
+  if (launchSelectedGpus.length === 0) {
+    launchErrorMsg = "No GPUs available";
+    return;
+  }
+  
+  launchErrorMsg = "";
+  launchOutput = "";
+  
+  try {
+    const tmpFile = `/tmp/opensmi-gpus-${Date.now()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
+    
+    const updateScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.launch_history import update_history
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    gpus_data = json.loads(f.read())
+gpus = [(g["node"], g["gpu"]) for g in gpus_data]
+update_history(get_state_dir(), gpus)
+print("OK")
+`;
+    
+    const updateProc = Bun.spawn([PYTHON, "-c", updateScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await updateProc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    const gpuIndices = launchSelectedGpus.map(g => g.gpu).join(",");
+    
+    if (launchMode === "tmux") {
+      await executeLaunchTmux(command, gpuIndices);
+    } else {
+      await executeLaunchDirect(command, gpuIndices);
+    }
+  } catch (e: any) {
+    launchErrorMsg = e?.message || String(e);
+  }
+}
+
+async function executeLaunchDirect(command: string, gpuIndices: string): Promise<void> {
+  const execProc = Bun.spawn(["/bin/sh", "-c", command], {
+    env: {
+      ...process.env,
+      CUDA_VISIBLE_DEVICES: gpuIndices,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  
+  const execStdout = await new Response(execProc.stdout).text();
+  const execStderr = await new Response(execProc.stderr).text();
+  const execCode = await execProc.exited;
+  
+  const fullOutput = [
+    `Exit code: ${execCode}`,
+    execStdout ? `stdout:\n${execStdout}` : "",
+    execStderr ? `stderr:\n${execStderr}` : "",
+  ].filter(Boolean).join("\n");
+  
+  launchOutput = fullOutput.slice(0, 500);
+  
+  if (execCode !== 0) {
+    launchErrorMsg = `Command failed with exit code ${execCode}`;
+  } else {
+    setStatus(`Launched: ${command.slice(0, 40)}${command.length > 40 ? "..." : ""} on ${launchSelectedGpus.length} GPU(s)`);
+  }
+}
+
+async function executeLaunchTmux(command: string, gpuIndices: string): Promise<void> {
+  const checkProc = Bun.spawn(["which", "tmux"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  
+  const checkCode = await checkProc.exited;
+  
+  if (checkCode !== 0) {
+    launchErrorMsg = "tmux is not installed or not found in PATH";
+    return;
+  }
+  
+  const sessionName = launchTmuxSession.trim() || `opensmi-${Date.now()}`;
+  
+  const listProc = Bun.spawn(["tmux", "list-sessions", "-F", "#{session_name}"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  
+  const listStdout = await new Response(listProc.stdout).text();
+  await listProc.exited;
+  
+  const existingSessions = listStdout.split("\n").map(s => s.trim()).filter(Boolean);
+  const sessionExists = existingSessions.includes(sessionName);
+  
+  const wrappedCommand = `CUDA_VISIBLE_DEVICES=${gpuIndices} ${command}`;
+  
+  if (sessionExists) {
+    const sendProc = Bun.spawn(
+      ["tmux", "send-keys", "-t", sessionName, wrappedCommand, "Enter"],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    );
+    
+    const sendCode = await sendProc.exited;
+    
+    if (sendCode !== 0) {
+      const sendStderr = await new Response(sendProc.stderr).text();
+      launchErrorMsg = `Failed to send command to tmux session: ${sendStderr}`;
+    } else {
+      launchOutput = `Command sent to existing tmux session: ${sessionName}\n\nAttach with:\n  tmux attach -t ${sessionName}`;
+      setStatus(`Launched in tmux session: ${sessionName}`);
+    }
+  } else {
+    const newProc = Bun.spawn(
+      ["tmux", "new-session", "-d", "-s", sessionName, wrappedCommand],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    );
+    
+    const newCode = await newProc.exited;
+    
+    if (newCode !== 0) {
+      const newStderr = await new Response(newProc.stderr).text();
+      launchErrorMsg = `Failed to create tmux session: ${newStderr}`;
+    } else {
+      launchOutput = `Created tmux session: ${sessionName}\n\nAttach with:\n  tmux attach -t ${sessionName}`;
+      setStatus(`Launched in tmux session: ${sessionName}`);
+    }
+  }
+}
+
 // ── Main ───────────────────────────────────────────────────────────
 
 const SMOKE_TEST = process.argv.includes("--smoke-test") || process.env.OPENSMI_SMOKE_TEST === "1";
@@ -1456,6 +1811,9 @@ async function main() {
       case "kill":
         newNode = renderKill();
         break;
+      case "launch":
+        newNode = renderLaunch();
+        break;
     }
 
     // Wrap the screen in a relative container so we can overlay toast UI.
@@ -1524,6 +1882,16 @@ async function main() {
         render();
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
+        render();
+      } else if (key.name === "l") {
+        screen = "launch";
+        launchCommand = "";
+        launchNumGpus = 1;
+        launchErrorMsg = "";
+        launchOutput = "";
+        launchMode = "direct";
+        launchTmuxSession = "";
+        await refreshLaunchGpuSelection();
         render();
       } else if (key.name === "q") {
         clearInterval(refreshInterval);
@@ -1769,6 +2137,57 @@ async function main() {
       ) {
         screen = "dashboard";
         render();
+      }
+    } else if (screen === "launch") {
+      if (key.name === "escape") {
+        screen = "dashboard";
+        render();
+      } else if (key.name === "tab") {
+        key.preventDefault();
+        key.stopPropagation();
+        launchMode = launchMode === "direct" ? "tmux" : "direct";
+        render();
+      } else if (key.name === "+" || key.name === "=") {
+        launchNumGpus = Math.min(launchNumGpus + 1, 16);
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (key.name === "-" || key.name === "_") {
+        launchNumGpus = Math.max(launchNumGpus - 1, 1);
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (key.name === "up") {
+        launchNumGpus = Math.min(launchNumGpus + 1, 16);
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (key.name === "down") {
+        launchNumGpus = Math.max(launchNumGpus - 1, 1);
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (key.name === "return") {
+        key.preventDefault();
+        key.stopPropagation();
+        
+        const inputAny: any = container.findDescendantById("launch-command-input");
+        const cmd = String(inputAny?.value ?? "").trim();
+        
+        if (!cmd) {
+          launchErrorMsg = "Command cannot be empty";
+          render();
+          return;
+        }
+        
+        await executeLaunch(cmd);
+        render();
+      } else {
+        setTimeout(() => {
+          const inputAny: any = container.findDescendantById("launch-command-input");
+          launchCommand = String(inputAny?.value ?? "");
+          
+          if (launchMode === "tmux") {
+            const tmuxInputAny: any = container.findDescendantById("launch-tmux-session-input");
+            launchTmuxSession = String(tmuxInputAny?.value ?? "");
+          }
+        }, 20);
       }
     }
   });
