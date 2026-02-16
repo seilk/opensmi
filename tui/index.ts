@@ -2503,6 +2503,13 @@ async function main() {
 
       const ok = renderer.copyToClipboardOSC52(text);
       // Don't show status message for copy (silent copy)
+      
+      // Clear selection after copy (tmux-like behavior)
+      if (sel?.clearSelection) {
+        sel.clearSelection();
+      } else if (sel?.setSelection) {
+        sel.setSelection(null, null, null);
+      }
     } catch {
       // ignore
     }
@@ -2938,7 +2945,7 @@ async function main() {
         }
         
         if (key.name === "-" || key.name === "_") {
-          launchNumGpus = Math.max(launchNumGpus - 1, 1);
+          launchNumGpus = Math.max(launchNumGpus - 1, 0); // Allow down to 0
           if (launchDistMode === "one-to-one") {
             launchCommands = launchCommands.slice(0, launchNumGpus);
           }
@@ -3370,7 +3377,7 @@ async function main() {
         await refreshLaunchGpuSelection();
         render();
       } else if (key.name === "-" || key.name === "_") {
-        launchNumGpus = Math.max(launchNumGpus - 1, 1);
+        launchNumGpus = Math.max(launchNumGpus - 1, 0); // Allow down to 0
         
         if (launchDistMode === "one-to-one") {
           launchCommands = launchCommands.slice(0, launchNumGpus);
@@ -3392,7 +3399,7 @@ async function main() {
         await refreshLaunchGpuSelection();
         render();
       } else if (key.name === "down") {
-        launchNumGpus = Math.max(launchNumGpus - 1, 1);
+        launchNumGpus = Math.max(launchNumGpus - 1, 0); // Allow down to 0
         
         if (launchDistMode === "one-to-one") {
           launchCommands = launchCommands.slice(0, launchNumGpus);
