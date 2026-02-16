@@ -1002,7 +1002,7 @@ function renderDashboard() {
           left: 0,
           width: "100%",
           height: "100%",
-          zIndex: 999,
+          zIndex: 1, // Low zIndex to allow text selection
           onMouseDown: (e: any) => {
             e.preventDefault?.();
             e.stopPropagation?.();
@@ -1194,7 +1194,7 @@ function renderDashboard() {
         left: 0,
         width: "100%",
         height: "100%",
-        zIndex: 999,
+        zIndex: 1, // Low zIndex to allow text selection
         onMouseDown: (e: any) => {
           e.preventDefault?.();
           e.stopPropagation?.();
@@ -1350,7 +1350,7 @@ function renderDetail() {
           left: 0,
           width: "100%",
           height: "100%",
-          zIndex: 999,
+          zIndex: 1, // Low zIndex to allow text selection
           onMouseDown: (e: any) => {
             e.preventDefault?.();
             e.stopPropagation?.();
@@ -1524,7 +1524,7 @@ function renderAlloc() {
             left: 0,
             width: "100%",
             height: "100%",
-            zIndex: 999,
+            zIndex: 1, // Low zIndex to allow text selection
             onMouseDown: (_e: any) => {
               _e.preventDefault?.();
               _e.stopPropagation?.();
@@ -1842,7 +1842,7 @@ function renderRunnerPane() {
             left: 0,
             width: "100%",
             height: "100%",
-            zIndex: 999,
+            zIndex: 1, // Low zIndex to allow text selection
             onMouseDown: (e: any) => {
               runnerMouseDownTime = Date.now();
               runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
@@ -1915,7 +1915,7 @@ function renderRunnerPane() {
               left: 0,
               width: "100%",
               height: "100%",
-              zIndex: 999,
+              zIndex: 1, // Low zIndex to allow text selection
               onMouseDown: (e: any) => {
                 // Track mousedown for drag detection
                 runnerMouseDownTime = Date.now();
@@ -1985,7 +1985,7 @@ function renderRunnerPane() {
             left: 0,
             width: "100%",
             height: "100%",
-            zIndex: 999,
+            zIndex: 1, // Low zIndex to allow text selection
             onMouseDown: (e: any) => {
               runnerMouseDownTime = Date.now();
               runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
@@ -2570,12 +2570,16 @@ async function main() {
       const ok = renderer.copyToClipboardOSC52(text);
       // Don't show status message for copy (silent copy)
       
-      // Clear selection after copy (tmux-like behavior)
-      if (sel?.clearSelection) {
-        sel.clearSelection();
-      } else if (sel?.setSelection) {
-        sel.setSelection(null, null, null);
-      }
+      // Clear selection immediately after copy (tmux-like behavior)
+      // Use setImmediate to clear on next tick, ensuring copy completes first
+      setImmediate(() => {
+        if (sel?.clearSelection) {
+          sel.clearSelection();
+        } else if (sel?.setSelection) {
+          sel.setSelection(null, null, null);
+        }
+        requestRender?.();
+      });
     } catch {
       // ignore
     }
