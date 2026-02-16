@@ -1032,7 +1032,7 @@ function renderDashboard() {
     Box(
       { flexDirection: "row", paddingTop: 1 },
       Text({
-        content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
+        content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
       })
     )
   );
