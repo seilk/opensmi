@@ -2573,7 +2573,10 @@ async function main() {
       }
 
       const ok = renderer.copyToClipboardOSC52(text);
-      // Don't show status message for copy (silent copy)
+      
+      // Show "Copied" message (2s) in lower right
+      const charCount = text.length;
+      setStatus(`Copied ${charCount} char${charCount === 1 ? '' : 's'}`, 2000);
       
       // Clear selection immediately after copy (tmux-like behavior)
       // Use setImmediate to clear on next tick, ensuring copy completes first
