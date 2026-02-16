@@ -30,5 +30,8 @@ config.json
 .cursor/
 CLAUDE.md
 
+# Ralph runtime artifacts
+.ralph/
+
 # Misc
 *.log

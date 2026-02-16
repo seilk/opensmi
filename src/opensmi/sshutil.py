@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import List, Optional, Tuple
 
 from .models import NodeConfig
 
 
 class SSHRunError(RuntimeError):
+    pass
+
+
+class SSHRetryExhausted(SSHRunError):
+    """Raised when all SSH retry attempts have been exhausted."""
+
     pass
 
 
@@ -47,7 +54,9 @@ async def ssh_run(
     )
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout=timeout_s)
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(stdin_bytes), timeout=timeout_s
+        )
     except asyncio.TimeoutError:
         proc.kill()
         raise SSHRunError(f"SSH timeout after {timeout_s}s")
@@ -58,10 +67,81 @@ async def ssh_run(
     return rc, stdout, stderr
 
 
+async def ssh_run_with_retry(
+    node: NodeConfig,
+    remote_args: List[str],
+    *,
+    stdin_bytes: Optional[bytes] = None,
+    timeout_s: int = 15,
+    max_retries: int = 3,
+) -> Tuple[int, str, str]:
+    """Run SSH command with exponential backoff retry on connection failures.
+
+    Retries on: connection timeouts, connection refused, network unreachable.
+    Does NOT retry on: authentication failures, command errors (rc != 0).
+    """
+    attempt = 0
+    last_error: Optional[Exception] = None
+
+    while attempt < max_retries:
+        attempt += 1
+        try:
+            return await ssh_run(
+                node,
+                remote_args,
+                stdin_bytes=stdin_bytes,
+                timeout_s=timeout_s,
+            )
+        except SSHRunError as e:
+            last_error = e
+            err_msg = str(e).lower()
+
+            is_retryable = any(
+                keyword in err_msg
+                for keyword in [
+                    "timeout",
+                    "connection refused",
+                    "connection timed out",
+                    "no route to host",
+                    "network is unreachable",
+                ]
+            )
+
+            if not is_retryable:
+                raise
+
+            if attempt >= max_retries:
+                raise SSHRetryExhausted(
+                    f"SSH failed after {max_retries} attempts: {e}"
+                ) from e
+
+            delay_s = 2 ** (attempt - 1)
+            print(
+                f"[ssh-retry] {node.alias} attempt {attempt}/{max_retries} failed: {e}. "
+                f"Retrying in {delay_s}s...",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(delay_s)
+
+    if last_error:
+        raise SSHRetryExhausted(
+            f"SSH failed after {max_retries} attempts: {last_error}"
+        ) from last_error
+
+    raise SSHRetryExhausted(f"SSH failed after {max_retries} attempts")
+
+
 async def ssh_bash_script(
     node: NodeConfig,
     script: str,
     *,
     timeout_s: int = 15,
+    max_retries: int = 1,
 ) -> Tuple[int, str, str]:
-    return await ssh_run(node, ["bash", "-s"], stdin_bytes=script.encode("utf-8"), timeout_s=timeout_s)
+    return await ssh_run_with_retry(
+        node,
+        ["bash", "-s"],
+        stdin_bytes=script.encode("utf-8"),
+        timeout_s=timeout_s,
+        max_retries=max_retries,
+    )
