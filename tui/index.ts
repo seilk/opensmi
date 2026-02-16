@@ -78,6 +78,11 @@ let lastGpuClickAt = 0;
 let lastNodeClickKey = "";
 let lastNodeClickAt = 0;
 let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
+
+// Command runner pane state
+let runnerPaneOpen = false;
+let runnerPaneHeight = 15; // lines
+let runnerPaneMaximized = false;
 let allocDraftUser = "";
 let allocErrorMsg = "";
 let allocTypingTimer: any = null;
@@ -1032,16 +1037,21 @@ function renderDashboard() {
     Box(
       { flexDirection: "row", paddingTop: 1 },
       Text({
-        content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
+        content: runnerPaneOpen 
+          ? t`${fg(C.textDim)("[ctrl+r]")} Close runner  ${fg(C.textDim)("[ctrl+j/k]")} Resize  ${fg(C.textDim)("[ctrl+l]")} Maximize  ${fg(C.textDim)("[Enter]")} Launch  ${fg(C.textDim)("[l]")} Full screen`
+          : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+r]")} Runner  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
       })
     )
   );
 
+  const pane = renderRunnerPane();
+  
   return Box(
     { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
     header,
     tableHeader,
     ...rows,
+    ...(pane ? [pane] : []),
     footer
   );
 }
@@ -1491,6 +1501,72 @@ function renderKill() {
       backgroundColor: C.bg,
     },
     modal
+  );
+}
+
+function renderRunnerPane(compact: boolean = true) {
+  if (!runnerPaneOpen) return null;
+
+  const header = Text({ 
+    content: `Command Runner ${runnerPaneMaximized ? "(maximized)" : ""}`, 
+    fg: C.cyan 
+  });
+  
+  const modeInfo = Text({ 
+    content: `GPU: ${launchGpuMode}  Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
+    fg: C.textDim 
+  });
+  
+  const cmdPreview = launchDistMode === "single"
+    ? launchCommand || "(empty)"
+    : `${launchCommands.filter(c => c.trim()).length}/${launchNumGpus} commands`;
+  
+  const cmdText = Text({ 
+    content: `> ${cmdPreview.slice(0, 60)}`, 
+    fg: C.text 
+  });
+  
+  const gpuInfo = launchSelectedGpus.length > 0
+    ? launchSelectedGpus.map(g => `${g.node}:${g.gpu}`).join(", ")
+    : "no GPUs";
+  
+  const gpuText = Text({ 
+    content: `GPUs: ${gpuInfo}`, 
+    fg: launchSelectedGpus.length > 0 ? C.green : C.yellow 
+  });
+  
+  const errorText = launchErrorMsg
+    ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
+    : null;
+  
+  const footer = Text({
+    content: "[l] Full screen  [ctrl+r] Close  [ctrl+j/k] Resize  [ctrl+l] Maximize  [Enter] Launch",
+    fg: C.textDim,
+  });
+
+  const contentNodes = [
+    header,
+    modeInfo,
+    Text({ content: " " }),
+    cmdText,
+    gpuText,
+    ...(errorText ? [errorText] : []),
+    Text({ content: " " }),
+    footer
+  ];
+
+  return Box(
+    {
+      width: "100%",
+      height: runnerPaneMaximized ? "100%" : runnerPaneHeight,
+      borderStyle: "rounded",
+      borderColor: C.border,
+      backgroundColor: C.bgAlt,
+      padding: 1,
+      flexDirection: "column",
+      gap: 0,
+    },
+    ...contentNodes
   );
 }
 
@@ -2121,17 +2197,45 @@ async function main() {
           render();
         }
       } else if (key.name === "return") {
-        screen = "detail";
-        const node = snapshot?.nodes[selectedNodeIdx];
-        selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
-        if (node) void checkSudoForNode(node.node_alias);
-        render();
+        if (runnerPaneOpen) {
+          // Launch from pane
+          await executeLaunch();
+          render();
+        } else {
+          // Navigate to detail
+          screen = "detail";
+          const node = snapshot?.nodes[selectedNodeIdx];
+          selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
+          if (node) void checkSudoForNode(node.node_alias);
+          render();
+        }
       } else if (key.name === "r") {
         await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
         render();
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
         render();
+      } else if (key.name === "r" && key.ctrl) {
+        runnerPaneOpen = !runnerPaneOpen;
+        if (runnerPaneOpen) {
+          await refreshLaunchGpuSelection();
+        }
+        render();
+      } else if (key.name === "j" && key.ctrl) {
+        if (runnerPaneOpen && !runnerPaneMaximized) {
+          runnerPaneHeight = Math.max(5, runnerPaneHeight - 2);
+          render();
+        }
+      } else if (key.name === "k" && key.ctrl) {
+        if (runnerPaneOpen && !runnerPaneMaximized) {
+          runnerPaneHeight = Math.min(30, runnerPaneHeight + 2);
+          render();
+        }
+      } else if (key.name === "l" && key.ctrl) {
+        if (runnerPaneOpen) {
+          runnerPaneMaximized = !runnerPaneMaximized;
+          render();
+        }
       } else if (key.name === "l") {
         screen = "launch";
         launchCommand = "";
