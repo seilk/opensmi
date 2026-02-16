@@ -2493,7 +2493,7 @@ async function main() {
       }
 
       const ok = renderer.copyToClipboardOSC52(text);
-      setStatus(ok ? `Copied ${text.length} chars` : "Copy failed");
+      // Don't show status message for copy (silent copy)
     } catch {
       // ignore
     }
@@ -2623,7 +2623,96 @@ async function main() {
   // Key handling
   renderer.keyInput.on("keypress", async (key: KeyEvent) => {
     if (screen === "dashboard") {
-      // === TYPING MODE (highest priority) ===
+      // === PREFIX KEY SYSTEM (highest priority for global shortcuts) ===
+      if (key.name === "x" && key.ctrl) {
+        prefixKeyPressed = true;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        prefixKeyTimeout = setTimeout(() => {
+          prefixKeyPressed = false;
+        }, 2000);
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "down") {
+        // ctrl+x down: focus runner
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        runnerFocused = true;
+        runnerInputBuffer = launchCommand;
+        runnerFocusedInputIdx = 0; // Start at first input
+        
+        // Initialize commands with GPU info if not already set
+        if (launchDistMode === "one-to-one") {
+          for (let i = 0; i < launchCommands.length; i++) {
+            if (!launchCommands[i] || launchCommands[i] === "") {
+              const gpu = launchSelectedGpus[i];
+              if (gpu) {
+                launchCommands[i] = `# ${gpu.node}:GPU${gpu.gpu}`;
+              }
+            }
+          }
+        }
+        
+        runnerInputTyping = false; // Ensure not in typing mode
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "f") {
+        // ctrl+x f: fold/unfold
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        runnerPaneFolded = !runnerPaneFolded;
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "return") {
+        // ctrl+x Enter: execute commands
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        
+        // Capture all input values
+        if (launchDistMode === "single") {
+          const inputAny: any = container.findDescendantById("runner-cmd-input");
+          if (inputAny) {
+            runnerInputBuffer = String(inputAny?.value ?? "");
+            launchCommand = runnerInputBuffer;
+          }
+        } else {
+          for (let i = 0; i < launchNumGpus; i++) {
+            const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+            if (inputAny) {
+              launchCommands[i] = String(inputAny?.value ?? "");
+            }
+          }
+        }
+        
+        if (launchMode === "tmux") {
+          const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+          if (tmuxInputAny) {
+            launchTmuxSession = String(tmuxInputAny?.value ?? "");
+          }
+        }
+        
+        runnerInputTyping = false;
+        runnerFocused = false;
+        await executeLaunch();
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "q") {
+        // ctrl+x q: quit
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        clearInterval(refreshInterval);
+        renderer.destroy();
+        process.exit(0);
+      }
+      
+      // === TYPING MODE ===
       if (runnerInputTyping) {
         if (key.name === "escape") {
           // Capture input values before exiting typing mode
@@ -2730,93 +2819,7 @@ async function main() {
         return;
       }
       
-      // === PREFIX KEY SYSTEM ===
-      if (key.name === "x" && key.ctrl) {
-        prefixKeyPressed = true;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        prefixKeyTimeout = setTimeout(() => {
-          prefixKeyPressed = false;
-        }, 2000);
-        render();
-        return;
-      }
-      
-      if (prefixKeyPressed && key.name === "down") {
-        // ctrl+x down: focus runner
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        runnerFocused = true;
-        runnerInputBuffer = launchCommand;
-        runnerFocusedInputIdx = 0; // Start at first input
-        
-        // Initialize commands with GPU info if not already set
-        if (launchDistMode === "one-to-one") {
-          for (let i = 0; i < launchCommands.length; i++) {
-            if (!launchCommands[i] || launchCommands[i] === "") {
-              const gpu = launchSelectedGpus[i];
-              if (gpu) {
-                launchCommands[i] = `# ${gpu.node}:GPU${gpu.gpu}`;
-              }
-            }
-          }
-        }
-        
-        render();
-        setTimeout(() => {
-          if (launchDistMode === "single") {
-            const inputAny: any = container.findDescendantById("runner-cmd-input");
-            if (inputAny) inputAny.focus();
-          } else {
-            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (inputAny) inputAny.focus();
-          }
-        }, 50);
-        return;
-      }
-      
-      if (prefixKeyPressed && key.name === "f") {
-        // ctrl+x f: fold/unfold
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        runnerPaneFolded = !runnerPaneFolded;
-        render();
-        return;
-      }
-      
-      if (prefixKeyPressed && key.name === "return") {
-        // ctrl+x Enter: execute commands
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        
-        // Capture all input values
-        if (launchDistMode === "single") {
-          const inputAny: any = container.findDescendantById("runner-cmd-input");
-          if (inputAny) {
-            runnerInputBuffer = String(inputAny?.value ?? "");
-            launchCommand = runnerInputBuffer;
-          }
-        } else {
-          for (let i = 0; i < launchNumGpus; i++) {
-            const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
-            if (inputAny) {
-              launchCommands[i] = String(inputAny?.value ?? "");
-            }
-          }
-        }
-        
-        if (launchMode === "tmux") {
-          const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
-          if (tmuxInputAny) {
-            launchTmuxSession = String(tmuxInputAny?.value ?? "");
-          }
-        }
-        
-        runnerInputTyping = false;
-        runnerFocused = false;
-        await executeLaunch();
-        render();
-        return;
-      }
+      // (PREFIX KEY handlers moved to top of dashboard screen)
       
       // === RUNNER FOCUSED MODE ===
       if (runnerFocused) {
@@ -3045,14 +3048,7 @@ async function main() {
       //   render();
       // }
       
-      if (prefixKeyPressed && key.name === "q") {
-        // ctrl+x q: quit
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        clearInterval(refreshInterval);
-        renderer.destroy();
-        process.exit(0);
-      }
+      // (ctrl+x q handler moved to top of dashboard screen)
     } else if (screen === "detail") {
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
         if (!snapshot) return;
