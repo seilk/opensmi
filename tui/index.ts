@@ -1601,8 +1601,9 @@ function renderRunnerPane() {
   const baseHeight = 3;
   const modeLineCount = 3;
   const inputHeight = launchDistMode === "one-to-one" ? launchNumGpus : 1;
+  const tmuxHeight = launchMode === "tmux" ? 2 : 0;
   const errorHeight = launchErrorMsg ? 1 : 0;
-  const height = runnerPaneFolded ? baseHeight : (baseHeight + modeLineCount + inputHeight + errorHeight + 2);
+  const height = runnerPaneFolded ? baseHeight : (baseHeight + modeLineCount + inputHeight + tmuxHeight + errorHeight + 3);
   
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
   const focusIndicator = runnerFocused 
@@ -1733,12 +1734,37 @@ function renderRunnerPane() {
     }
   }
 
+  const tmuxNodes: any[] = [];
+  if (launchMode === "tmux") {
+    tmuxNodes.push(Text({ content: " " }));
+    tmuxNodes.push(Text({ content: "Tmux session (empty = auto):", fg: C.textDim }));
+    
+    if (runnerFocused) {
+      tmuxNodes.push(Input({
+        id: "runner-tmux-session-input",
+        value: launchTmuxSession,
+        width: "100%",
+        backgroundColor: C.bgAlt,
+        focusedBackgroundColor: "#3b4261",
+        textColor: "#ffffff",
+        cursorColor: C.green,
+        placeholder: "session name (optional)...",
+      }));
+    } else {
+      tmuxNodes.push(Text({
+        content: `> ${launchTmuxSession || "(auto)"}`,
+        fg: C.textDim,
+      }));
+    }
+  }
+
   const contentNodes = [
     headerBox,
     modeInfo,
     gpuText,
     Text({ content: " " }),
     ...commandNodes,
+    ...tmuxNodes,
     ...(errorText ? [errorText] : [])
   ];
 
@@ -2360,6 +2386,19 @@ async function main() {
     } catch {
       // ignore
     }
+    
+    // Auto-refocus runner input when typing
+    if (runnerInputTyping || runnerFocused) {
+      setTimeout(() => {
+        if (launchDistMode === "single") {
+          const inputAny: any = container.findDescendantById("runner-cmd-input");
+          if (inputAny) inputAny.focus();
+        } else {
+          const inputAny: any = container.findDescendantById("runner-cmd-input-0");
+          if (inputAny) inputAny.focus();
+        }
+      }, 10);
+    }
   }
   requestRender = render;
 
@@ -2376,9 +2415,10 @@ async function main() {
   bootLoading = false;
   render();
 
-  // Auto-refresh every 15s (disabled while editing allocations)
+  // Auto-refresh every 15s (disabled while editing allocations or runner typing)
   const refreshInterval = setInterval(async () => {
     if (screen !== "dashboard" && screen !== "detail") return;
+    if (runnerFocused || runnerInputTyping) return; // Skip refresh when user is editing
     await Promise.all([pollCluster(), loadAllocations()]);
     render();
   }, 15_000);
@@ -2403,6 +2443,13 @@ async function main() {
               if (inputAny) {
                 launchCommands[i] = String(inputAny?.value ?? "");
               }
+            }
+          }
+          
+          if (launchMode === "tmux") {
+            const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+            if (tmuxInputAny) {
+              launchTmuxSession = String(tmuxInputAny?.value ?? "");
             }
           }
           
@@ -2468,6 +2515,13 @@ async function main() {
             }
           }
           
+          if (launchMode === "tmux") {
+            const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+            if (tmuxInputAny) {
+              launchTmuxSession = String(tmuxInputAny?.value ?? "");
+            }
+          }
+          
           render();
           return;
         }
@@ -2484,6 +2538,13 @@ async function main() {
               if (inputAny) {
                 launchCommands[i] = String(inputAny?.value ?? "");
               }
+            }
+          }
+          
+          if (launchMode === "tmux") {
+            const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+            if (tmuxInputAny) {
+              launchTmuxSession = String(tmuxInputAny?.value ?? "");
             }
           }
           
@@ -2551,6 +2612,15 @@ async function main() {
         if (key.sequence && key.sequence.length === 1 && /[a-zA-Z0-9 ]/.test(key.sequence)) {
           runnerInputTyping = true;
           render();
+          setTimeout(() => {
+            if (launchDistMode === "single") {
+              const inputAny: any = container.findDescendantById("runner-cmd-input");
+              if (inputAny) inputAny.focus();
+            } else {
+              const inputAny: any = container.findDescendantById("runner-cmd-input-0");
+              if (inputAny) inputAny.focus();
+            }
+          }, 50);
           return;
         }
         
