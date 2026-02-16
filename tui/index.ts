@@ -1119,8 +1119,8 @@ function renderDashboard() {
         content: `${free}/${n.gpus.length}`.padEnd(colW[colW.length - 1]!),
         fg: free > 0 ? C.green : C.yellow,
       }),
-      // Click anywhere on the row to jump to detail.
-      Box({
+      // Click anywhere on the row to jump to detail (only when not runner focused)
+      !runnerFocused ? Box({
         position: "absolute",
         top: 0,
         left: 0,
@@ -1147,7 +1147,7 @@ function renderDashboard() {
 
           requestRender?.();
         },
-      })
+      }) : undefined
     );
   });
 
@@ -1289,28 +1289,7 @@ function renderDetail() {
 
             selectedGpuIdx = g.index;
 
-            // Simple click when runner focused: toggle GPU selection
-            if (runnerFocused) {
-              const gpuKey = { node: node.node_alias, gpu: g.index };
-              const idx = launchManualGpus.findIndex(
-                (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
-              );
-              
-              if (idx >= 0) {
-                launchManualGpus.splice(idx, 1);
-              } else {
-                launchManualGpus.push(gpuKey);
-              }
-              
-              // Auto-switch to selected mode and update
-              launchGpuMode = "selected";
-              launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-              
-              requestRender?.();
-              return;
-            }
-
-            // When not runner focused: double-click to open Allocate modal
+            // Double-click to open Allocate modal
             const now = Date.now();
             const clickKey = `${node.node_alias}:GPU${g.index}`;
             const isDouble = clickKey === lastGpuClickKey && now - lastGpuClickAt < 350;
