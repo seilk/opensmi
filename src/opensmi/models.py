@@ -28,6 +28,11 @@ class GPUInfo:
     uuid: str
     name: str
     memory_total_mib: Optional[int] = None
+    memory_used_mib: Optional[int] = None
+    memory_free_mib: Optional[int] = None
+    utilization_gpu_percent: Optional[int] = None
+    temperature_c: Optional[int] = None
+    power_draw_w: Optional[float] = None
 
 
 @dataclass

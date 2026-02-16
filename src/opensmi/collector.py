@@ -28,7 +28,7 @@ else
 fi
 
 echo "__GPUS__"
-(nvidia-smi --query-gpu=index,uuid,name,memory.total --format=csv,noheader,nounits 2>/dev/null) || true
+(nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits 2>/dev/null) || true
 
 echo "__PROCS__"
 (nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null) || true
@@ -74,40 +74,20 @@ def _now_iso() -> str:
     return datetime.now(_KST).isoformat(timespec="seconds")
 
 
-async def _ssh_run(node: NodeConfig, script: str, timeout_s: int) -> Tuple[int, str, str]:
-    target = f"{node.user}@{node.address}"
-
-    cmd = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        f"ConnectTimeout={node.connect_timeout_s}",
-    ]
-    if node.port and int(node.port) != 22:
-        cmd += ["-p", str(int(node.port))]
-
-    cmd += [target, "bash", "-s"]
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+async def _ssh_run(
+    node: NodeConfig, script: str, timeout_s: int, max_retries: int = 2
+) -> Tuple[int, str, str]:
+    from .sshutil import SSHRunError, ssh_bash_script
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(script.encode("utf-8")), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        proc.kill()
-        raise SSHError(f"Timeout after {timeout_s}s")
-
-    rc = int(proc.returncode or 0)
-    stdout = stdout_b.decode("utf-8", errors="replace")
-    stderr = stderr_b.decode("utf-8", errors="replace")
-    return rc, stdout, stderr
+        return await ssh_bash_script(
+            node,
+            script,
+            timeout_s=timeout_s,
+            max_retries=max_retries,
+        )
+    except SSHRunError as e:
+        raise SSHError(str(e)) from e
 
 
 def _find_section(lines: List[str], marker: str) -> int:
@@ -155,9 +135,14 @@ def _parse_users_output(stdout: str) -> List[str]:
     return users
 
 
-async def fetch_users(config: ClusterConfig, *, timeout_s: int = 10) -> List[str]:
+async def fetch_users(
+    config: ClusterConfig, *, timeout_s: int = 10, max_retries: int = 2
+) -> List[str]:
     # Union usernames across nodes. No sudo required.
-    tasks = [_ssh_run(n, REMOTE_USERS_SCRIPT, timeout_s=timeout_s) for n in config.nodes]
+    tasks = [
+        _ssh_run(n, REMOTE_USERS_SCRIPT, timeout_s=timeout_s, max_retries=max_retries)
+        for n in config.nodes
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     out: List[str] = []
@@ -207,19 +192,48 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
 
     gpus: List[GPUInfo] = []
     for row in _parse_csv_lines(gpu_lines):
-        # index, uuid, name, memory.total
+        # index, uuid, name, memory.total, memory.used, utilization.gpu, temperature.gpu, power.draw
         if len(row) < 4:
             continue
         try:
             idx = int(row[0])
         except ValueError:
             continue
-        mem: Optional[int]
-        try:
-            mem = int(row[3])
-        except Exception:
-            mem = None
-        gpus.append(GPUInfo(index=idx, uuid=row[1], name=row[2], memory_total_mib=mem))
+
+        def _int_or_none(val: str) -> Optional[int]:
+            try:
+                return int(val)
+            except Exception:
+                return None
+
+        def _float_or_none(val: str) -> Optional[float]:
+            try:
+                return float(val)
+            except Exception:
+                return None
+
+        mem_total = _int_or_none(row[3]) if len(row) > 3 else None
+        mem_used = _int_or_none(row[4]) if len(row) > 4 else None
+        mem_free = None
+        if mem_total is not None and mem_used is not None:
+            mem_free = mem_total - mem_used
+        util = _int_or_none(row[5]) if len(row) > 5 else None
+        temp = _int_or_none(row[6]) if len(row) > 6 else None
+        power = _float_or_none(row[7]) if len(row) > 7 else None
+
+        gpus.append(
+            GPUInfo(
+                index=idx,
+                uuid=row[1],
+                name=row[2],
+                memory_total_mib=mem_total,
+                memory_used_mib=mem_used,
+                memory_free_mib=mem_free,
+                utilization_gpu_percent=util,
+                temperature_c=temp,
+                power_draw_w=power,
+            )
+        )
 
     owners: Dict[int, str] = {}
     runtimes: Dict[int, Optional[int]] = {}
@@ -269,12 +283,14 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
     return meta, gpus, procs
 
 
-async def poll_node(node: NodeConfig, timeout_s: int) -> NodeSnapshot:
+async def poll_node(node: NodeConfig, timeout_s: int, max_retries: int = 2) -> NodeSnapshot:
     snap = NodeSnapshot(node_alias=node.alias, address=node.address)
     snap.timestamp = _now_iso()
 
     try:
-        rc, stdout, stderr = await _ssh_run(node, REMOTE_SCRIPT, timeout_s=timeout_s)
+        rc, stdout, stderr = await _ssh_run(
+            node, REMOTE_SCRIPT, timeout_s=timeout_s, max_retries=max_retries
+        )
         if rc != 0:
             # Some SSH failures return rc=255
             err = (stderr.strip() or stdout.strip() or f"ssh exited {rc}")
@@ -292,8 +308,13 @@ async def poll_node(node: NodeConfig, timeout_s: int) -> NodeSnapshot:
     return snap
 
 
-async def poll_cluster(config: ClusterConfig, *, timeout_s: int = 15) -> ClusterSnapshot:
-    tasks = [poll_node(n, timeout_s=timeout_s) for n in config.nodes]
+async def poll_cluster(
+    config: ClusterConfig, *, timeout_s: int = 15, max_retries: int = 2
+) -> ClusterSnapshot:
+    tasks = [
+        poll_node(n, timeout_s=timeout_s, max_retries=max_retries)
+        for n in config.nodes
+    ]
     nodes = await asyncio.gather(*tasks)
 
     return ClusterSnapshot(

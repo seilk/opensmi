@@ -21,6 +21,11 @@ interface GPUInfo {
   uuid: string;
   name: string;
   memory_total_mib: number | null;
+  memory_used_mib?: number | null;
+  memory_free_mib?: number | null;
+  utilization_gpu_percent?: number | null;
+  // Backward compatibility for older snapshots
+  utilization_gpu?: number | null;
 }
 
 interface GPUProcess {
@@ -55,6 +60,7 @@ interface Allocation {
   target: string;
   assigned_by: string;
   assigned_at: string;
+  expires_at?: string | null;
   notes: string;
 }
 
@@ -329,11 +335,53 @@ function usersOnGpu(node: NodeSnapshot, gpuUuid: string): string[] {
   return users;
 }
 
-function getAllocTarget(nodeAlias: string, gpuIdx: number): string | null {
+function getAllocation(nodeAlias: string, gpuIdx: number): Allocation | null {
   const a = allocations.find(
     (a) => a.node_alias === nodeAlias && a.gpu_index === gpuIdx
   );
-  return a?.target || null;
+  return a || null;
+}
+
+function getAllocTarget(nodeAlias: string, gpuIdx: number): string | null {
+  return getAllocation(nodeAlias, gpuIdx)?.target || null;
+}
+
+function _parseIso(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function expiresInShort(expiresAt: string | null | undefined): string {
+  const d = _parseIso(expiresAt);
+  if (!d) return "";
+
+  const diffMs = d.getTime() - Date.now();
+  if (diffMs <= 0) return "expired";
+
+  const totalMin = Math.floor(diffMs / 60_000);
+  const day = Math.floor(totalMin / (60 * 24));
+  const hour = Math.floor((totalMin % (60 * 24)) / 60);
+  const min = totalMin % 60;
+
+  if (day > 0) return `${day}d${hour}h`;
+  if (hour > 0) return `${hour}h${min}m`;
+  return `${Math.max(1, min)}m`;
+}
+
+function countExpiringWithin(hours: number): number {
+  const now = Date.now();
+  const windowMs = Math.max(1, hours) * 60 * 60 * 1000;
+  let count = 0;
+
+  for (const a of allocations) {
+    const d = _parseIso(a.expires_at);
+    if (!d) continue;
+    const diff = d.getTime() - now;
+    if (diff > 0 && diff <= windowMs) count += 1;
+  }
+
+  return count;
 }
 
 function _parseTargets(target: string): string[] {
@@ -377,9 +425,46 @@ function isViolation(nodeAlias: string, gpuIdx: number, user: string): boolean {
   return !allowed.has(user);
 }
 
-function gpuMemStr(mib: number | null): string {
-  if (mib === null) return "?";
+function gpuMemStr(mib: number | null | undefined): string {
+  if (mib === null || mib === undefined) return "?";
   return `${Math.round(mib / 1024)}G`;
+}
+
+function gpuUtilPct(g: GPUInfo): number | null {
+  if (g.utilization_gpu_percent !== null && g.utilization_gpu_percent !== undefined) {
+    return g.utilization_gpu_percent;
+  }
+  if (g.utilization_gpu !== null && g.utilization_gpu !== undefined) {
+    return g.utilization_gpu;
+  }
+  return null;
+}
+
+function suggestGpu(node: NodeSnapshot): GPUInfo | null {
+  if (!node.gpus.length) return null;
+
+  const byUuidProcCount = new Map<string, number>();
+  for (const p of node.processes) {
+    byUuidProcCount.set(p.gpu_uuid, (byUuidProcCount.get(p.gpu_uuid) || 0) + 1);
+  }
+
+  const sorted = [...node.gpus].sort((a, b) => {
+    const aProc = byUuidProcCount.get(a.uuid) || 0;
+    const bProc = byUuidProcCount.get(b.uuid) || 0;
+    if (aProc !== bProc) return aProc - bProc;
+
+    const aUtil = gpuUtilPct(a) ?? Number.MAX_SAFE_INTEGER;
+    const bUtil = gpuUtilPct(b) ?? Number.MAX_SAFE_INTEGER;
+    if (aUtil !== bUtil) return aUtil - bUtil;
+
+    const aFree = a.memory_free_mib ?? -1;
+    const bFree = b.memory_free_mib ?? -1;
+    if (aFree !== bFree) return bFree - aFree;
+
+    return a.index - b.index;
+  });
+
+  return sorted[0] || null;
 }
 
 function runtimeStr(sec: number | null | undefined): string {
@@ -587,6 +672,8 @@ function renderDashboard() {
     }
   }
 
+  const expiringSoon = countExpiringWithin(24);
+
   // Header
   const header = Box(
     {
@@ -601,7 +688,7 @@ function renderDashboard() {
       content: t`${bold(fg(C.blue)(snapshot.cluster_name))} ${fg(C.textDim)("· opensmi")}`,
     }),
     Text({
-      content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Expiring<24h: ${expiringSoon > 0 ? fg(C.yellow)(`${expiringSoon}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
     })
   );
 
@@ -669,28 +756,33 @@ function renderDashboard() {
       );
     }
 
-    const idxToUuid: Record<number, string> = {};
-    for (const g of n.gpus) idxToUuid[g.index] = g.uuid;
+    const idxToGpu: Record<number, GPUInfo> = {};
+    for (const g of n.gpus) idxToGpu[g.index] = g;
 
     const gpuCells: any[] = [];
     let free = 0;
 
     for (let i = 0; i < 4; i++) {
-      const uuid = idxToUuid[i];
-      if (!uuid) {
+      const g = idxToGpu[i];
+      if (!g) {
         gpuCells.push(Text({ content: "—".padEnd(colW[i + 1]!), fg: C.textDim }));
         continue;
       }
-      const users = usersOnGpu(n, uuid);
+      const users = usersOnGpu(n, g.uuid);
       if (users.length === 0) {
-        const allocTarget = getAllocTarget(n.node_alias, i);
-        const label = allocTarget ? `[${allocTarget}]` : "idle";
-        gpuCells.push(Text({ content: label.padEnd(colW[i + 1]!), fg: C.textDim }));
+        const alloc = getAllocation(n.node_alias, i);
+        const remain = expiresInShort(alloc?.expires_at);
+        const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : "idle";
+        const display = label.length > colW[i + 1]! - 1 ? label.slice(0, colW[i + 1]! - 2) + "…" : label;
+        gpuCells.push(Text({ content: display.padEnd(colW[i + 1]!), fg: C.textDim }));
         free++;
       } else {
         const hasViolation = users.some((u) => isViolation(n.node_alias, i, u));
         const cell = users.join("+");
-        const display = cell.length > colW[i + 1]! - 1 ? cell.slice(0, colW[i + 1]! - 2) + "…" : cell;
+        const utilVal = gpuUtilPct(g);
+        const util = utilVal !== null ? ` ${utilVal}%` : "";
+        const label = `${cell}${util}`;
+        const display = label.length > colW[i + 1]! - 1 ? label.slice(0, colW[i + 1]! - 2) + "…" : label;
         gpuCells.push(
           Text({
             content: display.padEnd(colW[i + 1]!),
@@ -763,6 +855,13 @@ function renderDashboard() {
     .map(([u, count]) => `${u}:${count}`)
     .join("  ");
 
+  const selectedNode = snapshot.nodes[selectedNodeIdx];
+  const suggested = selectedNode && !selectedNode.error ? suggestGpu(selectedNode) : null;
+  const suggestedLoad = suggested ? gpuUtilPct(suggested) : null;
+  const suggestedText = suggested
+    ? `${selectedNode!.node_alias} GPU${suggested.index} (${suggestedLoad !== null ? `load ${suggestedLoad}%` : "load ?"}, free ${gpuMemStr(suggested.memory_free_mib)})`
+    : "-";
+
   const footer = Box(
     {
       width: "100%",
@@ -772,6 +871,9 @@ function renderDashboard() {
     },
     Text({
       content: t`${fg(C.textDim)("Users:")} ${userSummary}`,
+    }),
+    Text({
+      content: t`${fg(C.textDim)("Suggested GPU:")} ${fg(C.cyan)(suggestedText)}`,
     }),
     Text({
       content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
@@ -820,8 +922,14 @@ function renderDetail() {
   // Per-GPU sections
   for (const g of node.gpus) {
     const procs = node.processes.filter((p) => p.gpu_uuid === g.uuid);
-    const allocTarget = getAllocTarget(node.node_alias, g.index);
-    const allocStr = allocTarget ? `Alloc: ${allocTarget}` : "Alloc: (none)";
+    const alloc = getAllocation(node.node_alias, g.index);
+    const allocTarget = alloc?.target || null;
+    const remain = expiresInShort(alloc?.expires_at);
+    const allocStr = allocTarget
+      ? `Alloc: ${allocTarget}${remain ? ` (exp ${remain})` : ""}`
+      : "Alloc: (none)";
+    const utilVal = gpuUtilPct(g);
+    const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
 
     const isSel = g.index === selectedGpuIdx;
     const prefix = isSel ? "▸" : " ";
@@ -829,7 +937,7 @@ function renderDetail() {
       Box(
         { width: "100%", height: 1, position: "relative" },
         Text({
-          content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  ${gpuMemStr(g.memory_total_mib)}  |  ${allocStr}`,
+          content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}`,
           fg: isSel ? "#ffffff" : C.cyan,
         }),
         Box({
@@ -928,6 +1036,7 @@ function renderHelp() {
     Text({ content: t`  ${fg(C.green)("Green")}   — Allocated user (OK)` }),
     Text({ content: t`  ${fg(C.red)("Red")}     — Violation (wrong/unallocated user)` }),
     Text({ content: t`  ${fg(C.textDim)("Gray")}    — Idle / no process` }),
+    Text({ content: "  Dashboard shows GPU load % and allocation expiry countdown when available" }),
     Text({ content: "" }),
     Text({ content: t`${fg(C.textDim)("[Esc]")} Back` })
   );
