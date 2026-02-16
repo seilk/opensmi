@@ -1213,9 +1213,9 @@ function renderDashboard() {
       { flexDirection: "row", paddingTop: 1 },
       Text({
         content: runnerInputTyping
-          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
+          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
           : (runnerFocused
-              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
+              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
               : (runnerPaneFolded
                   ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`
                   : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`)),
@@ -1349,7 +1349,7 @@ function renderDetail() {
   children.push(
     Text({
       content: runnerInputTyping
-        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
         : (runnerFocused
             ? (isAdmin
                 ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
@@ -1692,9 +1692,9 @@ function renderRunnerPane() {
   
   const helpText = Text({ 
     content: runnerInputTyping
-      ? "[Esc] Stop  [Enter] Execute"
+      ? "[Esc] Stop  [ctrl+x Enter] Execute"
       : (runnerFocused
-          ? "[Esc] Unfocus  [Enter] Execute  [Tab/Shift+Tab/+/-/g] Options"
+          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/g] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold  [l] Full screen"),
     fg: C.textDim 
   });
