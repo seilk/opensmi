@@ -1962,9 +1962,6 @@ async function main() {
       case "kill":
         newNode = renderKill();
         break;
-      case "launch":
-        newNode = renderLaunch();
-        break;
     }
 
     // Wrap the screen in a relative container so we can overlay toast UI.
