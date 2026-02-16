@@ -1044,6 +1044,15 @@ function renderDashboard() {
                   launchManualGpus.splice(idx, 1);
                 } else {
                   launchManualGpus.push(gpuKey);
+                  // Sync count: increase if selection exceeds current count
+                  if (launchManualGpus.length > launchNumGpus) {
+                    launchNumGpus = launchManualGpus.length;
+                    if (launchDistMode === "one-to-one") {
+                      while (launchCommands.length < launchNumGpus) {
+                        launchCommands.push("");
+                      }
+                    }
+                  }
                 }
                 
                 launchGpuMode = "selected";
@@ -1089,6 +1098,15 @@ function renderDashboard() {
                   launchManualGpus.splice(idx, 1);
                 } else {
                   launchManualGpus.push(gpuKey);
+                  // Sync count: increase if selection exceeds current count
+                  if (launchManualGpus.length > launchNumGpus) {
+                    launchNumGpus = launchManualGpus.length;
+                    if (launchDistMode === "one-to-one") {
+                      while (launchCommands.length < launchNumGpus) {
+                        launchCommands.push("");
+                      }
+                    }
+                  }
                 }
                 
                 launchGpuMode = "selected";
@@ -1743,7 +1761,7 @@ function renderRunnerPane() {
   if (launchDistMode === "single") {
     commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
     
-    if (runnerFocused) {
+    if (runnerFocused && runnerInputTyping) {
       commandNodes.push(Input({
         id: "runner-cmd-input",
         width: "100%",
@@ -1755,10 +1773,28 @@ function renderRunnerPane() {
         cursorColor: C.green,
       }));
     } else {
-      commandNodes.push(Text({
-        content: `> ${launchCommand || "(not set)"}`,
-        fg: C.textDim,
-      }));
+      commandNodes.push(
+        Box(
+          { width: "100%", height: 1, position: "relative" },
+          Text({
+            content: `> ${launchCommand || "(click to edit)"}`,
+            fg: runnerFocused ? C.green : C.textDim,
+          }),
+          runnerFocused ? Box({
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 999,
+            onMouseDown: () => {
+              runnerInputTyping = true;
+              runnerInputBuffer = launchCommand;
+              requestRender?.();
+            },
+          }) : undefined
+        )
+      );
     }
   } else {
     // one-to-one mode
@@ -1767,7 +1803,7 @@ function renderRunnerPane() {
       fg: C.textDim 
     }));
     
-    if (runnerFocused) {
+    if (runnerFocused && runnerInputTyping) {
       for (let i = 0; i < launchNumGpus; i++) {
         const value = launchCommands[i] || "";
         const gpu = launchSelectedGpus[i];
@@ -1788,10 +1824,29 @@ function renderRunnerPane() {
         const cmd = launchCommands[i] || "";
         const gpu = launchSelectedGpus[i];
         const label = gpu ? `${gpu.node}:GPU${gpu.gpu}` : `GPU ${i}`;
-        commandNodes.push(Text({
-          content: `${label}: ${cmd || "(empty)"}`,
-          fg: cmd.trim() ? C.textDim : C.red,
-        }));
+        const isFocusedLine = runnerFocused && i === runnerFocusedInputIdx;
+        commandNodes.push(
+          Box(
+            { width: "100%", height: 1, position: "relative" },
+            Text({
+              content: `${label}: ${cmd || "(click to edit)"}`,
+              fg: isFocusedLine ? C.green : (cmd.trim() ? C.textDim : C.red),
+            }),
+            runnerFocused ? Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 999,
+              onMouseDown: () => {
+                runnerInputTyping = true;
+                runnerFocusedInputIdx = i;
+                requestRender?.();
+              },
+            }) : undefined
+          )
+        );
       }
     }
   }
@@ -1801,7 +1856,7 @@ function renderRunnerPane() {
     tmuxNodes.push(Text({ content: " " }));
     tmuxNodes.push(Text({ content: "Tmux session (empty = auto):", fg: C.textDim }));
     
-    if (runnerFocused) {
+    if (runnerFocused && runnerInputTyping) {
       tmuxNodes.push(Input({
         id: "runner-tmux-session-input",
         value: launchTmuxSession,
@@ -1813,10 +1868,27 @@ function renderRunnerPane() {
         placeholder: "session name (optional)...",
       }));
     } else {
-      tmuxNodes.push(Text({
-        content: `> ${launchTmuxSession || "(auto)"}`,
-        fg: C.textDim,
-      }));
+      tmuxNodes.push(
+        Box(
+          { width: "100%", height: 1, position: "relative" },
+          Text({
+            content: `> ${launchTmuxSession || "(click to edit)"}`,
+            fg: runnerFocused ? C.green : C.textDim,
+          }),
+          runnerFocused ? Box({
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 999,
+            onMouseDown: () => {
+              runnerInputTyping = true;
+              requestRender?.();
+            },
+          }) : undefined
+        )
+      );
     }
   }
 
@@ -2659,6 +2731,10 @@ async function main() {
           launchNumGpus = Math.max(launchNumGpus - 1, 1);
           if (launchDistMode === "one-to-one") {
             launchCommands = launchCommands.slice(0, launchNumGpus);
+          }
+          // Sync GPU selection: remove last selected if exceeds count
+          if (launchManualGpus.length > launchNumGpus) {
+            launchManualGpus.pop(); // Remove last selected GPU
           }
           await refreshLaunchGpuSelection();
           render();
