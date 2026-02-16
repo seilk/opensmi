@@ -1245,7 +1245,7 @@ function renderDashboard() {
         content: runnerInputTyping
           ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
           : (runnerFocused
-              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
+              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
               : (runnerPaneFolded
                   ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
                   : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
@@ -1726,7 +1726,7 @@ function renderRunnerPane() {
     content: runnerInputTyping
       ? "[Esc] Stop  [ctrl+x Enter] Execute"
       : (runnerFocused
-          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/g] Options"
+          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
     fg: C.textDim 
   });
@@ -1766,7 +1766,7 @@ function renderRunnerPane() {
   }
   
   const modeInfo = Text({ 
-    content: `GPU: ${launchGpuMode}  Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
+    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
     fg: C.textDim 
   });
   
@@ -2994,17 +2994,7 @@ async function main() {
           return;
         }
         
-        if (key.sequence === "g") {
-          key.preventDefault();
-          launchGpuMode = launchGpuMode === "auto" ? "selected" : "auto";
-          if (launchGpuMode === "auto") {
-            await refreshLaunchGpuSelection();
-          } else {
-            launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-          }
-          render();
-          return;
-        }
+        // GPU mode toggle (g key) removed - simplified to: + = auto, click = manual
         
         // Detect typing when any printable key is pressed
         if (key.sequence && key.sequence.length === 1) {
@@ -3410,19 +3400,7 @@ async function main() {
         
         await refreshLaunchGpuSelection();
         render();
-      } else if (key.sequence === "g") {
-        key.preventDefault();
-        key.stopPropagation();
-        
-        launchGpuMode = launchGpuMode === "auto" ? "selected" : "auto";
-        
-        if (launchGpuMode === "auto") {
-          await refreshLaunchGpuSelection();
-        } else {
-          launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-        }
-        
-        render();
+      // GPU mode toggle (g key) removed - simplified
       } else if (key.name === "return") {
         key.preventDefault();
         key.stopPropagation();
