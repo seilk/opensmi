@@ -86,6 +86,7 @@ let runnerFocused = false;
 let runnerInputTyping = false; // True when actively typing text
 let runnerInputBuffer = "";
 let runnerFocusedInputIdx = 0; // Which input line is focused in one-to-one mode
+let runButtonFocused = false; // True when Run button is highlighted
 
 // Prefix key system (ctrl+x)
 let prefixKeyPressed = false;
@@ -1892,6 +1893,32 @@ function renderRunnerPane() {
     }
   }
 
+  const runButton = Box(
+    { 
+      width: 12, 
+      height: 3,
+      borderStyle: "rounded",
+      borderColor: runButtonFocused ? "#ffffff" : C.green,
+      backgroundColor: runButtonFocused ? C.green : C.bgAlt,
+      justifyContent: "center",
+      alignItems: "center",
+      position: "relative",
+    },
+    Text({ content: "▶ RUN", fg: runButtonFocused ? "#ffffff" : C.green }),
+    Box({
+      position: "absolute",
+      top: 0,
+      left: 0,
+      width: "100%",
+      height: "100%",
+      zIndex: 999,
+      onMouseDown: () => {
+        runButtonFocused = true;
+        requestRender?.();
+      },
+    })
+  );
+
   const contentNodes = [
     headerBox,
     modeInfo,
@@ -1899,7 +1926,9 @@ function renderRunnerPane() {
     Text({ content: " " }),
     ...commandNodes,
     ...tmuxNodes,
-    ...(errorText ? [errorText] : [])
+    ...(errorText ? [errorText] : []),
+    Text({ content: " " }),
+    runButton
   ];
 
   return Box(
@@ -2613,31 +2642,55 @@ async function main() {
           await executeLaunch();
           render();
         } else if (key.name === "down" && launchDistMode === "one-to-one") {
-          // Navigate to next input line
+          // Navigate to next input line (commands + tmux if applicable)
           const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
           if (inputAny) {
             launchCommands[runnerFocusedInputIdx] = String(inputAny?.value ?? "");
           }
           
-          runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
-          render();
-          setTimeout(() => {
-            const nextInputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (nextInputAny) nextInputAny.focus();
-          }, 50);
+          // If at last command line and tmux mode, move to tmux session input
+          if (runnerFocusedInputIdx === launchNumGpus - 1 && launchMode === "tmux") {
+            runnerFocusedInputIdx = -1; // Special value for tmux session
+            render();
+            setTimeout(() => {
+              const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+              if (tmuxInputAny) tmuxInputAny.focus();
+            }, 50);
+          } else {
+            runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
+            render();
+            setTimeout(() => {
+              const nextInputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+              if (nextInputAny) nextInputAny.focus();
+            }, 50);
+          }
         } else if (key.name === "up" && launchDistMode === "one-to-one") {
-          // Navigate to previous input line
-          const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-          if (inputAny) {
-            launchCommands[runnerFocusedInputIdx] = String(inputAny?.value ?? "");
+          // Navigate to previous input line (tmux session ← commands)
+          if (runnerFocusedInputIdx === -1) {
+            // From tmux session back to last command
+            const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+            if (tmuxInputAny) {
+              launchTmuxSession = String(tmuxInputAny?.value ?? "");
+            }
+            runnerFocusedInputIdx = launchNumGpus - 1;
+            render();
+            setTimeout(() => {
+              const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+              if (inputAny) inputAny.focus();
+            }, 50);
+          } else {
+            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+            if (inputAny) {
+              launchCommands[runnerFocusedInputIdx] = String(inputAny?.value ?? "");
+            }
+            
+            runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
+            render();
+            setTimeout(() => {
+              const nextInputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+              if (nextInputAny) nextInputAny.focus();
+            }, 50);
           }
-          
-          runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
-          render();
-          setTimeout(() => {
-            const nextInputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (nextInputAny) nextInputAny.focus();
-          }, 50);
         }
         // All other keys pass through to input
         return;
@@ -2714,30 +2767,48 @@ async function main() {
         }
         
         if (key.name === "return") {
-          // Capture input values
-          if (launchDistMode === "single") {
-            const inputAny: any = container.findDescendantById("runner-cmd-input");
-            runnerInputBuffer = String(inputAny?.value ?? "");
-            launchCommand = runnerInputBuffer;
-          } else {
-            for (let i = 0; i < launchNumGpus; i++) {
-              const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+          if (runButtonFocused) {
+            // Execute from Run button
+            if (launchDistMode === "single") {
+              const inputAny: any = container.findDescendantById("runner-cmd-input");
               if (inputAny) {
-                launchCommands[i] = String(inputAny?.value ?? "");
+                runnerInputBuffer = String(inputAny?.value ?? "");
+                launchCommand = runnerInputBuffer;
+              }
+            } else {
+              for (let i = 0; i < launchNumGpus; i++) {
+                const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
+                if (inputAny) {
+                  launchCommands[i] = String(inputAny?.value ?? "");
+                }
               }
             }
-          }
-          
-          if (launchMode === "tmux") {
-            const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
-            if (tmuxInputAny) {
-              launchTmuxSession = String(tmuxInputAny?.value ?? "");
+            
+            if (launchMode === "tmux") {
+              const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
+              if (tmuxInputAny) {
+                launchTmuxSession = String(tmuxInputAny?.value ?? "");
+              }
             }
+            
+            runnerFocused = false;
+            runButtonFocused = false;
+            await executeLaunch();
+            render();
+          } else {
+            // Enter in focused mode: start typing on current highlighted line
+            runnerInputTyping = true;
+            render();
+            setTimeout(() => {
+              if (launchDistMode === "single") {
+                const inputAny: any = container.findDescendantById("runner-cmd-input");
+                if (inputAny) inputAny.focus();
+              } else {
+                const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+                if (inputAny) inputAny.focus();
+              }
+            }, 50);
           }
-          
-          runnerFocused = false;
-          await executeLaunch();
-          render();
           return;
         }
         
@@ -2789,17 +2860,39 @@ async function main() {
         }
         
         if (key.name === "down" && launchDistMode === "one-to-one" && !runnerInputTyping) {
-          // Navigate to next input line
-          runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
-          render();
-          setTimeout(() => {
-            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (inputAny) inputAny.focus();
-          }, 50);
+          if (runButtonFocused) {
+            // Already at Run button, do nothing
+            return;
+          }
+          
+          // Check if at last position (tmux or last command)
+          const lastPos = launchMode === "tmux" ? -1 : launchNumGpus - 1;
+          
+          if (runnerFocusedInputIdx === lastPos) {
+            // Move to Run button
+            runButtonFocused = true;
+            render();
+          } else {
+            // Navigate to next input line
+            runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
+            render();
+            setTimeout(() => {
+              const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
+              if (inputAny) inputAny.focus();
+            }, 50);
+          }
           return;
         }
         
         if (key.name === "up" && launchDistMode === "one-to-one" && !runnerInputTyping) {
+          if (runButtonFocused) {
+            // From Run button back to last position
+            runButtonFocused = false;
+            runnerFocusedInputIdx = launchMode === "tmux" ? -1 : launchNumGpus - 1;
+            render();
+            return;
+          }
+          
           // Navigate to previous input line
           runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
           render();
