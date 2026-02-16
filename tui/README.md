@@ -36,9 +36,9 @@ make tui
 | `Esc` | Back |
 | `q` | Quit |
 
-## Launch Feature
+## Command Runner
 
-Press `l` to open the Launch screen, which provides automatic GPU selection and command execution:
+Press `l` to open the Command Runner pane at the bottom of the dashboard/detail screen. The runner provides automatic GPU selection and command execution with full orchestration:
 
 ### Features
 
@@ -56,13 +56,31 @@ Press `l` to open the Launch screen, which provides automatic GPU selection and 
   - **single**: One command across N GPUs
   - **one-to-one**: Different command per GPU (multi-line input)
 
+### Keybindings
+
+- `l` - Open runner pane
+- `Ctrl+R` - Toggle runner open/close
+- `Ctrl+J` / `Ctrl+K` - Decrease/increase pane height
+- `Ctrl+L` - Maximize runner toggle
+- `Tab` - Toggle execution mode (direct/tmux)
+- `Shift+Tab` - Toggle distribution mode (single/one-to-one)
+- `+`/`-` - Adjust GPU count
+- `Enter` - Execute command
+
 ### Usage
 
-1. Press `l` to open Launch screen
-2. Enter command(s)
-3. Adjust GPU count with `+`/`-` or `↑`/`↓`
+1. Press `l` or `Ctrl+R` to open the runner pane
+2. Enter command(s) - supports multiline paste
+3. Adjust GPU count with `+`/`-`
 4. Toggle modes with `Tab` (execution) and `Shift+Tab` (distribution)
-5. Press `Enter` to launch
+5. Review preflight checks (tmux installed, command valid, GPUs available)
+6. Press `Enter` to execute
+
+The pane shows:
+- GPU selection reasoning (e.g., "idle GPU, no active processes")
+- Preflight validation with hints on failures
+- State machine: QUEUED → PREPARING → SENT → RUNNING / FAILED
+- Status strip with start time, tmux session, attach command, stderr preview
 
 ### Examples
 
