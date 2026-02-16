@@ -1803,6 +1803,11 @@ function renderRunnerPane() {
               if (!runnerFocused) {
                 runnerFocused = true;
                 runnerInputBuffer = launchCommand;
+                runnerFocusedInputIdx = 0;
+              } else if (runnerFocusedInputIdx === 0 && !runnerInputTyping) {
+                // Second click on same line → typing mode
+                runnerInputTyping = true;
+                runnerInputBuffer = launchCommand;
               }
               requestRender?.();
             },
@@ -1856,8 +1861,13 @@ function renderRunnerPane() {
               onMouseDown: () => {
                 if (!runnerFocused) {
                   runnerFocused = true;
+                  runnerFocusedInputIdx = i;
+                } else if (runnerFocusedInputIdx === i && !runnerInputTyping) {
+                  // Second click on same line → typing mode
+                  runnerInputTyping = true;
+                } else {
+                  runnerFocusedInputIdx = i;
                 }
-                runnerFocusedInputIdx = i;
                 requestRender?.();
               },
             })
@@ -1903,8 +1913,13 @@ function renderRunnerPane() {
             onMouseDown: () => {
               if (!runnerFocused) {
                 runnerFocused = true;
+                runnerFocusedInputIdx = -1;
+              } else if (runnerFocusedInputIdx === -1 && !runnerInputTyping) {
+                // Second click on tmux session → typing mode
+                runnerInputTyping = true;
+              } else {
+                runnerFocusedInputIdx = -1;
               }
-              runnerFocusedInputIdx = -1; // tmux session
               requestRender?.();
             },
           })
