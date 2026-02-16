@@ -88,6 +88,8 @@ let runnerFocused = false;
 let runnerInputTyping = false; // True when actively typing text
 let runnerInputBuffer = "";
 let runnerFocusedInputIdx = 0; // Which input line is focused in one-to-one mode
+let runnerMouseDownTime = 0; // Track mousedown time to distinguish click from drag
+let runnerMouseDownPos: { x: number; y: number } | null = null;
 
 // Prefix key system (ctrl+x)
 let prefixKeyPressed = false;
@@ -1827,7 +1829,21 @@ function renderRunnerPane() {
             width: "100%",
             height: "100%",
             zIndex: 999,
-            onMouseDown: () => {
+            onMouseDown: (e: any) => {
+              runnerMouseDownTime = Date.now();
+              runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+            },
+            onMouseUp: (e: any) => {
+              const elapsed = Date.now() - runnerMouseDownTime;
+              const moved = runnerMouseDownPos && (
+                Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+              );
+              
+              if (moved || elapsed > 300) {
+                return; // Was a drag, don't trigger click
+              }
+              
               if (!runnerFocused) {
                 runnerFocused = true;
                 runnerInputBuffer = launchCommand;
@@ -1886,7 +1902,25 @@ function renderRunnerPane() {
               width: "100%",
               height: "100%",
               zIndex: 999,
-              onMouseDown: () => {
+              onMouseDown: (e: any) => {
+                // Track mousedown for drag detection
+                runnerMouseDownTime = Date.now();
+                runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+              },
+              onMouseUp: (e: any) => {
+                // Check if this was a drag (long press or moved)
+                const elapsed = Date.now() - runnerMouseDownTime;
+                const moved = runnerMouseDownPos && (
+                  Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                  Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+                );
+                
+                // If dragged, don't trigger click behavior (allow copy)
+                if (moved || elapsed > 300) {
+                  return;
+                }
+                
+                // This was a click, not a drag
                 if (!runnerFocused) {
                   runnerFocused = true;
                   runnerFocusedInputIdx = i;
@@ -1938,7 +1972,21 @@ function renderRunnerPane() {
             width: "100%",
             height: "100%",
             zIndex: 999,
-            onMouseDown: () => {
+            onMouseDown: (e: any) => {
+              runnerMouseDownTime = Date.now();
+              runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+            },
+            onMouseUp: (e: any) => {
+              const elapsed = Date.now() - runnerMouseDownTime;
+              const moved = runnerMouseDownPos && (
+                Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+              );
+              
+              if (moved || elapsed > 300) {
+                return; // Was a drag, don't trigger click
+              }
+              
               if (!runnerFocused) {
                 runnerFocused = true;
                 runnerFocusedInputIdx = -1;
