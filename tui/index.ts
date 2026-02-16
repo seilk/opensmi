@@ -1750,7 +1750,7 @@ function renderRunnerPane() {
   
   const gpuText = Text({ 
     content: `GPUs: ${gpuInfo}`, 
-    fg: launchSelectedGpus.length > 0 ? C.green : C.yellow 
+    fg: runnerInputTyping ? "#9b59d6" : (launchSelectedGpus.length > 0 ? C.green : C.yellow)
   });
   
   const errorText = launchErrorMsg
