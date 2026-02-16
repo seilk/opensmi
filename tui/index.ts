@@ -83,6 +83,7 @@ let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
 // Command runner pane state
 let runnerPaneFolded = false;
 let runnerFocused = false;
+let runnerInputTyping = false; // True when actively typing text
 let runnerInputBuffer = "";
 
 // Prefix key system (ctrl+x)
@@ -1108,11 +1109,14 @@ function renderDashboard() {
   );
 
   return Box(
-    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-    header,
-    tableHeader,
-    ...rows,
-    footer,
+    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+      header,
+      tableHeader,
+      ...rows,
+      footer
+    ),
     renderRunnerPane()
   );
 }
@@ -1567,52 +1571,55 @@ function renderKill() {
 }
 
 function renderRunnerPane() {
+  const height = runnerPaneFolded ? 3 : 13;
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
-  const statusText = runnerFocused ? "(editing)" : "";
+  const focusIndicator = runnerFocused 
+    ? (runnerInputTyping ? "⌨ typing" : "● focused") 
+    : "○ idle";
+  
+  const headerText = Text({ 
+    content: `${foldIcon} Command Runner  ${focusIndicator}`, 
+    fg: runnerFocused ? C.green : C.cyan 
+  });
+  
+  const helpText = Text({ 
+    content: runnerInputTyping
+      ? "[Esc] Stop typing  [Enter] Execute"
+      : (runnerFocused
+          ? "[Esc] Unfocus  [Enter] Execute  [Tab/Shift+Tab/+/-/g] Modes"
+          : "[click/↓] Focus  [ctrl+x f] Fold  [l] Full screen"),
+    fg: C.textDim 
+  });
   
   const headerBox = Box(
     {
       width: "100%",
       flexDirection: "row",
       justifyContent: "space-between",
-      backgroundColor: C.bgAlt,
       paddingLeft: 1,
       paddingRight: 1,
-      position: "relative",
+      backgroundColor: C.bgAlt,
     },
-    Text({ 
-      content: `${foldIcon} Command Runner ${statusText}`, 
-      fg: C.cyan 
-    }),
-    Text({ 
-      content: runnerFocused 
-        ? "[Esc] Exit  [Enter] Execute"
-        : "[↓/click] Focus  [ctrl+x f] Fold  [l] Full screen",
-      fg: C.textDim 
-    }),
-    Box({
-      position: "absolute",
-      top: 0,
-      left: 0,
-      width: "100%",
-      height: "100%",
-      zIndex: 999,
-      onMouseDown: () => {
-        if (!runnerFocused) {
-          runnerPaneFolded = !runnerPaneFolded;
-          requestRender?.();
-        }
-      },
-    })
+    headerText,
+    helpText
   );
   
   if (runnerPaneFolded) {
     return Box(
       {
+        position: "absolute",
+        bottom: 0,
+        left: 0,
         width: "100%",
+        height: height,
         borderStyle: "rounded",
         borderColor: C.border,
         backgroundColor: C.bgAlt,
+        zIndex: 1000,
+        onMouseDown: () => {
+          runnerPaneFolded = false;
+          requestRender?.();
+        },
       },
       headerBox
     );
@@ -1644,43 +1651,18 @@ function renderRunnerPane() {
       id: "runner-cmd-input",
       width: "100%",
       value: runnerInputBuffer,
-      placeholder: "enter command...",
+      placeholder: "type command and press Enter...",
       backgroundColor: C.bgAlt,
       focusedBackgroundColor: "#3b4261",
       textColor: "#ffffff",
       cursorColor: C.green,
     });
   } else {
-    cmdInput = Box(
-      {
-        width: "100%",
-        height: 1,
-        position: "relative",
-      },
-      Text({
-        content: `> ${launchCommand || "(click or ↓ to edit)"}`,
-        fg: C.textDim,
-      }),
-      Box({
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        zIndex: 999,
-        onMouseDown: () => {
-          runnerFocused = true;
-          runnerInputBuffer = launchCommand;
-          requestRender?.();
-        },
-      })
-    );
+    cmdInput = Text({
+      content: `> ${launchCommand || "(not set)"}`,
+      fg: C.textDim,
+    });
   }
-  
-  const modesLine = Text({
-    content: "[Tab] Exec mode  [Shift+Tab] Dist mode  [+/-] GPU count  [g] GPU select mode",
-    fg: C.textDim,
-  });
 
   const contentNodes = [
     headerBox,
@@ -1689,21 +1671,32 @@ function renderRunnerPane() {
     Text({ content: " " }),
     inputLabel,
     cmdInput,
-    ...(errorText ? [errorText] : []),
-    Text({ content: " " }),
-    modesLine
+    ...(errorText ? [errorText] : [])
   ];
 
   return Box(
     {
+      position: "absolute",
+      bottom: 0,
+      left: 0,
       width: "100%",
-      height: 12,
+      height: height,
       borderStyle: "rounded",
       borderColor: runnerFocused ? C.green : C.border,
       backgroundColor: C.bgAlt,
       padding: 1,
       flexDirection: "column",
       gap: 0,
+      zIndex: 1000,
+      onMouseDown: (e: any) => {
+        if (!runnerFocused) {
+          e?.preventDefault?.();
+          runnerFocused = true;
+          runnerInputBuffer = launchCommand;
+          runnerInputTyping = false;
+          requestRender?.();
+        }
+      },
     },
     ...contentNodes
   );
@@ -2386,18 +2379,23 @@ async function main() {
           if (inputAny) inputAny.focus();
         }, 50);
       } else if (key.name === "escape" && runnerFocused) {
-        // Exit edit mode
-        runnerFocused = false;
-        const inputAny: any = container.findDescendantById("runner-cmd-input");
-        runnerInputBuffer = String(inputAny?.value ?? "");
-        launchCommand = runnerInputBuffer;
-        render();
-      } else if (runnerFocused && key.name === "tab" && !key.shift) {
+        // Exit edit mode or stop typing
+        if (runnerInputTyping) {
+          runnerInputTyping = false;
+          render();
+        } else {
+          runnerFocused = false;
+          const inputAny: any = container.findDescendantById("runner-cmd-input");
+          runnerInputBuffer = String(inputAny?.value ?? "");
+          launchCommand = runnerInputBuffer;
+          render();
+        }
+      } else if (runnerFocused && !runnerInputTyping && key.name === "tab" && !key.shift) {
         // Toggle exec mode
         key.preventDefault();
         launchMode = launchMode === "direct" ? "tmux" : "direct";
         render();
-      } else if (runnerFocused && key.name === "tab" && key.shift) {
+      } else if (runnerFocused && !runnerInputTyping && key.name === "tab" && key.shift) {
         // Toggle dist mode
         key.preventDefault();
         if (launchDistMode === "single") {
@@ -2408,7 +2406,7 @@ async function main() {
           launchCommands = [];
         }
         render();
-      } else if (runnerFocused && (key.name === "+" || key.name === "=")) {
+      } else if (runnerFocused && !runnerInputTyping && (key.name === "+" || key.name === "=")) {
         // Increase GPU count
         launchNumGpus = Math.min(launchNumGpus + 1, 16);
         if (launchDistMode === "one-to-one") {
@@ -2418,7 +2416,7 @@ async function main() {
         }
         await refreshLaunchGpuSelection();
         render();
-      } else if (runnerFocused && (key.name === "-" || key.name === "_")) {
+      } else if (runnerFocused && !runnerInputTyping && (key.name === "-" || key.name === "_")) {
         // Decrease GPU count
         launchNumGpus = Math.max(launchNumGpus - 1, 1);
         if (launchDistMode === "one-to-one") {
@@ -2426,7 +2424,7 @@ async function main() {
         }
         await refreshLaunchGpuSelection();
         render();
-      } else if (runnerFocused && key.sequence === "g") {
+      } else if (runnerFocused && !runnerInputTyping && key.sequence === "g") {
         // Toggle GPU mode
         key.preventDefault();
         launchGpuMode = launchGpuMode === "auto" ? "selected" : "auto";
@@ -2435,6 +2433,10 @@ async function main() {
         } else {
           launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
         }
+        render();
+      } else if (runnerFocused && !runnerInputTyping && key.sequence && key.sequence.length === 1 && /[a-zA-Z0-9]/.test(key.sequence)) {
+        // Start typing mode when alphanumeric key pressed
+        runnerInputTyping = true;
         render();
       } else if (key.name === "l") {
         screen = "launch";
