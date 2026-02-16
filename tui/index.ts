@@ -2828,7 +2828,7 @@ async function main() {
           runnerInputTyping = false;
           render();
         } else if (key.name === "return") {
-          // Capture input values
+          // Capture input values and exit typing mode (don't execute)
           if (launchDistMode === "single") {
             const inputAny: any = container.findDescendantById("runner-cmd-input");
             runnerInputBuffer = String(inputAny?.value ?? "");
@@ -2850,8 +2850,8 @@ async function main() {
           }
           
           runnerInputTyping = false;
-          runnerFocused = false;
-          await executeLaunch();
+          // Stay focused after exiting typing mode
+          render();
           render();
         } else if (key.name === "down" && launchDistMode === "one-to-one") {
           // Navigate to next input line (commands + tmux if applicable)
