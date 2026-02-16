@@ -68,6 +68,7 @@ interface Allocation {
 
 let snapshot: ClusterSnapshot | null = null;
 let allocations: Allocation[] = [];
+let launchHistory: Record<string, Record<number, string>> = {};
 let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
@@ -455,6 +456,30 @@ async function loadAllocations(): Promise<void> {
   }
 }
 
+async function loadLaunchHistory(): Promise<void> {
+  try {
+    const homedir = process.env.HOME || "~";
+    const stateDir = process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
+    const historyPath = `${stateDir}/launch_history.json`;
+    try {
+      const raw = await Bun.file(historyPath).text();
+      const data = JSON.parse(raw);
+      // Convert string keys to numbers for gpu_index
+      launchHistory = {};
+      for (const [node, gpuDict] of Object.entries(data)) {
+        launchHistory[node] = {};
+        for (const [gpuIdx, timestamp] of Object.entries(gpuDict as Record<string, string>)) {
+          launchHistory[node]![parseInt(gpuIdx)] = timestamp;
+        }
+      }
+    } catch {
+      launchHistory = {};
+    }
+  } catch {
+    launchHistory = {};
+  }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 function usersOnGpu(node: NodeSnapshot, gpuUuid: string): string[] {
@@ -518,6 +543,27 @@ function expiresInShort(expiresAt: string | null | undefined): string {
   if (day > 0) return `${day}d${hour}h`;
   if (hour > 0) return `${hour}h${min}m`;
   return `${Math.max(1, min)}m`;
+}
+
+function idleSince(nodeAlias: string, gpuIdx: number): string {
+  const timestamp = launchHistory[nodeAlias]?.[gpuIdx];
+  if (!timestamp) return "never used";
+
+  const lastUsed = _parseIso(timestamp);
+  if (!lastUsed) return "never used";
+
+  const diffMs = Date.now() - lastUsed.getTime();
+  if (diffMs < 0) return "just now";
+
+  const totalMin = Math.floor(diffMs / 60_000);
+  const day = Math.floor(totalMin / (60 * 24));
+  const hour = Math.floor((totalMin % (60 * 24)) / 60);
+  const min = totalMin % 60;
+
+  if (day > 0) return `idle ${day}d${hour}h`;
+  if (hour > 0) return `idle ${hour}h${min}m`;
+  if (min > 0) return `idle ${min}m`;
+  return "idle <1m";
 }
 
 function countExpiringWithin(hours: number): number {
@@ -1096,6 +1142,7 @@ function renderDetail() {
       : "Alloc: (none)";
     const utilVal = gpuUtilPct(g);
     const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
+    const idleStr = idleSince(node.node_alias, g.index);
 
     const isSel = g.index === selectedGpuIdx;
     const inLaunchSelection = launchManualGpus.some(
@@ -1106,7 +1153,7 @@ function renderDetail() {
       Box(
         { width: "100%", height: 1, position: "relative" },
         Text({
-          content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}`,
+          content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}  |  ${idleStr}`,
           fg: isSel ? "#ffffff" : inLaunchSelection ? C.yellow : C.cyan,
         }),
         Box({
@@ -2171,6 +2218,7 @@ async function main() {
     loadAdminStatus(),
     pollCluster(),
     loadAllocations(),
+    loadLaunchHistory(),
     loadSystemUsers(true),
   ]);
   bootLoading = false;
@@ -2179,7 +2227,7 @@ async function main() {
   // Auto-refresh every 15s (disabled while editing allocations)
   const refreshInterval = setInterval(async () => {
     if (screen !== "dashboard" && screen !== "detail") return;
-    await Promise.all([pollCluster(), loadAllocations()]);
+    await Promise.all([pollCluster(), loadAllocations(), loadLaunchHistory()]);
     render();
   }, 15_000);
 
