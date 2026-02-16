@@ -552,7 +552,7 @@ function expiresInShort(expiresAt: string | null | undefined): string {
   return `${Math.max(1, min)}m`;
 }
 
-function gpuActivityStatus(node: NodeSnapshot, gpuUuid: string): string {
+function gpuActivityStatus(node: NodeSnapshot, gpuIdx: number, gpuUuid: string): string {
   const procs = node.processes.filter(p => p.gpu_uuid === gpuUuid);
   
   if (procs.length > 0) {
@@ -560,16 +560,41 @@ function gpuActivityStatus(node: NodeSnapshot, gpuUuid: string): string {
     return "in use";
   }
   
-  // GPU is idle - check how long
+  // GPU is idle - try to determine since when
+  
+  // 1. Check if there's an allocation (assigned_at is the earliest idle bound)
+  const alloc = allocations.find(
+    a => a.node_alias === node.node_alias && a.gpu_index === gpuIdx
+  );
+  
+  if (alloc) {
+    const assignedAt = _parseIso(alloc.assigned_at);
+    if (assignedAt) {
+      const idleMs = Date.now() - assignedAt.getTime();
+      if (idleMs > 0) {
+        const totalMin = Math.floor(idleMs / 60_000);
+        const day = Math.floor(totalMin / (60 * 24));
+        const hour = Math.floor((totalMin % (60 * 24)) / 60);
+        const min = totalMin % 60;
+        
+        if (day > 0) return `idle ${day}d${hour}h (alloc)`;
+        if (hour > 0) return `idle ${hour}h${min}m (alloc)`;
+        if (min > 0) return `idle ${min}m (alloc)`;
+        return "idle <1m (alloc)";
+      }
+    }
+  }
+  
+  // 2. Fallback to TUI observation tracking
   const key = `${node.node_alias}:${gpuUuid}`;
   const idleStartTime = gpuIdleStart[key];
   
   if (!idleStartTime) {
-    return "idle (new)";
+    return "idle (unknown)";
   }
   
   const idleMs = Date.now() - idleStartTime;
-  if (idleMs < 0) return "idle (new)";
+  if (idleMs < 0) return "idle (unknown)";
   
   const totalMin = Math.floor(idleMs / 60_000);
   const day = Math.floor(totalMin / (60 * 24));
@@ -1161,7 +1186,7 @@ function renderDetail() {
       : "Alloc: (none)";
     const utilVal = gpuUtilPct(g);
     const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
-    const activityStr = gpuActivityStatus(node, g.uuid);
+    const activityStr = gpuActivityStatus(node, g.index, g.uuid);
 
     const isSel = g.index === selectedGpuIdx;
     const inLaunchSelection = launchManualGpus.some(
