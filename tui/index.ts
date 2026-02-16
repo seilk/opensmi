@@ -80,14 +80,11 @@ let lastNodeClickAt = 0;
 let allocCtx: { nodeAlias: string; gpuIdx: number } | null = null;
 
 // Command runner pane state
-let runnerPaneOpen = true;
-let runnerPaneHeight = 15; // lines
-let runnerPaneMaximized = false;
+let runnerPaneFolded = false;
 let runnerFocused = false;
 let runnerInputBuffer = "";
-let runnerCursorPos = 0;
 
-// Prefix key system (tmux-style)
+// Prefix key system (ctrl+x)
 let prefixKeyPressed = false;
 let prefixKeyTimeout: any = null;
 let allocDraftUser = "";
@@ -1070,24 +1067,22 @@ function renderDashboard() {
     Box(
       { flexDirection: "row", paddingTop: 1 },
       Text({
-        content: runnerPaneOpen 
-          ? (runnerFocused
-              ? t`${fg(C.textDim)("[Esc]")} Exit edit  ${fg(C.textDim)("[Enter]")} Execute`
-              : t`${fg(C.textDim)("[i]")} Edit  ${fg(C.textDim)("[ctrl+b r]")} Close  ${fg(C.textDim)("[ctrl+b j/k]")} Resize  ${fg(C.textDim)("[ctrl+b l]")} Max  ${fg(C.textDim)("[l]")} Full screen`)
-          : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+b r]")} Runner  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[?]")} Help  ${fg(C.textDim)("[q]")} Quit`,
+        content: runnerFocused
+          ? t`${fg(C.textDim)("[Esc]")} Exit  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Tab/Shift+Tab]")} Modes  ${fg(C.textDim)("[+/-/g]")} Options`
+          : (runnerPaneFolded
+              ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`
+              : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`),
       })
     )
   );
 
-  const pane = renderRunnerPane();
-  
   return Box(
     { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
     header,
     tableHeader,
     ...rows,
     footer,
-    ...(pane ? [pane] : [])
+    renderRunnerPane()
   );
 }
 
@@ -1540,13 +1535,57 @@ function renderKill() {
   );
 }
 
-function renderRunnerPane(compact: boolean = true) {
-  if (!runnerPaneOpen) return null;
-
-  const header = Text({ 
-    content: `Command Runner ${runnerPaneMaximized ? "(max)" : ""} ${runnerFocused ? "(editing)" : "(idle)"}`, 
-    fg: C.cyan 
-  });
+function renderRunnerPane() {
+  const foldIcon = runnerPaneFolded ? "▸" : "▾";
+  const statusText = runnerFocused ? "(editing)" : "";
+  
+  const headerBox = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      backgroundColor: C.bgAlt,
+      paddingLeft: 1,
+      paddingRight: 1,
+      position: "relative",
+    },
+    Text({ 
+      content: `${foldIcon} Command Runner ${statusText}`, 
+      fg: C.cyan 
+    }),
+    Text({ 
+      content: runnerFocused 
+        ? "[Esc] Exit  [Enter] Execute"
+        : "[↓/click] Focus  [ctrl+x f] Fold  [l] Full screen",
+      fg: C.textDim 
+    }),
+    Box({
+      position: "absolute",
+      top: 0,
+      left: 0,
+      width: "100%",
+      height: "100%",
+      zIndex: 999,
+      onMouseDown: () => {
+        if (!runnerFocused) {
+          runnerPaneFolded = !runnerPaneFolded;
+          requestRender?.();
+        }
+      },
+    })
+  );
+  
+  if (runnerPaneFolded) {
+    return Box(
+      {
+        width: "100%",
+        borderStyle: "rounded",
+        borderColor: C.border,
+        backgroundColor: C.bgAlt,
+      },
+      headerBox
+    );
+  }
   
   const modeInfo = Text({ 
     content: `GPU: ${launchGpuMode}  Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
@@ -1581,21 +1620,39 @@ function renderRunnerPane(compact: boolean = true) {
       cursorColor: C.green,
     });
   } else {
-    cmdInput = Text({
-      content: `> ${launchCommand || "(press 'i' to edit)"}`,
-      fg: C.textDim,
-    });
+    cmdInput = Box(
+      {
+        width: "100%",
+        height: 1,
+        position: "relative",
+      },
+      Text({
+        content: `> ${launchCommand || "(click or ↓ to edit)"}`,
+        fg: C.textDim,
+      }),
+      Box({
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        zIndex: 999,
+        onMouseDown: () => {
+          runnerFocused = true;
+          runnerInputBuffer = launchCommand;
+          requestRender?.();
+        },
+      })
+    );
   }
   
-  const footer = Text({
-    content: runnerFocused
-      ? "[Esc] Exit edit  [Enter] Execute"
-      : "[i] Edit  [ctrl+b then r] Close  [ctrl+b then j/k] Resize  [ctrl+b then l] Max  [l] Full screen",
+  const modesLine = Text({
+    content: "[Tab] Exec mode  [Shift+Tab] Dist mode  [+/-] GPU count  [g] GPU select mode",
     fg: C.textDim,
   });
 
   const contentNodes = [
-    header,
+    headerBox,
     modeInfo,
     gpuText,
     Text({ content: " " }),
@@ -1603,13 +1660,13 @@ function renderRunnerPane(compact: boolean = true) {
     cmdInput,
     ...(errorText ? [errorText] : []),
     Text({ content: " " }),
-    footer
+    modesLine
   ];
 
   return Box(
     {
       width: "100%",
-      height: runnerPaneMaximized ? "100%" : runnerPaneHeight,
+      height: 12,
       borderStyle: "rounded",
       borderColor: runnerFocused ? C.green : C.border,
       backgroundColor: C.bgAlt,
@@ -2256,7 +2313,7 @@ async function main() {
           runnerFocused = false;
           await executeLaunch();
           render();
-        } else if (runnerPaneOpen && !runnerFocused) {
+        } else if (!runnerPaneFolded && !runnerFocused) {
           // Launch from pane (quick launch)
           await executeLaunch();
           render();
@@ -2274,65 +2331,79 @@ async function main() {
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
         render();
-      } else if (key.name === "b" && key.ctrl) {
-        // Prefix key activation
+      } else if (key.name === "x" && key.ctrl) {
+        // Prefix key activation (ctrl+x)
         prefixKeyPressed = true;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         prefixKeyTimeout = setTimeout(() => {
           prefixKeyPressed = false;
         }, 2000);
         render();
-      } else if (prefixKeyPressed && key.name === "r") {
-        // ctrl+b r: toggle runner
+      } else if (prefixKeyPressed && key.name === "f") {
+        // ctrl+x f: fold/unfold runner
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        runnerPaneOpen = !runnerPaneOpen;
-        if (runnerPaneOpen) {
-          await refreshLaunchGpuSelection();
-        }
+        runnerPaneFolded = !runnerPaneFolded;
         render();
-      } else if (prefixKeyPressed && key.name === "j") {
-        // ctrl+b j: decrease height
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        if (runnerPaneOpen && !runnerPaneMaximized) {
-          runnerPaneHeight = Math.max(5, runnerPaneHeight - 2);
-          render();
-        }
-      } else if (prefixKeyPressed && key.name === "k") {
-        // ctrl+b k: increase height
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        if (runnerPaneOpen && !runnerPaneMaximized) {
-          runnerPaneHeight = Math.min(30, runnerPaneHeight + 2);
-          render();
-        }
-      } else if (prefixKeyPressed && key.name === "l") {
-        // ctrl+b l: maximize
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        if (runnerPaneOpen) {
-          runnerPaneMaximized = !runnerPaneMaximized;
-          render();
-        }
-      } else if (key.name === "i") {
-        // Enter edit mode for runner pane
-        if (runnerPaneOpen && !runnerFocused) {
-          runnerFocused = true;
-          runnerInputBuffer = launchCommand;
-          render();
-          // Focus the input after render
-          setTimeout(() => {
-            const inputAny: any = container.findDescendantById("runner-cmd-input");
-            if (inputAny) inputAny.focus();
-          }, 50);
-        }
+      } else if (key.name === "down" && !runnerFocused && !runnerPaneFolded) {
+        // Down arrow: focus runner pane
+        runnerFocused = true;
+        runnerInputBuffer = launchCommand;
+        render();
+        setTimeout(() => {
+          const inputAny: any = container.findDescendantById("runner-cmd-input");
+          if (inputAny) inputAny.focus();
+        }, 50);
       } else if (key.name === "escape" && runnerFocused) {
         // Exit edit mode
         runnerFocused = false;
         const inputAny: any = container.findDescendantById("runner-cmd-input");
         runnerInputBuffer = String(inputAny?.value ?? "");
         launchCommand = runnerInputBuffer;
+        render();
+      } else if (runnerFocused && key.name === "tab" && !key.shift) {
+        // Toggle exec mode
+        key.preventDefault();
+        launchMode = launchMode === "direct" ? "tmux" : "direct";
+        render();
+      } else if (runnerFocused && key.name === "tab" && key.shift) {
+        // Toggle dist mode
+        key.preventDefault();
+        if (launchDistMode === "single") {
+          launchDistMode = "one-to-one";
+          launchCommands = new Array(launchNumGpus).fill("");
+        } else {
+          launchDistMode = "single";
+          launchCommands = [];
+        }
+        render();
+      } else if (runnerFocused && (key.name === "+" || key.name === "=")) {
+        // Increase GPU count
+        launchNumGpus = Math.min(launchNumGpus + 1, 16);
+        if (launchDistMode === "one-to-one") {
+          while (launchCommands.length < launchNumGpus) {
+            launchCommands.push("");
+          }
+        }
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (runnerFocused && (key.name === "-" || key.name === "_")) {
+        // Decrease GPU count
+        launchNumGpus = Math.max(launchNumGpus - 1, 1);
+        if (launchDistMode === "one-to-one") {
+          launchCommands = launchCommands.slice(0, launchNumGpus);
+        }
+        await refreshLaunchGpuSelection();
+        render();
+      } else if (runnerFocused && key.sequence === "g") {
+        // Toggle GPU mode
+        key.preventDefault();
+        launchGpuMode = launchGpuMode === "auto" ? "selected" : "auto";
+        if (launchGpuMode === "auto") {
+          await refreshLaunchGpuSelection();
+        } else {
+          launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+        }
         render();
       } else if (key.name === "l") {
         screen = "launch";
