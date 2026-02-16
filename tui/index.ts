@@ -335,6 +335,23 @@ function usersOnGpu(node: NodeSnapshot, gpuUuid: string): string[] {
   return users;
 }
 
+function gpuIndicesForSnapshot(s: ClusterSnapshot | null): number[] {
+  if (!s) return [];
+  const set = new Set<number>();
+  for (const n of s.nodes) {
+    if (n.error) continue;
+    for (const g of n.gpus) set.add(g.index);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+function gpuIndicesForNode(node: NodeSnapshot | null | undefined): number[] {
+  if (!node || node.error) return [];
+  const set = new Set<number>();
+  for (const g of node.gpus) set.add(g.index);
+  return [...set].sort((a, b) => a - b);
+}
+
 function getAllocation(nodeAlias: string, gpuIdx: number): Allocation | null {
   const a = allocations.find(
     (a) => a.node_alias === nodeAlias && a.gpu_index === gpuIdx
@@ -692,8 +709,9 @@ function renderDashboard() {
     })
   );
 
-  // Table header
-  const colW = [10, 16, 16, 16, 16, 6];
+  // Table header (dynamic GPU columns)
+  const gpuCols = gpuIndicesForSnapshot(snapshot);
+  const colW = [10, ...gpuCols.map(() => 16), 8];
   const tableHeader = Box(
     {
       flexDirection: "row",
@@ -701,11 +719,10 @@ function renderDashboard() {
       backgroundColor: C.bgAlt,
     },
     Text({ content: "Node".padEnd(colW[0]!), fg: C.textDim }),
-    Text({ content: "GPU 0".padEnd(colW[1]!), fg: C.textDim }),
-    Text({ content: "GPU 1".padEnd(colW[2]!), fg: C.textDim }),
-    Text({ content: "GPU 2".padEnd(colW[3]!), fg: C.textDim }),
-    Text({ content: "GPU 3".padEnd(colW[4]!), fg: C.textDim }),
-    Text({ content: "Free".padEnd(colW[5]!), fg: C.textDim })
+    ...gpuCols.map((gi, j) =>
+      Text({ content: `GPU ${gi}`.padEnd(colW[1 + j]!), fg: C.textDim })
+    ),
+    Text({ content: "Free".padEnd(colW[colW.length - 1]!), fg: C.textDim })
   );
 
   // Table rows
@@ -762,19 +779,21 @@ function renderDashboard() {
     const gpuCells: any[] = [];
     let free = 0;
 
-    for (let i = 0; i < 4; i++) {
+    for (const [j, i] of gpuCols.entries()) {
+      const w = colW[1 + j]!;
       const g = idxToGpu[i];
       if (!g) {
-        gpuCells.push(Text({ content: "—".padEnd(colW[i + 1]!), fg: C.textDim }));
+        gpuCells.push(Text({ content: "—".padEnd(w), fg: C.textDim }));
         continue;
       }
+
       const users = usersOnGpu(n, g.uuid);
       if (users.length === 0) {
         const alloc = getAllocation(n.node_alias, i);
         const remain = expiresInShort(alloc?.expires_at);
         const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : "idle";
-        const display = label.length > colW[i + 1]! - 1 ? label.slice(0, colW[i + 1]! - 2) + "…" : label;
-        gpuCells.push(Text({ content: display.padEnd(colW[i + 1]!), fg: C.textDim }));
+        const display = label.length > w - 1 ? label.slice(0, w - 2) + "…" : label;
+        gpuCells.push(Text({ content: display.padEnd(w), fg: C.textDim }));
         free++;
       } else {
         const hasViolation = users.some((u) => isViolation(n.node_alias, i, u));
@@ -782,10 +801,10 @@ function renderDashboard() {
         const utilVal = gpuUtilPct(g);
         const util = utilVal !== null ? ` ${utilVal}%` : "";
         const label = `${cell}${util}`;
-        const display = label.length > colW[i + 1]! - 1 ? label.slice(0, colW[i + 1]! - 2) + "…" : label;
+        const display = label.length > w - 1 ? label.slice(0, w - 2) + "…" : label;
         gpuCells.push(
           Text({
-            content: display.padEnd(colW[i + 1]!),
+            content: display.padEnd(w),
             fg: hasViolation ? C.red : C.green,
           })
         );
@@ -805,7 +824,10 @@ function renderDashboard() {
         fg: isSelected ? "#ffffff" : C.cyan,
       }),
       ...gpuCells,
-      Text({ content: `${free}/4`, fg: free > 0 ? C.green : C.yellow }),
+      Text({
+        content: `${free}/${n.gpus.length}`.padEnd(colW[colW.length - 1]!),
+        fg: free > 0 ? C.green : C.yellow,
+      }),
       // Click anywhere on the row to jump to detail.
       Box({
         position: "absolute",
@@ -825,7 +847,7 @@ function renderDashboard() {
           lastNodeClickAt = now;
 
           selectedNodeIdx = ni;
-          selectedGpuIdx = 0;
+          selectedGpuIdx = gpuIndicesForNode(n)[0] ?? 0;
 
           if (isDouble) {
             screen = "detail";
@@ -909,6 +931,11 @@ function renderDetail() {
       Text({ content: "" }),
       Text({ content: "[Esc/Backspace] Back", fg: C.textDim })
     );
+  }
+
+  const nodeGpuIdxs = gpuIndicesForNode(node);
+  if (nodeGpuIdxs.length && !nodeGpuIdxs.includes(selectedGpuIdx)) {
+    selectedGpuIdx = nodeGpuIdxs[0]!;
   }
 
   const children: any[] = [];
@@ -1488,8 +1515,8 @@ async function main() {
         }
       } else if (key.name === "return") {
         screen = "detail";
-        selectedGpuIdx = 0;
         const node = snapshot?.nodes[selectedNodeIdx];
+        selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
         if (node) void checkSudoForNode(node.node_alias);
         render();
       } else if (key.name === "r") {
@@ -1505,13 +1532,25 @@ async function main() {
       }
     } else if (screen === "detail") {
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
-        if (selectedGpuIdx > 0) {
-          selectedGpuIdx--;
+        if (!snapshot) return;
+        const node = snapshot.nodes[selectedNodeIdx];
+        const idxs = gpuIndicesForNode(node);
+        if (!idxs.length) return;
+
+        const pos = idxs.indexOf(selectedGpuIdx);
+        if (pos > 0) {
+          selectedGpuIdx = idxs[pos - 1]!;
           render();
         }
       } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
-        if (selectedGpuIdx < 3) {
-          selectedGpuIdx++;
+        if (!snapshot) return;
+        const node = snapshot.nodes[selectedNodeIdx];
+        const idxs = gpuIndicesForNode(node);
+        if (!idxs.length) return;
+
+        const pos = idxs.indexOf(selectedGpuIdx);
+        if (pos >= 0 && pos < idxs.length - 1) {
+          selectedGpuIdx = idxs[pos + 1]!;
           render();
         }
       } else if (key.name === "a") {
