@@ -1127,7 +1127,7 @@ function renderDashboard() {
         content: runnerInputTyping
           ? t`${fg(C.yellow)("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[Enter]")} Execute`
           : (runnerFocused
-              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Shift+click]")} Select GPU  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
+              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-/g]")} Options`
               : (runnerPaneFolded
                   ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`
                   : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[q]")} Quit`)),
@@ -1194,13 +1194,19 @@ function renderDetail() {
     const inLaunchSelection = launchManualGpus.some(
       (x) => x.node === node.node_alias && x.gpu === g.index
     );
-    const prefix = isSel ? "▸" : inLaunchSelection ? "★" : " ";
+    const prefix = isSel ? "▸" : " ";
     children.push(
       Box(
-        { width: "100%", height: 1, position: "relative" },
+        { 
+          width: "100%", 
+          height: 1, 
+          position: "relative",
+          borderStyle: inLaunchSelection ? "single" : undefined,
+          borderColor: inLaunchSelection ? C.yellow : undefined,
+        },
         Text({
           content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}  |  ${activityStr}`,
-          fg: isSel ? "#ffffff" : inLaunchSelection ? C.yellow : C.cyan,
+          fg: isSel ? "#ffffff" : C.cyan,
         }),
         Box({
           position: "absolute",
@@ -1215,8 +1221,8 @@ function renderDetail() {
 
             selectedGpuIdx = g.index;
 
-            // Shift+click when runner focused: toggle GPU for runner launch
-            if (e?.shift && runnerFocused) {
+            // Simple click when runner focused: toggle GPU selection
+            if (runnerFocused) {
               const gpuKey = { node: node.node_alias, gpu: g.index };
               const idx = launchManualGpus.findIndex(
                 (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
@@ -1236,28 +1242,7 @@ function renderDetail() {
               return;
             }
 
-            // Ctrl+click to toggle GPU for launch selection (modal mode)
-            if (e?.ctrl) {
-              const gpuKey = { node: node.node_alias, gpu: g.index };
-              const idx = launchManualGpus.findIndex(
-                (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
-              );
-              
-              if (idx >= 0) {
-                launchManualGpus.splice(idx, 1);
-              } else {
-                launchManualGpus.push(gpuKey);
-              }
-              
-              if (launchGpuMode === "selected") {
-                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-              }
-              
-              requestRender?.();
-              return;
-            }
-
-            // Double-click to open Allocate modal.
+            // When not runner focused: double-click to open Allocate modal
             const now = Date.now();
             const clickKey = `${node.node_alias}:GPU${g.index}`;
             const isDouble = clickKey === lastGpuClickKey && now - lastGpuClickAt < 350;
