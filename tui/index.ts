@@ -1529,13 +1529,16 @@ function renderAlloc() {
               _e.preventDefault?.();
               _e.stopPropagation?.();
 
-              // Single click: highlight only. Double click: toggle selection (type).
+              // Single click: highlight and focus list. Double click: select user.
               const now = Date.now();
               const clickKey = `USER:${u}`;
               const isDouble = clickKey === lastAllocUserClickKey && now - lastAllocUserClickAt < 350;
               lastAllocUserClickKey = clickKey;
               lastAllocUserClickAt = now;
 
+              // Set focus to user list and highlight this user
+              allocUserListFocused = true;
+              allocUserListIdx = idx;
               allocUserHighlight = u;
 
               if (!isDouble) {
@@ -1543,7 +1546,9 @@ function renderAlloc() {
                 return;
               }
 
-              allocDraftUser = _toggleDraftUser(allocDraftUser, u, universeSet);
+              // Double-click: select user and return to input
+              allocDraftUser = u;
+              allocUserListFocused = false;
               allocErrorMsg = "";
               requestRender?.();
             },
@@ -3309,11 +3314,25 @@ async function main() {
         key.preventDefault();
         allocUserListIdx = Math.max(allocUserListIdx - 1, 0);
         render();
+        // Scroll into view
+        setTimeout(() => {
+          const scrollBox: any = container.findDescendantById("alloc-users-scroll");
+          if (scrollBox?.scrollToChild) {
+            scrollBox.scrollToChild(allocUserListIdx);
+          }
+        }, 50);
       } else if (key.name === "down" && allocUserListFocused) {
         key.preventDefault();
         const maxIdx = knownUsers.length - 1;
         allocUserListIdx = Math.min(allocUserListIdx + 1, maxIdx);
         render();
+        // Scroll into view
+        setTimeout(() => {
+          const scrollBox: any = container.findDescendantById("alloc-users-scroll");
+          if (scrollBox?.scrollToChild) {
+            scrollBox.scrollToChild(allocUserListIdx);
+          }
+        }, 50);
       } else if (key.name === "return" && allocUserListFocused) {
         // Select user from list
         key.preventDefault();
