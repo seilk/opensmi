@@ -1771,7 +1771,9 @@ function renderRunnerPane() {
   if (launchDistMode === "single") {
     commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
     
-    if (runnerFocused && runnerInputTyping) {
+    const isCmdFocused = runnerFocused && runnerFocusedInputIdx === 0;
+    
+    if (runnerInputTyping && isCmdFocused) {
       commandNodes.push(Input({
         id: "runner-cmd-input",
         width: "100%",
@@ -1788,7 +1790,7 @@ function renderRunnerPane() {
           { width: "100%", height: 1, position: "relative" },
           Text({
             content: `> ${launchCommand || "(click to edit)"}`,
-            fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
+            fg: (runnerInputTyping && isCmdFocused) ? "#9b59d6" : (isCmdFocused ? C.green : C.textDim),
           }),
           Box({
             position: "absolute",
@@ -1870,7 +1872,9 @@ function renderRunnerPane() {
     tmuxNodes.push(Text({ content: " " }));
     tmuxNodes.push(Text({ content: "Tmux session (empty = auto):", fg: C.textDim }));
     
-    if (runnerFocused && runnerInputTyping) {
+    const isTmuxFocused = runnerFocused && runnerFocusedInputIdx === -1;
+    
+    if (runnerInputTyping && isTmuxFocused) {
       tmuxNodes.push(Input({
         id: "runner-tmux-session-input",
         value: launchTmuxSession,
@@ -1887,7 +1891,7 @@ function renderRunnerPane() {
           { width: "100%", height: 1, position: "relative" },
           Text({
             content: `> ${launchTmuxSession || "(click to edit)"}`,
-            fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.textDim),
+            fg: (runnerInputTyping && isTmuxFocused) ? "#9b59d6" : (isTmuxFocused ? C.green : C.textDim),
           }),
           Box({
             position: "absolute",
@@ -1900,6 +1904,7 @@ function renderRunnerPane() {
               if (!runnerFocused) {
                 runnerFocused = true;
               }
+              runnerFocusedInputIdx = -1; // tmux session
               requestRender?.();
             },
           })
@@ -2805,7 +2810,11 @@ async function main() {
           runnerInputTyping = true;
           render();
           setTimeout(() => {
-            if (launchDistMode === "single") {
+            if (runnerFocusedInputIdx === -1) {
+              // Tmux session input
+              const inputAny: any = container.findDescendantById("runner-tmux-session-input");
+              if (inputAny) inputAny.focus();
+            } else if (launchDistMode === "single") {
               const inputAny: any = container.findDescendantById("runner-cmd-input");
               if (inputAny) inputAny.focus();
             } else {
@@ -2885,25 +2894,46 @@ async function main() {
           return;
         }
         
-        if (key.name === "down" && launchDistMode === "one-to-one" && !runnerInputTyping) {
-          // Navigate to next input line
-          runnerFocusedInputIdx = Math.min(runnerFocusedInputIdx + 1, launchNumGpus - 1);
-          render();
-          setTimeout(() => {
-            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (inputAny) inputAny.focus();
-          }, 50);
+        if (key.name === "down" && !runnerInputTyping) {
+          // Navigate down through input lines
+          if (launchDistMode === "single") {
+            // Single mode: command → tmux session (if tmux mode)
+            if (launchMode === "tmux" && runnerFocusedInputIdx === 0) {
+              runnerFocusedInputIdx = -1; // -1 = tmux session
+              render();
+            }
+          } else {
+            // One-to-one: line 0 → 1 → ... → N-1 → tmux (if tmux mode)
+            const maxCmdIdx = launchNumGpus - 1;
+            if (runnerFocusedInputIdx < maxCmdIdx) {
+              runnerFocusedInputIdx++;
+              render();
+            } else if (launchMode === "tmux" && runnerFocusedInputIdx === maxCmdIdx) {
+              runnerFocusedInputIdx = -1; // tmux session
+              render();
+            }
+          }
           return;
         }
         
-        if (key.name === "up" && launchDistMode === "one-to-one" && !runnerInputTyping) {
-          // Navigate to previous input line
-          runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
-          render();
-          setTimeout(() => {
-            const inputAny: any = container.findDescendantById(`runner-cmd-input-${runnerFocusedInputIdx}`);
-            if (inputAny) inputAny.focus();
-          }, 50);
+        if (key.name === "up" && !runnerInputTyping) {
+          // Navigate up through input lines
+          if (launchDistMode === "single") {
+            // Single mode: tmux → command
+            if (launchMode === "tmux" && runnerFocusedInputIdx === -1) {
+              runnerFocusedInputIdx = 0;
+              render();
+            }
+          } else {
+            // One-to-one: tmux → N-1 → ... → 1 → 0
+            if (runnerFocusedInputIdx === -1) {
+              runnerFocusedInputIdx = launchNumGpus - 1;
+              render();
+            } else if (runnerFocusedInputIdx > 0) {
+              runnerFocusedInputIdx--;
+              render();
+            }
+          }
           return;
         }
         
@@ -2951,20 +2981,21 @@ async function main() {
       } else if (key.name === "?" || key.name === "h") {
         screen = "help";
         render();
-      } else if (key.name === "l") {
-        screen = "launch";
-        launchCommand = "";
-        launchNumGpus = 1;
-        launchErrorMsg = "";
-        launchOutput = "";
-        launchMode = "direct";
-        launchTmuxSession = "";
-        launchDistMode = "single";
-        launchCommands = [];
-        launchGpuMode = "auto";
-        await refreshLaunchGpuSelection();
-        render();
-      } else if (key.name === "q") {
+      // [l] Launch modal disabled — pane replaces full-screen modal
+      // } else if (key.name === "l") {
+      //   screen = "launch";
+      //   launchCommand = "";
+      //   launchNumGpus = 1;
+      //   launchErrorMsg = "";
+      //   launchOutput = "";
+      //   launchMode = "direct";
+      //   launchTmuxSession = "";
+      //   launchDistMode = "single";
+      //   launchCommands = [];
+      //   launchGpuMode = "auto";
+      //   await refreshLaunchGpuSelection();
+      //   render();
+      // } else if (key.name === "q") {
         clearInterval(refreshInterval);
         renderer.destroy();
         process.exit(0);
