@@ -3322,6 +3322,10 @@ async function main() {
   }
   requestRender = render;
 
+  tabRegistry.onMessage = (msg: string) => {
+    setStatus(msg, 2000);
+  };
+
   tabRegistry.register({
     id: "dashboard",
     label: "Dashboard",

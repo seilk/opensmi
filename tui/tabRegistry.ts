@@ -57,13 +57,18 @@ export interface TabRegistry {
 export class TabRegistryImpl implements TabRegistry {
   tabs = new Map<string, Tab>();
   activeTabId = "dashboard"; // Default to dashboard
+  onMessage?: (msg: string) => void;
+
+  private _notify(msg: string): void {
+    if (this.onMessage) this.onMessage(msg);
+  }
 
   /**
    * Register a new tab. If a tab with the same ID already exists, it will be overwritten.
    */
   register(tab: Tab): void {
     if (this.tabs.has(tab.id)) {
-      console.warn(`[TabRegistry] Tab "${tab.id}" already registered, overwriting`);
+      this._notify(`Tab "${tab.id}" already registered. Overwriting.`);
     }
     this.tabs.set(tab.id, tab);
   }
@@ -73,7 +78,7 @@ export class TabRegistryImpl implements TabRegistry {
    */
   unregister(tabId: string): void {
     if (tabId === this.activeTabId) {
-      console.error(`[TabRegistry] Cannot unregister active tab "${tabId}"`);
+      this._notify(`Cannot unregister active tab "${tabId}"`);
       return;
     }
     this.tabs.delete(tabId);
@@ -84,13 +89,6 @@ export class TabRegistryImpl implements TabRegistry {
    *
    * @param tabId - The ID of the tab to switch to
    * @returns true if switch succeeded, false otherwise
-   *
-   * Steps:
-   * 1. Check if target tab exists
-   * 2. Check if current tab allows exit (canExit hook)
-   * 3. Call current tab's onExit hook
-   * 4. Update activeTabId
-   * 5. Call new tab's onEnter hook
    */
   async switchTo(tabId: string): Promise<boolean> {
     // No-op if already on this tab
@@ -100,7 +98,7 @@ export class TabRegistryImpl implements TabRegistry {
 
     const nextTab = this.tabs.get(tabId);
     if (!nextTab) {
-      console.error(`[TabRegistry] Tab "${tabId}" not found`);
+      this._notify(`Tab "${tabId}" not found`);
       return false;
     }
 
@@ -108,7 +106,7 @@ export class TabRegistryImpl implements TabRegistry {
 
     // Check if current tab allows exit
     if (currentTab?.canExit && !currentTab.canExit()) {
-      console.log(`[TabRegistry] Tab "${this.activeTabId}" blocked exit`);
+      this._notify(`Cannot leave tab "${this.activeTabId}"`);
       return false;
     }
 
@@ -116,22 +114,20 @@ export class TabRegistryImpl implements TabRegistry {
     if (currentTab?.onExit) {
       try {
         await currentTab.onExit();
-      } catch (e) {
-        console.error(`[TabRegistry] Error in onExit for "${this.activeTabId}":`, e);
+      } catch {
+        this._notify(`Error while leaving tab "${this.activeTabId}"`);
       }
     }
 
     // Switch active tab
-    const prevTabId = this.activeTabId;
     this.activeTabId = tabId;
-    console.log(`[TabRegistry] Switched from "${prevTabId}" to "${tabId}"`);
 
     // Call enter hook on new tab
     if (nextTab.onEnter) {
       try {
         await nextTab.onEnter();
-      } catch (e) {
-        console.error(`[TabRegistry] Error in onEnter for "${tabId}":`, e);
+      } catch {
+        this._notify(`Error while entering tab "${tabId}"`);
       }
     }
 
