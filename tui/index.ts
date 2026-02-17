@@ -65,6 +65,29 @@ interface Allocation {
   notes: string;
 }
 
+interface Job {
+  id: string;
+  command: string;
+  commands: string[];
+  gpus: [string, number][];  // [(node_alias, gpu_idx), ...]
+  requested_gpu_count: number;
+  dist_mode: "single" | "one-to-one";
+  exec_mode: "direct" | "tmux";
+  tmux_sessions: string[];
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  submitted_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  exit_codes: number[];
+  error: string | null;
+  user: string;
+  restart_policy: "never" | "on-failure" | "always";
+  retry_count: number;
+  max_retries: number;
+  tags: string[];
+  queue_mode: "immediate" | "queued";
+}
+
 // ── State ──────────────────────────────────────────────────────────
 
 let snapshot: ClusterSnapshot | null = null;
@@ -74,7 +97,7 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" | "jobs" = "dashboard";
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -182,6 +205,11 @@ let systemUsers: string[] = [];
 let systemUsersLoadedAt = 0;
 let knownUsers: string[] = [];
 let requestRender: (() => void) | null = null;
+
+let jobList: Job[] = [];
+let selectedJobIdx = 0;
+let jobDetailView: Job | null = null;
+let jobsLastLoadTime = 0;
 
 function getStateDir(): string {
   const homedir = process.env.HOME || "~";
@@ -527,7 +555,6 @@ function updateGpuIdleTracking(): void {
 
 async function loadAllocations(): Promise<void> {
   try {
-    // We load from the JSON file directly (source of truth for the TUI)
     const homedir = process.env.HOME || "~";
     const stateDir = process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
     const allocPath = `${stateDir}/allocations.json`;
@@ -542,6 +569,112 @@ async function loadAllocations(): Promise<void> {
     allocations = [];
   } finally {
     recomputeKnownUsers();
+  }
+}
+
+async function loadJobsFromCLI(): Promise<void> {
+  try {
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "list", "--json"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    if (proc.exitCode !== 0) {
+      jobList = [];
+      return;
+    }
+    
+    const data = JSON.parse(output);
+    jobList = (data.jobs || []) as Job[];
+    jobsLastLoadTime = Date.now();
+  } catch {
+    jobList = [];
+  }
+}
+
+async function cancelJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Cancelling job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "cancel", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      setStatus(`Job ${job.id} cancelled`, 2000);
+      await loadJobsFromCLI();
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to cancel job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error cancelling job: ${e?.message || String(e)}`, 3000);
+  }
+}
+
+async function retryJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Retrying job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "retry", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      const match = output.match(/New job ID: ([a-f0-9]+)/);
+      const newId = match ? match[1] : "created";
+      setStatus(`Job retried: ${newId}`, 2000);
+      await loadJobsFromCLI();
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to retry job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error retrying job: ${e?.message || String(e)}`, 3000);
+  }
+}
+
+async function deleteJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Deleting job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "delete", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      setStatus(`Job ${job.id} deleted`, 2000);
+      await loadJobsFromCLI();
+      if (selectedJobIdx >= jobList.length) {
+        selectedJobIdx = Math.max(0, jobList.length - 1);
+      }
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to delete job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error deleting job: ${e?.message || String(e)}`, 3000);
   }
 }
 
@@ -1606,58 +1739,256 @@ function renderDetail() {
 
 function renderHelp() {
   return Box(
+    {
+      direction: "vertical",
+      width: "100%",
+      height: "100%",
+      padding: { left: 2, top: 1, right: 2, bottom: 1 },
+    },
+    Text({ text: bold("Help - Keyboard Shortcuts"), fg: "cyan" }),
+    Text({ text: "" }),
+    Text({ text: "Navigation:" }),
+    Text({ text: "  ↑/↓ or j/k    Move selection" }),
+    Text({ text: "  Enter         Open detail / action" }),
+    Text({ text: "  Esc           Back to dashboard" }),
+    Text({ text: "" }),
+    Text({ text: "Tabs (Switcher: Ctrl+X, T):" }),
+    Text({ text: "  d             Dashboard" }),
+    Text({ text: "  n             Node detail (in Dashboard)" }),
+    Text({ text: "  g             My GPU View" }),
+    Text({ text: "  j             Jobs" }),
+    Text({ text: "  h             Help" }),
+    Text({ text: "" }),
+    Text({ text: "Dashboard Actions:" }),
+    Text({ text: "  l             Open command runner" }),
+    Text({ text: "  a             Allocate GPU to user" }),
+    Text({ text: "  x             Clear GPU allocation" }),
+    Text({ text: "  Shift+K       Kill violator processes" }),
+    Text({ text: "  r             Refresh cluster data" }),
+    Text({ text: "" }),
+    Text({ text: "Command Runner (l or Ctrl+R):" }),
+    Text({ text: "  Ctrl+R        Toggle runner open/close" }),
+    Text({ text: "  Ctrl+J / K    Decrease/increase pane height" }),
+    Text({ text: "  Ctrl+L        Maximize runner toggle" }),
+    Text({ text: "  Tab           Toggle execution mode (direct/tmux)" }),
+    Text({ text: "  Shift+Tab     Toggle distribution mode (single/one-to-one)" }),
+    Text({ text: "  +/-           Adjust GPU count" }),
+    Text({ text: "  Enter         Execute command" }),
+    Text({ text: "" }),
+    Text({ text: "Quit:" }),
+    Text({ text: "  q             Quit TUI" }),
+  );
+}
+
+function getJobStatusIcon(status: string): { icon: string; color: string } {
+  switch (status) {
+    case "queued":
+      return { icon: "○", color: C.textDim };
+    case "running":
+      return { icon: "●", color: C.green };
+    case "done":
+      return { icon: "✓", color: C.cyan };
+    case "failed":
+      return { icon: "✗", color: C.red };
+    case "cancelled":
+      return { icon: "⊘", color: C.textDim };
+    default:
+      return { icon: "?", color: C.textDim };
+  }
+}
+
+function formatJobTimestamp(isoString: string | null): string {
+  if (!isoString) return "—";
+  try {
+    const d = new Date(isoString);
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  } catch {
+    return "—";
+  }
+}
+
+function formatJobDuration(startedAt: string | null, finishedAt: string | null): string {
+  if (!startedAt) return "—";
+  const start = new Date(startedAt).getTime();
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  const durationMs = end - start;
+  const durationS = Math.floor(durationMs / 1000);
+  
+  if (durationS < 60) return `${durationS}s`;
+  const minutes = Math.floor(durationS / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h${mins}m`;
+}
+
+function formatJobGpus(job: Job): string {
+  if (job.gpus.length === 0) {
+    if (job.requested_gpu_count > 0) {
+      return `(auto×${job.requested_gpu_count})`;
+    }
+    return "—";
+  }
+  
+  return job.gpus.map(([node, gpu]) => `${node}:${gpu}`).join(",");
+}
+
+function renderJobsView() {
+  if (jobDetailView) {
+    return renderJobDetailView();
+  }
+  return renderJobsListView();
+}
+
+function renderJobsListView() {
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)("Jobs"))}`,
+    }),
+    Text({
+      content: t`Total: ${jobList.length}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      fg: C.text,
+    })
+  );
+
+  if (jobList.length === 0) {
+    return Box(
+      { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+      header,
+      Text({ content: "" }),
+      Text({ content: "No jobs submitted yet", fg: C.yellow }),
+      Text({ content: "" }),
+      Text({ content: "Submit a job via:", fg: C.textDim }),
+      Text({ content: "  • Command runner (press 'l')", fg: C.textDim }),
+      Text({ content: "  • CLI: opensmi job submit", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: t`${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back`, fg: C.textDim })
+    );
+  }
+
+  const rows: any[] = [];
+  rows.push(
+    Text({
+      content: t`${fg(C.cyan)("  ID        Status      GPUs              Command           Time")}`,
+      fg: C.cyan,
+    })
+  );
+
+  for (let i = 0; i < jobList.length; i++) {
+    const job = jobList[i];
+    const selected = i === selectedJobIdx;
+    const statusInfo = getJobStatusIcon(job.status);
+    
+    const commandDisplay = job.dist_mode === "single" 
+      ? job.command.slice(0, 30) 
+      : `[${job.commands.length} cmds]`;
+    
+    const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
+    const timeDisplay = formatJobTimestamp(job.submitted_at);
+    
+    const prefix = selected ? "▶ " : "  ";
+    const idDisplay = job.id.padEnd(8);
+    const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
+    
+    const line = t`${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${timeDisplay}`;
+    
+    rows.push(
+      Text({
+        content: selected ? t`${fg(C.yellow)(line)}` : line,
+        fg: selected ? C.yellow : statusInfo.color,
+      })
+    );
+  }
+
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
     { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
-    Text({ content: t`${bold(fg(C.blue)("opensmi — Help"))}` }),
+    header,
     Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Tab Navigation:")}` }),
-    Text({ content: "  ctrl+x t         Open tab switcher" }),
-    Text({ content: "  ctrl+x q         Quit application" }),
-    Text({ content: "  In tab switcher: ↑/↓ navigate, Enter switch, Esc cancel" }),
-    Text({ content: "  Quick shortcuts: [d]ashboard [g]My GPUs [h]elp [n]ode detail" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Dashboard:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Navigate nodes" }),
-    Text({ content: "  Enter            Node detail view" }),
-    Text({ content: "  r                Refresh (poll all nodes)" }),
-    Text({ content: "  ctrl+x ↓         Focus runner pane" }),
-    Text({ content: "  ctrl+x f         Fold/unfold runner pane" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Detail view:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Select GPU" }),
-    Text({ content: "  a                Allocate selected GPU (admin)" }),
-    Text({ content: "  *                Allocate to everyone (admin)" }),
-    Text({ content: "  x                Clear allocation (admin)" }),
-    Text({ content: "  Shift+K          Kill violators (admin)" }),
-    Text({ content: "  Esc / Backspace  Back to dashboard" }),
-    Text({ content: "  r                Refresh" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("My GPU View:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Navigate GPU bundles" }),
-    Text({ content: "  [a]              Jump to allocated GPUs" }),
-    Text({ content: "  [p]              Jump to active processes" }),
-    Text({ content: "  [+]              Jump to pinned GPUs" }),
-    Text({ content: "  ctrl+x r         Run command on bundle" }),
-    Text({ content: "  r                Refresh" }),
-    Text({ content: "  Esc              Back to dashboard" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Runner Pane (when focused):")}` }),
-    Text({ content: "  Enter            Start typing mode" }),
-    Text({ content: "  ctrl+x Enter     Execute commands" }),
-    Text({ content: "  Tab              Toggle direct/tmux mode" }),
-    Text({ content: "  Shift+Tab        Toggle single/one-to-one distribution" }),
-    Text({ content: "  +/-              Increase/decrease GPU count" }),
-    Text({ content: "  g                Toggle auto/manual GPU selection" }),
-    Text({ content: "  ↑/↓              Navigate input lines (one-to-one mode)" }),
-    Text({ content: "  Esc              Exit focus" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Colors:")}` }),
-    Text({ content: t`  ${fg(C.green)("Green")}   — Allocated user (OK)` }),
-    Text({ content: t`  ${fg(C.red)("Red")}     — Violation (wrong/unallocated user)` }),
-    Text({ content: t`  ${fg(C.yellow)("Yellow")}  — Selected item` }),
-    Text({ content: t`  ${fg(C.cyan)("Cyan")}    — Available / interactive` }),
-    Text({ content: t`  ${fg(C.textDim)("Gray")}    — Idle / no process` }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.textDim)("[Esc]")} Back to dashboard` })
+    ...rows
+  );
+}
+
+function renderJobDetailView() {
+  if (!jobDetailView) return renderJobsListView();
+  
+  const job = jobDetailView;
+  const statusInfo = getJobStatusIcon(job.status);
+  
+  const rows: any[] = [];
+  rows.push(
+    Text({
+      content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, 40)}`,
+    })
+  );
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
+  rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
+  
+  if (job.gpus.length > 0) {
+    const gpuList = job.gpus.map(([node, gpu]) => `${node}:GPU${gpu}`).join(", ");
+    rows.push(Text({ content: t`GPUs:      ${gpuList}` }));
+  } else if (job.requested_gpu_count > 0) {
+    rows.push(Text({ content: t`GPUs:      ${fg(C.yellow)(`Waiting for ${job.requested_gpu_count} GPUs`)}` }));
+  }
+  
+  rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}` }));
+  rows.push(Text({ content: t`Queue:     ${job.queue_mode}` }));
+  rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries} retries)` : ""}` }));
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
+  if (job.started_at) {
+    rows.push(Text({ content: t`Started:   ${job.started_at}` }));
+  }
+  if (job.finished_at) {
+    rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
+  }
+  if (job.started_at) {
+    const duration = formatJobDuration(job.started_at, job.finished_at);
+    rows.push(Text({ content: t`Duration:  ${duration}` }));
+  }
+  
+  if (job.tmux_sessions.length > 0) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.cyan)("Tmux Sessions:")}` }));
+    for (const session of job.tmux_sessions) {
+      rows.push(Text({ content: `  ${session}`, fg: C.textDim }));
+    }
+  }
+  
+  if (job.error) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
+  }
+  
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: t`${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry  ${fg(C.textDim)("[Esc]")} Back`,
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
+    { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+    ...rows
   );
 }
 
@@ -3352,6 +3683,16 @@ async function main() {
   });
 
   tabRegistry.register({
+    id: "jobs",
+    label: "Jobs",
+    shortcut: "j",
+    render: renderJobsView,
+    onEnter: async () => {
+      await loadJobsFromCLI();
+    },
+  });
+
+  tabRegistry.register({
     id: "my-gpu-view",
     label: "My GPUs",
     shortcut: "g",
@@ -3376,9 +3717,14 @@ async function main() {
 
   // Auto-refresh every 15s (disabled while editing allocations or runner typing)
   const refreshInterval = setInterval(async () => {
-    if (screen !== "dashboard" && screen !== "detail") return;
-    if (runnerFocused || runnerInputTyping) return; // Skip refresh when user is editing
-    await Promise.all([pollCluster(), loadAllocations()]);
+    if (screen !== "dashboard" && screen !== "detail" && screen !== "jobs") return;
+    if (runnerFocused || runnerInputTyping) return;
+    
+    if (screen === "jobs") {
+      await loadJobsFromCLI();
+    } else {
+      await Promise.all([pollCluster(), loadAllocations()]);
+    }
     render();
   }, 15_000);
 
@@ -4249,6 +4595,55 @@ async function main() {
       ) {
         await navigateToTab("dashboard");
         render();
+      }
+    } else if (screen === "jobs") {
+      if (jobDetailView) {
+        if (key.name === "escape" || key.name === "backspace") {
+          jobDetailView = null;
+          render();
+        } else if (key.name === "c") {
+          await cancelJobAction(jobDetailView);
+          render();
+        } else if (key.name === "r") {
+          await retryJobAction(jobDetailView);
+          render();
+        }
+      } else {
+        if (key.name === "escape" || key.name === "backspace") {
+          await navigateToTab("dashboard");
+          render();
+        } else if (key.name === "up" || key.name === "k") {
+          selectedJobIdx = Math.max(0, selectedJobIdx - 1);
+          render();
+        } else if (key.name === "down" || key.name === "j") {
+          selectedJobIdx = Math.min(jobList.length - 1, selectedJobIdx + 1);
+          render();
+        } else if (key.name === "return") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            jobDetailView = jobList[selectedJobIdx];
+            render();
+          }
+        } else if (key.name === "c") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await cancelJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        } else if (key.name === "r" && key.shift) {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await retryJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        } else if (key.name === "r" && !key.shift) {
+          setStatus("Refreshing jobs...");
+          await loadJobsFromCLI();
+          setStatus("Jobs refreshed", 1000);
+          render();
+        } else if (key.name === "d") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await deleteJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        }
       }
     } else if (screen === "launch") {
       if (key.name === "escape") {
