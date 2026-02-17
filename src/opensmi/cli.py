@@ -43,6 +43,7 @@ from .jobs import (
     Job,
     cancel_job,
     check_job_alive,
+    cleanup_old_jobs,
     get_job,
     load_jobs,
     retry_job,
@@ -920,6 +921,9 @@ def _cmd_sudo_check(args: argparse.Namespace) -> int:
 def _cmd_job_list(args: argparse.Namespace) -> int:
     state_dir = get_state_dir(args.state_dir)
     jobs = load_jobs(state_dir)
+
+    jobs = cleanup_old_jobs(jobs)
+    save_jobs(state_dir, jobs)
 
     if args.status:
         jobs = [j for j in jobs if j.status == args.status]

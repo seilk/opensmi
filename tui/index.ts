@@ -819,6 +819,124 @@ async function dispatchQueuedJobs(): Promise<void> {
   }
 }
 
+async function checkJobAlive(job: Job): Promise<boolean> {
+  if (job.exec_mode !== "tmux" || job.tmux_sessions.length === 0) {
+    return false;
+  }
+  
+  const checkScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, check_job_alive
+from opensmi.config import load_config
+from opensmi.state import resolve_config_path
+import asyncio
+
+job_data = json.loads('''${JSON.stringify(job).replace(/'/g, "\\'")}''')
+
+job = Job(
+    id=job_data["id"],
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+    status=job_data["status"],
+    submitted_at=job_data["submitted_at"],
+    started_at=job_data.get("started_at"),
+    finished_at=job_data.get("finished_at"),
+    exit_codes=job_data["exit_codes"],
+    error=job_data.get("error"),
+    user=job_data["user"],
+    restart_policy=job_data["restart_policy"],
+    retry_count=job_data["retry_count"],
+    max_retries=job_data["max_retries"],
+    tags=job_data["tags"],
+    queue_mode=job_data["queue_mode"],
+)
+
+cfg_path = resolve_config_path()
+cfg = load_config(cfg_path)
+
+async def main():
+    alive = await check_job_alive(job, cfg)
+    print("true" if alive else "false")
+
+asyncio.run(main())
+`;
+  
+  try {
+    const proc = Bun.spawn([PYTHON, "-c", checkScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    const code = await proc.exited;
+    
+    if (code !== 0) {
+      return false;
+    }
+    
+    return stdout.trim() === "true";
+  } catch (e) {
+    console.error(`Failed to check job ${job.id} alive status:`, e);
+    return false;
+  }
+}
+
+async function watchRunningJobs(): Promise<void> {
+  const runningJobs = jobList.filter(j => j.status === "running" && j.exec_mode === "tmux");
+  
+  if (runningJobs.length === 0) {
+    return;
+  }
+  
+  for (const job of runningJobs) {
+    try {
+      const alive = await checkJobAlive(job);
+      
+      if (!alive) {
+        // Tmux session terminated
+        const shouldRestart = 
+          (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
+          (job.restart_policy === "always");
+        
+        if (shouldRestart) {
+          job.status = "queued";
+          job.retry_count++;
+          job.started_at = null;
+          job.tmux_sessions = [];
+          
+          const retryInfo = job.restart_policy === "always" 
+            ? `(retry ${job.retry_count})`
+            : `(retry ${job.retry_count}/${job.max_retries})`;
+          
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Job ${job.id} died, re-queuing ${retryInfo} - ${cmdPreview.slice(0, 30)}...`, 3000);
+        } else {
+          job.status = "failed";
+          job.finished_at = new Date().toISOString();
+          job.error = job.error || "tmux session terminated unexpectedly";
+          
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Job ${job.id} failed: session terminated - ${cmdPreview.slice(0, 30)}...`, 3000);
+        }
+        
+        await updateJobInStore(job);
+        await loadJobsFromCLI();
+        requestRender?.();
+      }
+    } catch (e: any) {
+      console.error(`Failed to watch job ${job.id}:`, e);
+    }
+  }
+}
+
 async function executeJobRemote(job: Job): Promise<void> {
   const tmuxSessions: string[] = [];
   
@@ -4167,6 +4285,7 @@ async function main() {
     loadJobsFromCLI(),
   ]);
   await dispatchQueuedJobs();
+  await watchRunningJobs();
   bootLoading = false;
   render();
 
@@ -4185,6 +4304,9 @@ async function main() {
     
     // Dispatch queued jobs after snapshot update
     await dispatchQueuedJobs();
+    
+    // Watch running jobs for health and auto-restart
+    await watchRunningJobs();
     render();
   }, 15_000);
 
