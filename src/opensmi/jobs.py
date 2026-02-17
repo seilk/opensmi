@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 from .config import load_config
 from .models import ClusterConfig, NodeConfig
@@ -62,6 +66,24 @@ def jobs_path(state_dir: Path) -> Path:
     return state_dir / JOBS_FILENAME
 
 
+@contextmanager
+def _lock_jobs_file(state_dir: Path) -> Iterator[None]:
+    """Context manager for file locking jobs.json during concurrent access.
+
+    Uses fcntl.flock for advisory locking to prevent race conditions when
+    both CLI and TUI access jobs.json simultaneously.
+    """
+    ensure_state_dir(state_dir)
+    lock_path = state_dir / f"{JOBS_FILENAME}.lock"
+
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def load_jobs(state_dir: Path) -> List[Job]:
     """Load all jobs from persistent storage.
 
@@ -73,16 +95,19 @@ def load_jobs(state_dir: Path) -> List[Job]:
         return []
 
     try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        jobs_data = data.get("jobs", [])
-        return [Job(**j) for j in jobs_data]
+        with _lock_jobs_file(state_dir):
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            jobs_data = data.get("jobs", [])
+            return [Job(**j) for j in jobs_data]
     except (json.JSONDecodeError, ValueError, OSError, TypeError):
         return []
 
 
 def save_jobs(state_dir: Path, jobs: List[Job]) -> None:
-    """Save all jobs to persistent storage.
+    """Save all jobs to persistent storage with atomic write.
+
+    Uses file locking and atomic replace to prevent corruption from concurrent access.
 
     Args:
         state_dir: State directory path
@@ -90,9 +115,24 @@ def save_jobs(state_dir: Path, jobs: List[Job]) -> None:
     """
     ensure_state_dir(state_dir)
     path = jobs_path(state_dir)
-    serializable = {"jobs": [asdict(j) for j in jobs]}
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(serializable, f, indent=2)
+
+    with _lock_jobs_file(state_dir):
+        serializable = {"jobs": [asdict(j) for j in jobs]}
+
+        # Atomic write via temp file + rename
+        fd, tmp_path = tempfile.mkstemp(prefix=f"{JOBS_FILENAME}.", dir=str(state_dir))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(serializable, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 def upsert_job(jobs: List[Job], job: Job) -> List[Job]:
@@ -258,3 +298,33 @@ def retry_job(job: Job) -> Job:
         queue_mode=job.queue_mode,
     )
     return new_job
+
+
+def cleanup_old_jobs(
+    jobs: List[Job], max_done: int = 100, max_failed: int = 50
+) -> List[Job]:
+    """Remove old completed/failed jobs to prevent unbounded growth.
+
+    Keeps the most recent jobs in each status category.
+
+    Args:
+        jobs: List of all jobs
+        max_done: Maximum number of 'done' jobs to keep
+        max_failed: Maximum number of 'failed' jobs to keep
+
+    Returns:
+        Filtered list with old jobs removed
+    """
+    done_jobs = sorted(
+        [j for j in jobs if j.status == "done"],
+        key=lambda x: x.finished_at or "",
+        reverse=True,
+    )
+    failed_jobs = sorted(
+        [j for j in jobs if j.status == "failed"],
+        key=lambda x: x.finished_at or "",
+        reverse=True,
+    )
+    other_jobs = [j for j in jobs if j.status not in ("done", "failed")]
+
+    return other_jobs + done_jobs[:max_done] + failed_jobs[:max_failed]
