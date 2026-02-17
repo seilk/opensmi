@@ -7,6 +7,7 @@ from pathlib import Path
 
 from opensmi.jobs import (
     Job,
+    _extract_node_from_session,
     cleanup_old_jobs,
     get_job,
     load_jobs,
@@ -331,6 +332,49 @@ class TestFileLocking(unittest.TestCase):
         self.assertGreater(len(final_jobs), 0)
 
         self.assertIn("initial1", [j.id for j in final_jobs])
+
+
+class TestExtractNodeFromSession(unittest.TestCase):
+    def test_single_mode_session(self):
+        job = Job(
+            id="abc12345", command="python train.py", user="alice", gpus=[("gpu01", 0)]
+        )
+        node = _extract_node_from_session("opensmi-abc12345-gpu01", job)
+        self.assertEqual(node, "gpu01")
+
+    def test_one_to_one_mode_session(self):
+        job = Job(
+            id="abc12345", command="", user="alice", gpus=[("gpu01", 0), ("gpu02", 1)]
+        )
+        node = _extract_node_from_session("opensmi-abc12345-gpu02-gpu1", job)
+        self.assertEqual(node, "gpu02")
+
+    def test_fallback_to_first_gpu(self):
+        job = Job(
+            id="abc12345", command="python train.py", user="alice", gpus=[("gpu01", 0)]
+        )
+        node = _extract_node_from_session("some-unknown-session", job)
+        self.assertEqual(node, "gpu01")
+
+    def test_fallback_no_gpus(self):
+        job = Job(id="abc12345", command="python train.py", user="alice")
+        node = _extract_node_from_session("some-unknown-session", job)
+        self.assertIsNone(node)
+
+    def test_node_with_hyphen(self):
+        job = Job(
+            id="abc12345",
+            command="python train.py",
+            user="alice",
+            gpus=[("my-gpu-node", 0)],
+        )
+        node = _extract_node_from_session("opensmi-abc12345-my-gpu-node", job)
+        self.assertEqual(node, "my-gpu-node")
+
+    def test_node_with_hyphen_one_to_one(self):
+        job = Job(id="abc12345", command="", user="alice", gpus=[("my-node", 0)])
+        node = _extract_node_from_session("opensmi-abc12345-my-node-gpu0", job)
+        self.assertEqual(node, "my-node")
 
 
 if __name__ == "__main__":

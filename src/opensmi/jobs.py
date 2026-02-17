@@ -190,8 +190,7 @@ async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
         return False
 
     for session_name in job.tmux_sessions:
-        # Get the node for this session (assuming first GPU's node)
-        node_alias = job.gpus[0][0] if job.gpus else None
+        node_alias = _extract_node_from_session(session_name, job)
         if not node_alias:
             continue
 
@@ -222,11 +221,34 @@ async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
 # ============================================================================
 
 
+def _extract_node_from_session(session_name: str, job: Job) -> Optional[str]:
+    """Extract node alias from tmux session name.
+
+    Session names follow the pattern:
+      - single mode:     opensmi-{job_id}-{node}
+      - one-to-one mode: opensmi-{job_id}-{node}-gpu{idx}
+
+    Example: "opensmi-abc12345-my-gpu-node-gpu0" → "my-gpu-node"
+
+    Falls back to job.gpus[0] if pattern doesn't match.
+    """
+    import re
+
+    prefix = f"opensmi-{job.id}-"
+    if session_name.startswith(prefix):
+        rest = session_name[len(prefix) :]
+        match = re.match(r"^(.+)-gpu\d+$", rest)
+        if match:
+            return match.group(1)
+        return rest
+    return job.gpus[0][0] if job.gpus else None
+
+
 async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
     """Cancel a running or queued job.
 
-    For running jobs, this kills their tmux sessions. For queued jobs,
-    it simply marks them as cancelled.
+    For running jobs, this kills their tmux sessions on the correct nodes.
+    For queued jobs, it simply marks them as cancelled.
 
     Args:
         job: Job to cancel
@@ -244,9 +266,9 @@ async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
         job.finished_at = datetime.now(timezone.utc).isoformat()
         return True
 
-    # Running jobs: kill their tmux sessions
+    # Running jobs: kill their tmux sessions on the correct nodes
     for session in job.tmux_sessions:
-        node_alias = job.gpus[0][0] if job.gpus else None
+        node_alias = _extract_node_from_session(session, job)
         if not node_alias:
             continue
 
