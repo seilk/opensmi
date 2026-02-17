@@ -14,7 +14,7 @@ from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
 from .models import NodeTarget, PreflightCheck, PreflightCheckType, RemoteExecutionContext
 from .config import load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script, ssh_run
-from .executor import route_command_to_target, run_preflight_checks
+from .executor import inject_cuda_visible_devices, route_command_to_target, run_preflight_checks
 from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
 from .update import UpdateError, update as update_release
@@ -961,6 +961,13 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
             )
         )
 
+    if not checks:
+        if args.json:
+            print(json.dumps({"ok": False, "error": "No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus."}))
+        else:
+            print("No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus.", file=sys.stderr)
+        return 2
+
     results = asyncio.run(run_preflight_checks(checks))
 
     if args.json:
@@ -1035,10 +1042,12 @@ def _cmd_exec(args: argparse.Namespace) -> int:
     if args.mode == "tmux":
         session = str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
 
+    env_cfg = inject_cuda_visible_devices(target)
+
     ctx = RemoteExecutionContext(
         target=target,
         command=str(args.command),
-        env_vars={},
+        env_vars=env_cfg.to_env_dict(),
         execution_mode=str(args.mode),
         tmux_session=session,
         timeout_s=int(args.timeout),
