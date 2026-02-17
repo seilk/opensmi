@@ -2117,7 +2117,7 @@ function renderGpuAssignmentPanel() {
     fg: C.textDim 
   });
   
-  const gpuRows: BoxRenderable[] = [];
+  const gpuRows: any[] = [];
   
   if (launchSelectedGpus.length === 0) {
     gpuRows.push(
