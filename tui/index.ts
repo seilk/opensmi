@@ -768,19 +768,31 @@ async function dispatchQueuedJobs(): Promise<void> {
       const available = await findAvailableGpus(needed);
       
       if (available.length < needed) {
+        // Job is still waiting for GPUs - show status for first job only
+        if (queuedJobs.indexOf(job) === 0) {
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
+        }
         continue;
       }
+      
+      // GPUs found - show allocation details
+      const gpuList = available.slice(0, needed)
+        .map(g => `${g.node}:${g.gpu}`)
+        .join(", ");
       
       job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
       job.status = "running";
       job.started_at = new Date().toISOString();
       
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      setStatus(`Auto-dispatching job ${job.id} → [${gpuList}]`, 2000);
+      
       await executeJobRemote(job);
       await updateJobInStore(job);
       await loadJobsFromCLI();
       
-      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-      setStatus(`Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
+      setStatus(`✓ Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
       
       requestRender?.();
       
@@ -791,12 +803,18 @@ async function dispatchQueuedJobs(): Promise<void> {
       job.finished_at = new Date().toISOString();
       job.error = `Dispatch failed: ${e?.message || String(e)}`;
       
+      const errorMsg = e?.message || String(e);
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      setStatus(`✗ Auto-dispatch failed for job ${job.id}: ${errorMsg.slice(0, 40)}`, 4000);
+      
       try {
         await updateJobInStore(job);
         await loadJobsFromCLI();
       } catch (updateErr) {
         console.error(`Failed to update job ${job.id} status:`, updateErr);
       }
+      
+      requestRender?.();
     }
   }
 }

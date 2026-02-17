@@ -30,7 +30,7 @@ Add your tasks below using: `ralph --add-task "description"`
 - [x] QUEUE-F: Implement dispatchQueuedJobs() function with FIFO queue processing
 - [x] QUEUE-G: Integrate dispatcher into pollCluster cycle (after snapshot update)
 - [x] QUEUE-H: Add executeJobRemote() to launch queued jobs on selected GPUs
-- [ ] QUEUE-I: Add status notifications for auto-dispatch events
+- [x] QUEUE-I: Add status notifications for auto-dispatch events
 - [ ] QUEUE-J: Test queued mode: submit job, wait for GPU free, verify auto-start
 
 ## Phase 4: Job Lifecycle Management (NOT STARTED)
