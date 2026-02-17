@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shlex
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .models import NodeConfig
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_env_vars(env_vars: Dict[str, str]) -> None:
+    for k in env_vars.keys():
+        if not _ENV_KEY_RE.match(str(k)):
+            raise ValueError(f"Invalid env var key: {k!r}")
+
 
 
 class SSHRunError(RuntimeError):
@@ -189,6 +199,9 @@ async def ssh_exec_remote(
         SSHRetryExhausted: When all retry attempts are exhausted
     """
     # Build the command with environment variable injection
+    if env_vars:
+        _validate_env_vars(env_vars)
+
     # Use shlex.quote() to prevent shell injection via env var values
     if env_vars:
         env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env_vars.items())

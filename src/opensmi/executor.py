@@ -226,9 +226,20 @@ async def route_command_to_target(
         else:
             wrapped_command = context.command
 
-        # Create a detached tmux session with the command
-        # Use shlex.quote() to prevent injection via session name
-        tmux_cmd = f"tmux new-session -d -s {shlex.quote(context.tmux_session)} '{wrapped_command}'"
+        # Create a detached tmux session with the command.
+        # Build argv then shell-quote each argument to avoid injection and quoting bugs.
+        # Run the payload through `bash -lc` so env prefix + shell features work as users expect.
+        tmux_argv = [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            context.tmux_session,
+            "bash",
+            "-lc",
+            wrapped_command,
+        ]
+        tmux_cmd = " ".join(shlex.quote(a) for a in tmux_argv)
 
         return await ssh_exec_remote(
             node=context.target.node_config,
@@ -389,33 +400,93 @@ async def _check_tmux_availability(
 async def _check_command_syntax(
     check: PreflightCheck, timestamp: str
 ) -> PreflightResult:
-    """Validate command syntax using bash -n.
+    """Validate command syntax using remote `bash -n`.
 
-    This is a placeholder implementation that will be completed in P2.4.
+    Notes:
+      - This is a syntax-only check (it does not execute the command).
+      - We still run it on the target node because remote shells can differ.
     """
-    # TODO: P2.4 implementation
-    return PreflightResult(
-        check=check,
-        passed=False,
-        error_message="Not implemented: P2.4",
-        timestamp=timestamp,
-    )
+    if not check.node_config:
+        return PreflightResult(
+            check=check,
+            passed=False,
+            error_message=f"Node configuration missing for {check.node_alias}",
+            timestamp=timestamp,
+        )
+
+    try:
+        rc, _stdout, stderr = await ssh_run(
+            node=check.node_config,
+            remote_args=["bash", "-n", "-c", check.command_to_validate or ""],
+            timeout_s=10,
+        )
+
+        if rc == 0:
+            return PreflightResult(
+                check=check,
+                passed=True,
+                metadata={},
+                timestamp=timestamp,
+            )
+
+        err = (stderr or "").strip()
+        return PreflightResult(
+            check=check,
+            passed=False,
+            error_message=err or f"Command syntax check failed (rc={rc})",
+            timestamp=timestamp,
+        )
+    except Exception as e:
+        return PreflightResult(
+            check=check,
+            passed=False,
+            error_message=f"Failed to check command syntax: {str(e)}",
+            timestamp=timestamp,
+        )
 
 
 async def _check_gpu_availability(
     check: PreflightCheck, timestamp: str
 ) -> PreflightResult:
-    """Check GPU availability on the target node.
+    """Validate that requested GPU indices exist on the target node.
 
-    This is a placeholder implementation that will be completed in P2.3.
+    This currently checks index existence (not 'free/idle').
     """
-    # TODO: P2.3 implementation
-    return PreflightResult(
-        check=check,
-        passed=False,
-        error_message="Not implemented: P2.3",
-        timestamp=timestamp,
-    )
+    if not check.node_config:
+        return PreflightResult(
+            check=check,
+            passed=False,
+            error_message=f"Node configuration missing for {check.node_alias}",
+            timestamp=timestamp,
+        )
+
+    try:
+        # Reuse existing helpers for consistency.
+        target = NodeTarget(
+            node_alias=check.node_alias,
+            gpu_indices=list(check.target_gpu_indices or []),
+            node_config=check.node_config,
+        )
+        available = await validate_gpu_availability(target)
+        validate_gpu_indices_against_available(
+            requested_indices=target.gpu_indices,
+            available_indices=available,
+            node_alias=check.node_alias,
+        )
+
+        return PreflightResult(
+            check=check,
+            passed=True,
+            metadata={"available_indices": available},
+            timestamp=timestamp,
+        )
+    except Exception as e:
+        return PreflightResult(
+            check=check,
+            passed=False,
+            error_message=str(e),
+            timestamp=timestamp,
+        )
 
 
 async def route_commands_one_to_one(

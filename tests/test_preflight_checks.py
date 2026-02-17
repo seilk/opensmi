@@ -316,8 +316,8 @@ class TestTmuxAvailabilityCheck(unittest.TestCase):
             self.assertIn("T", results[0].timestamp)
             self.assertIn("Z", results[0].timestamp)
 
-    def test_gpu_availability_stub_returns_not_implemented(self):
-        """P2.1: Verify stub implementation returns not-implemented for GPU check."""
+    def test_gpu_availability_requires_node_config(self):
+        """GPU_AVAILABILITY should fail gracefully without node_config."""
         checks = [
             PreflightCheck(
                 check_type=PreflightCheckType.GPU_AVAILABILITY,
@@ -330,4 +330,4 @@ class TestTmuxAvailabilityCheck(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].passed)
-        self.assertIn("Not implemented", results[0].error_message)
+        self.assertIn("Node configuration missing", results[0].error_message)

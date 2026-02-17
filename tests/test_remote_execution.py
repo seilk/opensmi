@@ -524,9 +524,10 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
 
             self.assertIn("tmux new-session", command)
             self.assertIn("simple-session", command)
-            self.assertIn("echo 'hello'", command)
-            # Should not have env var prefix
-            self.assertNotIn("=", command.split("'")[0])
+            # We shell-quote the payload; don't assert exact quoting, just content.
+            self.assertIn("bash -lc", command)
+            self.assertIn("echo", command)
+            self.assertIn("hello", command)
 
     def test_route_respects_node_config_timeout(self):
         """Test that custom timeout is respected in execution."""
