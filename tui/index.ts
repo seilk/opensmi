@@ -937,6 +937,37 @@ async function watchRunningJobs(): Promise<void> {
   }
 }
 
+async function cleanupOldJobs(): Promise<void> {
+  const cleanupScript = `
+import sys
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import load_jobs, save_jobs, cleanup_old_jobs
+from opensmi.state import get_state_dir
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+cleaned_jobs = cleanup_old_jobs(jobs, max_done=100, max_failed=50)
+if len(cleaned_jobs) != len(jobs):
+    save_jobs(state_dir, cleaned_jobs)
+    print(f"Cleaned up {len(jobs) - len(cleaned_jobs)} old jobs")
+else:
+    print("No cleanup needed")
+`;
+  
+  try {
+    const proc = Bun.spawn([PYTHON, "-c", cleanupScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+  } catch (e: any) {
+    console.error("Failed to cleanup old jobs:", e);
+  }
+}
+
 async function executeJobRemote(job: Job): Promise<void> {
   const tmuxSessions: string[] = [];
   
@@ -4308,6 +4339,19 @@ async function main() {
     // Watch running jobs for health and auto-restart
     await watchRunningJobs();
     render();
+  }, 15_000);
+
+  // Cleanup old jobs every hour
+  let cleanupCounter = 0;
+  const cleanupInterval = setInterval(async () => {
+    cleanupCounter++;
+    // Run cleanup every hour (240 cycles of 15s)
+    if (cleanupCounter % 240 === 0) {
+      await cleanupOldJobs();
+      // Reload jobs to reflect cleanup
+      await loadJobsFromCLI();
+      requestRender?.();
+    }
   }, 15_000);
 
   // Key handling
