@@ -2913,199 +2913,225 @@ print("OK")
   }
 }
 
+
+async function executeRemoteExec(params: {
+  node: string;
+  gpusCsv: string;
+  mode: "direct" | "tmux";
+  command: string;
+  session?: string;
+}): Promise<{ ok: boolean; preflight: any[]; result: any | null; rawStdout: string; rawStderr: string; code: number }> {
+  const args: string[] = [
+    "exec",
+    params.node,
+    "--gpus",
+    params.gpusCsv,
+    "--mode",
+    params.mode,
+    "--command",
+    params.command,
+    "--json",
+  ];
+  if (params.mode === "tmux") {
+    if (params.session) {
+      args.push("--session", params.session);
+    }
+  }
+
+  const { code, stdout, stderr } = await runOpensmi(args);
+
+  let payload: any = null;
+  try {
+    payload = stdout.trim() ? JSON.parse(stdout) : null;
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ok: !!payload?.ok,
+    preflight: Array.isArray(payload?.preflight) ? payload.preflight : [],
+    result: payload?.result ?? null,
+    rawStdout: stdout,
+    rawStderr: stderr,
+    code,
+  };
+}
+
 async function executeLaunchDirect(command: string, gpuIndices: string): Promise<void> {
-  const execProc = Bun.spawn(["/bin/sh", "-c", command], {
-    env: {
-      ...process.env,
-      CUDA_VISIBLE_DEVICES: gpuIndices,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
+  // Remote exec: only supported when all selected GPUs are on one node.
+  const nodes = Array.from(new Set(launchSelectedGpus.map((g) => g.node)));
+  if (nodes.length !== 1) {
+    setLaunchError(`Single mode requires all GPUs on one node (got: ${nodes.join(", ")})`);
+    runnerState = "failed";
+    return;
+  }
+  const node = nodes[0]!;
+
+  const payload = await executeRemoteExec({
+    node,
+    gpusCsv: gpuIndices,
+    mode: "direct",
+    command,
   });
-  
-  const execStdout = await new Response(execProc.stdout).text();
-  const execStderr = await new Response(execProc.stderr).text();
-  const execCode = await execProc.exited;
-  
+
+  const preflightLines = payload.preflight
+    .map((r: any) => `${r.node_alias} ${r.check_type}: ${r.passed ? "PASS" : "FAIL"}${r.error_message ? ` - ${r.error_message}` : ""}`)
+    .join("\n");
+
+  const res = payload.result;
+  const execCode = res?.exit_code;
+  const execStdout = res?.stdout || "";
+  const execStderr = res?.stderr || "";
+
   const fullOutput = [
-    `Exit code: ${execCode}`,
+    preflightLines ? `Preflight:\n${preflightLines}` : "",
+    typeof execCode === "number" ? `Exit code: ${execCode}` : `Exit code: ${payload.code}`,
     execStdout ? `stdout:\n${execStdout}` : "",
     execStderr ? `stderr:\n${execStderr}` : "",
-  ].filter(Boolean).join("\n");
-  
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   launchOutput = fullOutput.slice(0, 500);
-  
+
   if (execStderr) {
-    const stderrLines = execStderr.split("\n").filter(l => l.trim());
-    runnerStderr = stderrLines.slice(-2).map(l => l.slice(0, 100));
+    const stderrLines = execStderr.split("\n").filter((l: string) => l.trim());
+    runnerStderr = stderrLines.slice(-2).map((l: string) => l.slice(0, 100));
   }
-  
-  if (execCode !== 0) {
-    launchErrorMsg = `Command failed with exit code ${execCode}`;
+
+  if (!payload.ok) {
+    setLaunchError(
+      execStderr.trim() ||
+        payload.rawStderr.trim() ||
+        "Remote command failed (see Output)"
+    );
     runnerState = "failed";
-  } else {
-    setStatus(`Launched: ${command.slice(0, 40)}${command.length > 40 ? "..." : ""} on ${launchSelectedGpus.length} GPU(s)`);
+    return;
   }
+
+  setStatus(
+    `Launched (remote): ${command.slice(0, 40)}${command.length > 40 ? "..." : ""} on ${launchSelectedGpus.length} GPU(s)`
+  );
 }
+
 
 async function executeLaunchOneToOne(): Promise<void> {
   const results: string[] = [];
-  
+
   for (let i = 0; i < launchNumGpus; i++) {
     const cmd = launchCommands[i]?.trim();
     if (!cmd) continue;
-    
+
     const gpu = launchSelectedGpus[i];
     if (!gpu) continue;
-    
+
     const gpuIndex = String(gpu.gpu);
-    
+
     if (launchMode === "tmux") {
-      const sessionName = launchTmuxSession.trim() 
-        ? `${launchTmuxSession}-gpu${gpu.gpu}`
-        : `opensmi-${Date.now()}-gpu${gpu.gpu}`;
-      
-      const checkProc = Bun.spawn(["which", "tmux"], {
-        stdout: "pipe",
-        stderr: "pipe",
+      const sessionName = launchTmuxSession.trim()
+        ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
+        : `opensmi-${Date.now()}-${gpu.node}-gpu${gpu.gpu}`;
+
+      const payload = await executeRemoteExec({
+        node: gpu.node,
+        gpusCsv: gpuIndex,
+        mode: "tmux",
+        command: cmd,
+        session: sessionName,
       });
-      
-      const checkCode = await checkProc.exited;
-      
-      if (checkCode !== 0) {
-        setLaunchError("tmux is not installed or not found in PATH");
-        return;
-      }
-      
-      const wrappedCommand = `CUDA_VISIBLE_DEVICES=${gpuIndex} ${cmd}`;
-      
-      const newProc = Bun.spawn(
-        ["tmux", "new-session", "-d", "-s", sessionName, wrappedCommand],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-        }
-      );
-      
-      const newCode = await newProc.exited;
-      
-      if (newCode !== 0) {
-        const newStderr = await new Response(newProc.stderr).text();
-        results.push(`${gpu.node}:GPU${gpu.gpu}: FAILED - ${newStderr}`);
+
+      if (!payload.ok) {
+        const why = payload.rawStderr.trim() || "exec failed";
+        results.push(`${gpu.node}:GPU${gpu.gpu}: FAILED - ${why.slice(0, 80)}`);
       } else {
         results.push(`${gpu.node}:GPU${gpu.gpu}: tmux session ${sessionName}`);
       }
     } else {
-      const execProc = Bun.spawn(["/bin/sh", "-c", cmd], {
-        env: {
-          ...process.env,
-          CUDA_VISIBLE_DEVICES: gpuIndex,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
+      const payload = await executeRemoteExec({
+        node: gpu.node,
+        gpusCsv: gpuIndex,
+        mode: "direct",
+        command: cmd,
       });
-      
-      const execStdout = await new Response(execProc.stdout).text();
-      const execStderr = await new Response(execProc.stderr).text();
-      const execCode = await execProc.exited;
-      
-      const status = execCode === 0 ? "OK" : `EXIT ${execCode}`;
-      const output = execStdout || execStderr || "";
+
+      const res = payload.result;
+      const execCode = res?.exit_code;
+      const output = (res?.stdout || res?.stderr || "").trim();
       const preview = output.slice(0, 30).replace(/\n/g, " ");
-      results.push(`${gpu.node}:GPU${gpu.gpu}: ${status} ${preview}${output.length > 30 ? "..." : ""}`);
+
+      if (!payload.ok) {
+        results.push(`${gpu.node}:GPU${gpu.gpu}: FAIL ${preview}${output.length > 30 ? "..." : ""}`);
+      } else {
+        results.push(`${gpu.node}:GPU${gpu.gpu}: OK ${preview}${output.length > 30 ? "..." : ""}`);
+      }
     }
   }
-  
+
   launchOutput = results.join("\n");
-  
+
   if (launchMode === "tmux") {
-    const sessions = results.map(r => {
-      const match = r.match(/tmux session (.+)$/);
-      return match ? match[1] : null;
-    }).filter(Boolean);
-    
+    const sessions = results
+      .map((r) => {
+        const match = r.match(/tmux session (.+)$/);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean);
+
     if (sessions.length > 0) {
-      setStatus(`Launched ${sessions.length} tmux sessions`);
+      setStatus(`Launched ${sessions.length} remote tmux sessions`);
     }
   } else {
-    setStatus(`Executed ${results.length} commands`);
+    setStatus(`Executed ${results.length} remote commands`);
   }
 }
 
+
 async function executeLaunchTmux(command: string, gpuIndices: string): Promise<void> {
-  const checkProc = Bun.spawn(["which", "tmux"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  
-  const checkCode = await checkProc.exited;
-  
-  if (checkCode !== 0) {
-    setLaunchError("tmux is not installed or not found in PATH");
+  const nodes = Array.from(new Set(launchSelectedGpus.map((g) => g.node)));
+  if (nodes.length !== 1) {
+    setLaunchError(`Single mode requires all GPUs on one node (got: ${nodes.join(", ")})`);
+    runnerState = "failed";
     return;
   }
-  
-  const sessionName = launchTmuxSession.trim() || `opensmi-${Date.now()}`;
-  
-  const listProc = Bun.spawn(["tmux", "list-sessions", "-F", "#{session_name}"], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const node = nodes[0]!;
+
+  const sessionName = launchTmuxSession.trim() || `opensmi-${Date.now()}-${node}`;
+
+  const payload = await executeRemoteExec({
+    node,
+    gpusCsv: gpuIndices,
+    mode: "tmux",
+    command,
+    session: sessionName,
   });
-  
-  const listStdout = await new Response(listProc.stdout).text();
-  await listProc.exited;
-  
-  const existingSessions = listStdout.split("\n").map(s => s.trim()).filter(Boolean);
-  const sessionExists = existingSessions.includes(sessionName);
-  
-  const wrappedCommand = `CUDA_VISIBLE_DEVICES=${gpuIndices} ${command}`;
-  
-  if (sessionExists) {
-    const sendProc = Bun.spawn(
-      ["tmux", "send-keys", "-t", sessionName, wrappedCommand, "Enter"],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
-    
-    const sendCode = await sendProc.exited;
-    
-    if (sendCode !== 0) {
-      const sendStderr = await new Response(sendProc.stderr).text();
-      launchErrorMsg = `Failed to send command to tmux session: ${sendStderr}`;
-      runnerState = "failed";
-      if (sendStderr) runnerStderr.push(sendStderr.slice(0, 100));
-    } else {
-      launchOutput = `Command sent to existing tmux session: ${sessionName}\n\nAttach with:\n  tmux attach -t ${sessionName}`;
-      runnerAttachCmd = `tmux attach -t ${sessionName}`;
-      runnerTmuxSession = sessionName;
-      setStatus(`Launched in tmux session: ${sessionName}`);
-    }
-  } else {
-    const newProc = Bun.spawn(
-      ["tmux", "new-session", "-d", "-s", sessionName, wrappedCommand],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-      }
-    );
-    
-    const newCode = await newProc.exited;
-    
-    if (newCode !== 0) {
-      const newStderr = await new Response(newProc.stderr).text();
-      launchErrorMsg = `Failed to create tmux session: ${newStderr}`;
-      runnerState = "failed";
-      if (newStderr) runnerStderr.push(newStderr.slice(0, 100));
-    } else {
-      launchOutput = `Created tmux session: ${sessionName}\n\nAttach with:\n  tmux attach -t ${sessionName}`;
-      runnerAttachCmd = `tmux attach -t ${sessionName}`;
-      runnerTmuxSession = sessionName;
-      setStatus(`Launched in tmux session: ${sessionName}`);
-    }
+
+  const preflightLines = payload.preflight
+    .map((r: any) => `${r.node_alias} ${r.check_type}: ${r.passed ? "PASS" : "FAIL"}${r.error_message ? ` - ${r.error_message}` : ""}`)
+    .join("\n");
+
+  if (!payload.ok) {
+    launchOutput = preflightLines ? `Preflight:\n${preflightLines}` : payload.rawStdout.slice(0, 500);
+    setLaunchError(payload.rawStderr.trim() || "Remote tmux launch failed (see Output)");
+    runnerState = "failed";
+    return;
   }
+
+  const attachHint = `ssh <node> -t tmux attach -t ${sessionName}`;
+  launchOutput = [
+    preflightLines ? `Preflight:\n${preflightLines}` : "",
+    `Created remote tmux session on ${node}: ${sessionName}`,
+    "",
+    "Attach with:",
+    `  ${attachHint}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  runnerAttachCmd = attachHint;
+  runnerTmuxSession = sessionName;
+  setStatus(`Launched (remote tmux): ${node} / ${sessionName}`);
 }
+
 
 // ── Main ───────────────────────────────────────────────────────────
 
