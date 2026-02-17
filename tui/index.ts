@@ -744,6 +744,196 @@ print(json.dumps(available))
   }
 }
 
+async function dispatchQueuedJobs(): Promise<void> {
+  if (!snapshot) {
+    return;
+  }
+  
+  const queuedJobs = jobList
+    .filter(j => j.status === "queued" && j.queue_mode === "queued")
+    .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
+  
+  if (queuedJobs.length === 0) {
+    return;
+  }
+  
+  for (const job of queuedJobs) {
+    const needed = job.requested_gpu_count || job.gpus.length;
+    
+    if (needed === 0) {
+      continue;
+    }
+    
+    try {
+      const available = await findAvailableGpus(needed);
+      
+      if (available.length < needed) {
+        continue;
+      }
+      
+      job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
+      job.status = "running";
+      job.started_at = new Date().toISOString();
+      
+      await executeJobRemote(job);
+      await updateJobInStore(job);
+      await loadJobsFromCLI();
+      
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      setStatus(`Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
+      
+      requestRender?.();
+      
+    } catch (e: any) {
+      console.error(`Failed to dispatch job ${job.id}:`, e);
+      
+      job.status = "failed";
+      job.finished_at = new Date().toISOString();
+      job.error = `Dispatch failed: ${e?.message || String(e)}`;
+      
+      try {
+        await updateJobInStore(job);
+        await loadJobsFromCLI();
+      } catch (updateErr) {
+        console.error(`Failed to update job ${job.id} status:`, updateErr);
+      }
+    }
+  }
+}
+
+async function executeJobRemote(job: Job): Promise<void> {
+  const tmuxSessions: string[] = [];
+  
+  if (job.dist_mode === "single") {
+    const nodesByGpu = new Map<string, number[]>();
+    
+    for (const [node, gpu] of job.gpus) {
+      if (!nodesByGpu.has(node)) {
+        nodesByGpu.set(node, []);
+      }
+      nodesByGpu.get(node)!.push(gpu);
+    }
+    
+    for (const [node, gpus] of nodesByGpu.entries()) {
+      const gpusCsv = gpus.join(",");
+      const sessionName = job.exec_mode === "tmux" 
+        ? `opensmi-${job.id}-${node}`
+        : undefined;
+      
+      const payload = await executeRemoteExec({
+        node,
+        gpusCsv,
+        mode: job.exec_mode,
+        command: job.command,
+        session: sessionName,
+      });
+      
+      if (!payload.ok) {
+        throw new Error(`Failed to execute on ${node}: ${payload.rawStderr.trim()}`);
+      }
+      
+      if (sessionName) {
+        tmuxSessions.push(sessionName);
+      }
+    }
+  } else {
+    for (let i = 0; i < job.commands.length; i++) {
+      const cmd = job.commands[i];
+      const [node, gpu] = job.gpus[i];
+      
+      if (!cmd || !node || gpu === undefined) {
+        continue;
+      }
+      
+      const gpuIndex = String(gpu);
+      const sessionName = job.exec_mode === "tmux"
+        ? `opensmi-${job.id}-${node}-gpu${gpu}`
+        : undefined;
+      
+      const payload = await executeRemoteExec({
+        node,
+        gpusCsv: gpuIndex,
+        mode: job.exec_mode,
+        command: cmd,
+        session: sessionName,
+      });
+      
+      if (!payload.ok) {
+        throw new Error(`Failed to execute on ${node}:GPU${gpu}: ${payload.rawStderr.trim()}`);
+      }
+      
+      if (sessionName) {
+        tmuxSessions.push(sessionName);
+      }
+    }
+  }
+  
+  job.tmux_sessions = tmuxSessions;
+}
+
+async function updateJobInStore(job: Job): Promise<void> {
+  const tmpFile = `/tmp/opensmi-job-update-${Date.now()}.json`;
+  await Bun.write(tmpFile, JSON.stringify(job));
+  
+  const updateScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=job_data["id"],
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+    status=job_data["status"],
+    submitted_at=job_data["submitted_at"],
+    started_at=job_data.get("started_at"),
+    finished_at=job_data.get("finished_at"),
+    exit_codes=job_data["exit_codes"],
+    error=job_data.get("error"),
+    user=job_data["user"],
+    restart_policy=job_data["restart_policy"],
+    retry_count=job_data["retry_count"],
+    max_retries=job_data["max_retries"],
+    tags=job_data["tags"],
+    queue_mode=job_data["queue_mode"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+print("OK")
+`;
+  
+  const proc = Bun.spawn([PYTHON, "-c", updateScript], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: OPENSMI_ENV,
+    cwd: OPENSMI_CWD,
+  });
+  
+  const stderr = await new Response(proc.stderr).text();
+  await proc.exited;
+  
+  try {
+    await Bun.$`rm -f ${tmpFile}`;
+  } catch {}
+  
+  if (proc.exitCode !== 0) {
+    throw new Error(`Failed to update job in store: ${stderr}`);
+  }
+}
+
 async function cancelJobAction(job: Job): Promise<void> {
   try {
     setStatus(`Cancelling job ${job.id}...`);
@@ -3956,7 +4146,9 @@ async function main() {
     pollCluster(),
     loadAllocations(),
     loadSystemUsers(true),
+    loadJobsFromCLI(),
   ]);
+  await dispatchQueuedJobs();
   bootLoading = false;
   render();
 
@@ -3965,11 +4157,16 @@ async function main() {
     if (screen !== "dashboard" && screen !== "detail" && screen !== "jobs") return;
     if (runnerFocused || runnerInputTyping) return;
     
+    // Always poll cluster to ensure dispatcher has fresh GPU availability data
+    await Promise.all([pollCluster(), loadAllocations()]);
+    
+    // Load jobs if on jobs tab
     if (screen === "jobs") {
       await loadJobsFromCLI();
-    } else {
-      await Promise.all([pollCluster(), loadAllocations()]);
     }
+    
+    // Dispatch queued jobs after snapshot update
+    await dispatchQueuedJobs();
     render();
   }, 15_000);
 
