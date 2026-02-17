@@ -31,7 +31,7 @@ Add your tasks below using: `ralph --add-task "description"`
 - [x] QUEUE-G: Integrate dispatcher into pollCluster cycle (after snapshot update)
 - [x] QUEUE-H: Add executeJobRemote() to launch queued jobs on selected GPUs
 - [x] QUEUE-I: Add status notifications for auto-dispatch events
-- [ ] QUEUE-J: Test queued mode: submit job, wait for GPU free, verify auto-start
+- [x] QUEUE-J: Test queued mode: submit job, wait for GPU free, verify auto-start
 
 ## Phase 4: Job Lifecycle Management (NOT STARTED)
 - [ ] WATCH-A: Implement watchRunningJobs() function to monitor tmux session health
