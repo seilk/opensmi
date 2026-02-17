@@ -3742,6 +3742,139 @@ print(json.dumps({"job_id": job.id, "status": job.status}))
   }
 }
 
+/**
+ * Create job record from current launch configuration for immediate mode.
+ * Returns job_id if successful, null otherwise.
+ */
+async function createImmediateJob(): Promise<string | null> {
+  try {
+    const jobData: Partial<Job> = {
+      command: launchDistMode === "single" ? launchCommand : "",
+      commands: launchDistMode === "one-to-one" ? launchCommands.filter(c => c.trim()) : [],
+      gpus: launchSelectedGpus.map(g => [g.node, g.gpu] as [string, number]),
+      requested_gpu_count: 0,
+      dist_mode: launchDistMode,
+      exec_mode: launchMode,
+      queue_mode: "immediate",
+      tmux_sessions: [],
+    };
+    
+    const tmpFile = `/tmp/opensmi-job-${Date.now()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(jobData));
+    
+    const submitScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=Job.new_id(),
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    status="queued",
+    submitted_at=datetime.now(timezone.utc).isoformat(),
+    started_at=datetime.now(timezone.utc).isoformat(),
+    user="${OPERATOR}",
+    restart_policy="never",
+    queue_mode=job_data["queue_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+
+print(job.id)
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", submitScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (proc.exitCode !== 0) {
+      console.error(`Failed to create job: ${await new Response(proc.stderr).text()}`);
+      return null;
+    }
+    
+    return stdout.trim() || null;
+  } catch (e: any) {
+    console.error(`Failed to create immediate job: ${e?.message || String(e)}`);
+    return null;
+  }
+}
+
+/**
+ * Update job status and tmux sessions after immediate execution.
+ */
+async function updateImmediateJob(
+  jobId: string,
+  status: "running" | "done" | "failed",
+  tmuxSessions: string[],
+  error: string | null = null
+): Promise<void> {
+  try {
+    const errorEscaped = error ? error.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
+    const updateScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import load_jobs, save_jobs, get_job, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+job = get_job(jobs, "${jobId}")
+
+if job:
+    job.status = "${status}"
+    job.tmux_sessions = ${JSON.stringify(tmuxSessions)}
+    if "${status}" in ("done", "failed"):
+        job.finished_at = datetime.now(timezone.utc).isoformat()
+    ${error ? `job.error = """${errorEscaped}"""` : ""}
+    jobs = upsert_job(jobs, job)
+    save_jobs(state_dir, jobs)
+else:
+    sys.exit(1)
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", updateScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    if (proc.exitCode !== 0) {
+      console.error(`Failed to update job ${jobId}`);
+    }
+  } catch (e: any) {
+    console.error(`Failed to update job ${jobId}: ${e?.message || String(e)}`);
+  }
+}
+
 async function executeLaunch(): Promise<void> {
   runnerState = "queued";
   runnerStderr = [];
@@ -3792,7 +3925,17 @@ async function executeLaunch(): Promise<void> {
       return;
     }
     
-    // Immediate mode: execute now
+    // Immediate mode: execute now and track in job store
+    
+    // Create job record before execution
+    const currentJobId = await createImmediateJob();
+    if (!currentJobId) {
+      setLaunchError("Failed to create job record");
+      runnerState = "failed";
+      return;
+    }
+    
+    // Update launch history
     const tmpFile = `/tmp/opensmi-gpus-${Date.now()}.json`;
     await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
     
@@ -3824,16 +3967,44 @@ print("OK")
     
     runnerState = "sent";
     
+    // Execute and collect tmux session names
+    const tmuxSessions: string[] = [];
+    
     if (launchDistMode === "single") {
       const gpuIndices = launchSelectedGpus.map(g => g.gpu).join(",");
       if (launchMode === "tmux") {
+        const nodes = Array.from(new Set(launchSelectedGpus.map(g => g.node)));
+        const sessionName = launchTmuxSession.trim() || `opensmi-${currentJobId}-${nodes[0]}`;
+        tmuxSessions.push(sessionName);
+        // Set launchTmuxSession so executeLaunchTmux uses it
+        if (!launchTmuxSession.trim()) {
+          launchTmuxSession = sessionName;
+        }
         await executeLaunchTmux(launchCommand, gpuIndices);
       } else {
         await executeLaunchDirect(launchCommand, gpuIndices);
       }
     } else {
+      // One-to-one mode
+      if (launchMode === "tmux") {
+        for (let i = 0; i < launchNumGpus; i++) {
+          const cmd = launchCommands[i]?.trim();
+          if (!cmd) continue;
+          const gpu = launchSelectedGpus[i];
+          if (!gpu) continue;
+          const sessionName = launchTmuxSession.trim()
+            ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
+            : `opensmi-${currentJobId}-${gpu.node}-gpu${gpu.gpu}`;
+          tmuxSessions.push(sessionName);
+        }
+      }
       await executeLaunchOneToOne();
     }
+    
+    // Update job status after execution
+    const finalStatus = launchErrorMsg ? "failed" : (launchMode === "tmux" ? "running" : "done");
+    await updateImmediateJob(currentJobId, finalStatus, tmuxSessions, launchErrorMsg || null);
+    await loadJobsFromCLI();
     
     if (launchErrorMsg === "") {
       runnerState = "running";
