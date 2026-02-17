@@ -11,8 +11,10 @@ from typing import Optional
 from . import __version__
 from .allocations import Allocation, load_allocations, remove_allocation, save_allocations, upsert_allocation
 from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
+from .models import NodeTarget, PreflightCheck, PreflightCheckType, RemoteExecutionContext
 from .config import load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script, ssh_run
+from .executor import route_command_to_target, run_preflight_checks
 from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
 from .violations import find_violations
 from .update import UpdateError, update as update_release
@@ -880,6 +882,184 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
         return 2
 
 
+def _parse_gpu_csv(raw: str) -> list[int]:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(int(part))
+    return out
+
+
+def _preflight_results_to_jsonable(results: list) -> list[dict]:
+    out: list[dict] = []
+    for r in results:
+        out.append(
+            {
+                "check_type": getattr(r.check.check_type, "value", str(r.check.check_type)),
+                "node_alias": r.check.node_alias,
+                "passed": bool(r.passed),
+                "error_message": r.error_message,
+                "metadata": r.metadata or {},
+                "timestamp": r.timestamp,
+            }
+        )
+    return out
+
+
+def _exec_result_to_jsonable(result) -> dict:
+    return {
+        "exit_code": int(result.exit_code),
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "node_alias": result.node_alias,
+        "command": result.command,
+        "success": bool(result.success),
+    }
+
+
+def _cmd_preflight(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    ensure_state_dir(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    node = _find_node(cfg, args.node)
+    gpus = _parse_gpu_csv(args.gpus) if args.gpus is not None else None
+
+    checks: list[PreflightCheck] = []
+    if args.mode == "tmux":
+        checks.append(
+            PreflightCheck(
+                check_type=PreflightCheckType.TMUX_AVAILABLE,
+                node_alias=args.node,
+                node_config=node,
+            )
+        )
+
+    if args.command:
+        checks.append(
+            PreflightCheck(
+                check_type=PreflightCheckType.COMMAND_SYNTAX,
+                node_alias=args.node,
+                command_to_validate=str(args.command),
+                node_config=node,
+            )
+        )
+
+    if gpus is not None:
+        checks.append(
+            PreflightCheck(
+                check_type=PreflightCheckType.GPU_AVAILABILITY,
+                node_alias=args.node,
+                target_gpu_indices=gpus,
+                node_config=node,
+            )
+        )
+
+    results = asyncio.run(run_preflight_checks(checks))
+
+    if args.json:
+        print(json.dumps({"ok": all(r.passed for r in results), "results": _preflight_results_to_jsonable(results)}))
+    else:
+        for r in results:
+            status = "PASS" if r.passed else "FAIL"
+            msg = r.error_message or ""
+            print(f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip())
+
+    return 0 if all(r.passed for r in results) else 3
+
+
+def _cmd_exec(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    ensure_state_dir(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    node = _find_node(cfg, args.node)
+    gpus = _parse_gpu_csv(args.gpus)
+
+    preflight_results = []
+    if not bool(args.skip_preflight):
+        checks: list[PreflightCheck] = []
+        if args.mode == "tmux":
+            checks.append(
+                PreflightCheck(
+                    check_type=PreflightCheckType.TMUX_AVAILABLE,
+                    node_alias=args.node,
+                    node_config=node,
+                )
+            )
+
+        checks.append(
+            PreflightCheck(
+                check_type=PreflightCheckType.COMMAND_SYNTAX,
+                node_alias=args.node,
+                command_to_validate=str(args.command),
+                node_config=node,
+            )
+        )
+
+        checks.append(
+            PreflightCheck(
+                check_type=PreflightCheckType.GPU_AVAILABILITY,
+                node_alias=args.node,
+                target_gpu_indices=gpus,
+                node_config=node,
+            )
+        )
+
+        preflight_results = asyncio.run(run_preflight_checks(checks))
+        if any((not r.passed) and r.is_critical_failure() for r in preflight_results):
+            payload = {
+                "ok": False,
+                "preflight": _preflight_results_to_jsonable(preflight_results),
+                "result": None,
+            }
+            if args.json:
+                print(json.dumps(payload))
+            else:
+                for r in preflight_results:
+                    status = "PASS" if r.passed else "FAIL"
+                    msg = r.error_message or ""
+                    print(f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip())
+            return 3
+
+    target = NodeTarget(node_alias=args.node, gpu_indices=gpus, node_config=node)
+
+    session = None
+    if args.mode == "tmux":
+        session = str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
+
+    ctx = RemoteExecutionContext(
+        target=target,
+        command=str(args.command),
+        env_vars={},
+        execution_mode=str(args.mode),
+        tmux_session=session,
+        timeout_s=int(args.timeout),
+    )
+
+    result = asyncio.run(route_command_to_target(ctx))
+
+    payload = {
+        "ok": bool(result.success),
+        "preflight": _preflight_results_to_jsonable(preflight_results) if preflight_results else [],
+        "result": _exec_result_to_jsonable(result),
+    }
+
+    if args.json:
+        print(json.dumps(payload))
+    else:
+        print(json.dumps(payload, indent=2))
+
+    return 0 if result.success else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
     p.add_argument("--version", action="version", version=f"opensmi {__version__}")
@@ -981,6 +1161,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp_sc.add_argument("--timeout", default=8, type=int, help="SSH timeout seconds")
     sp_sc.add_argument("--json", action="store_true", help="Print JSON")
     sp_sc.set_defaults(func=_cmd_sudo_check)
+
+    # ── remote execution ──
+    sp_pf = sub.add_parser("preflight", help="Run remote execution preflight checks")
+    sp_pf.add_argument("node", help="Node alias")
+    sp_pf.add_argument("--gpus", default=None, help="GPU indices CSV (e.g. 0,1); omit to skip GPU check")
+    sp_pf.add_argument("--command", default=None, help="Command to syntax-check")
+    sp_pf.add_argument("--mode", default="tmux", choices=["direct", "tmux"], help="Execution mode (affects checks)")
+    sp_pf.add_argument("--json", action="store_true", help="Print JSON")
+    sp_pf.set_defaults(func=_cmd_preflight)
+
+    sp_ex = sub.add_parser("exec", help="Execute a command on a node with GPU assignment")
+    sp_ex.add_argument("node", help="Node alias")
+    sp_ex.add_argument("--gpus", required=True, help="GPU indices CSV (e.g. 0,1)")
+    sp_ex.add_argument("--command", required=True, help="Command to execute")
+    sp_ex.add_argument("--mode", default="direct", choices=["direct", "tmux"], help="Execution mode")
+    sp_ex.add_argument("--session", default=None, help="tmux session name (tmux mode only)")
+    sp_ex.add_argument("--timeout", default=300, type=int, help="Execution timeout seconds")
+    sp_ex.add_argument("--skip-preflight", action="store_true", help="Skip preflight checks")
+    sp_ex.add_argument("--json", action="store_true", help="Print JSON")
+    sp_ex.set_defaults(func=_cmd_exec)
 
     sp_up = sub.add_parser("update", help="Update opensmi (CLI and/or TUI) from GitHub Releases")
     sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seilk/opensmi)")
