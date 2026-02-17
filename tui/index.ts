@@ -749,6 +749,7 @@ async function dispatchQueuedJobs(): Promise<void> {
     return;
   }
   
+  // Get queued jobs in FIFO order (sorted by submission time)
   const queuedJobs = jobList
     .filter(j => j.status === "queued" && j.queue_mode === "queued")
     .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
@@ -757,7 +758,9 @@ async function dispatchQueuedJobs(): Promise<void> {
     return;
   }
   
-  for (const job of queuedJobs) {
+  // Process each queued job in order (FIFO)
+  for (let i = 0; i < queuedJobs.length; i++) {
+    const job = queuedJobs[i];
     const needed = job.requested_gpu_count || job.gpus.length;
     
     if (needed === 0) {
@@ -769,7 +772,7 @@ async function dispatchQueuedJobs(): Promise<void> {
       
       if (available.length < needed) {
         // Job is still waiting for GPUs - show status for first job only
-        if (queuedJobs.indexOf(job) === 0) {
+        if (i === 0) {
           const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
           setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
         }
