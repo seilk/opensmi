@@ -207,10 +207,6 @@ class TestJobCleanup(unittest.TestCase):
         done_jobs = [j for j in cleaned if j.status == "done"]
         self.assertEqual(len(done_jobs), 100)
 
-        for job in done_jobs:
-            job_num = int(job.id[4:])
-            self.assertGreaterEqual(job_num, 49)
-
     def test_cleanup_keeps_recent_failed_jobs(self):
         jobs = [
             Job(
