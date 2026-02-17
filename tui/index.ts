@@ -13,6 +13,7 @@ import {
 import { spawn } from "bun";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { tabRegistry, type Tab } from "./tabRegistry";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -73,7 +74,9 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" = "dashboard";
+let tabSwitcherOpen = false;
+let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
 let lastGpuClickAt = 0;
 let lastNodeClickKey = "";
@@ -126,6 +129,7 @@ let launchCommands: string[] = []; // Empty initially, populated when GPUs added
 let launchGpuMode: "auto" | "selected" = "auto";
 let launchManualGpus: Array<{ node: string; gpu: number }> = [];
 let launchSelectionReasoning = "";
+let launchSourceBundle: string | null = null; // Track which bundle opened the runner
 
 type RunnerState = "idle" | "queued" | "preparing" | "sent" | "running" | "failed";
 let runnerState: RunnerState = "idle";
@@ -149,7 +153,28 @@ let sudoInfoMsg = "";
 let sudoOkByNode: Record<string, boolean | null> = {};
 let sudoCheckingByNode: Record<string, boolean> = {};
 
-// UI helpers
+interface GpuBundle {
+  id: string;
+  label: string;
+  type: "allocated" | "active" | "pinned";
+  gpus: Array<{ node: string; gpu: number }>;
+  shortcut?: string;
+}
+
+interface MyGpuViewState {
+  selectedBundleIdx: number;
+  bundles: GpuBundle[];
+  expandedGpuKeys: Set<string>;
+  pinnedGpus: Array<{ node: string; gpu: number }>;
+}
+
+const myGpuViewState: MyGpuViewState = {
+  selectedBundleIdx: 0,
+  bundles: [],
+  expandedGpuKeys: new Set(),
+  pinnedGpus: [],
+};
+
 let statusMsg = "";
 let statusMsgTimeout: any = null;
 let statusUntil = 0;
@@ -803,6 +828,99 @@ function recomputeKnownUsers(): void {
   knownUsers = [...users].sort((a, b) => a.localeCompare(b));
 }
 
+function computeGpuBundles(): GpuBundle[] {
+  const bundles: GpuBundle[] = [];
+  
+  const allocatedGpus = allocations
+    .filter(a => {
+      const targets = _parseTargets(a.target);
+      return targets.includes(OPERATOR);
+    })
+    .map(a => ({ node: a.node_alias, gpu: a.gpu_index }));
+  
+  if (allocatedGpus.length > 0) {
+    bundles.push({
+      id: "allocated",
+      label: `My Allocated GPUs (${allocatedGpus.length})`,
+      type: "allocated",
+      gpus: allocatedGpus,
+      shortcut: "a",
+    });
+  }
+  
+  const activeGpuSet = new Set<string>();
+  if (snapshot) {
+    for (const node of snapshot.nodes) {
+      if (node.error) continue;
+      for (const proc of node.processes) {
+        if (proc.user === OPERATOR) {
+          const gpu = node.gpus.find(g => g.uuid === proc.gpu_uuid);
+          if (gpu) {
+            activeGpuSet.add(`${node.node_alias}:${gpu.index}`);
+          }
+        }
+      }
+    }
+  }
+  
+  const activeGpuList: Array<{ node: string; gpu: number }> = [];
+  for (const key of activeGpuSet) {
+    const [node, gpuStr] = key.split(":");
+    if (node && gpuStr) {
+      activeGpuList.push({ node, gpu: parseInt(gpuStr, 10) });
+    }
+  }
+  
+  if (activeGpuList.length > 0) {
+    bundles.push({
+      id: "active",
+      label: `My Active Processes (${activeGpuList.length})`,
+      type: "active",
+      gpus: activeGpuList,
+      shortcut: "p",
+    });
+  }
+  
+  if (myGpuViewState.pinnedGpus.length > 0) {
+    bundles.push({
+      id: "pinned",
+      label: `Pinned GPUs (${myGpuViewState.pinnedGpus.length})`,
+      type: "pinned",
+      gpus: myGpuViewState.pinnedGpus,
+      shortcut: "+",
+    });
+  }
+  
+  return bundles;
+}
+
+async function loadMyGpuViewState(): Promise<void> {
+  const stateFile = `${getStateDir()}/my_gpu_view.json`;
+  try {
+    const raw = await Bun.file(stateFile).text();
+    const data = JSON.parse(raw);
+    myGpuViewState.pinnedGpus = data.pinned_gpus || [];
+    const expandedBundles = data.expanded_bundles || [];
+    myGpuViewState.expandedGpuKeys = new Set(expandedBundles);
+  } catch {
+    myGpuViewState.pinnedGpus = [];
+    myGpuViewState.expandedGpuKeys = new Set();
+  }
+}
+
+async function saveMyGpuViewState(): Promise<void> {
+  const stateFile = `${getStateDir()}/my_gpu_view.json`;
+  const data = {
+    pinned_gpus: myGpuViewState.pinnedGpus,
+    expanded_bundles: Array.from(myGpuViewState.expandedGpuKeys),
+  };
+  try {
+    await Bun.write(stateFile, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error("Failed to save My GPU View state:", e);
+  }
+}
+
 // ── Colors ─────────────────────────────────────────────────────────
 
 const C = {
@@ -839,6 +957,66 @@ function renderToast() {
       zIndex: 10_000,
     },
     Text({ content: statusMsg, fg: C.yellow })
+  );
+}
+
+function renderTabSwitcher() {
+  if (!tabSwitcherOpen) return null;
+
+  const tabs = tabRegistry.getAllVisible();
+  if (tabs.length === 0) return null;
+
+  const maxWidth = 50;
+  const boxHeight = tabs.length + 4;
+
+  const rows: any[] = [];
+  rows.push(Text({ content: t`${bold(fg(C.blue)("Select Tab"))}` }));
+  rows.push(Text({ content: "" }));
+
+  for (let i = 0; i < tabs.length; i++) {
+    const tab = tabs[i]!;
+    const isSelected = i === tabSwitcherIdx;
+    const isActive = tab.id === tabRegistry.activeTabId;
+    const shortcutLabel = tab.shortcut ? `[${tab.shortcut.toUpperCase()}] ` : "    ";
+    const activeLabel = isActive ? " ◀ Active" : "";
+    const content = `${shortcutLabel}${tab.label}${activeLabel}`;
+    
+    rows.push(
+      Text({
+        content: isSelected ? `▸ ${content}` : `  ${content}`,
+        fg: isSelected ? C.yellow : (isActive ? C.green : C.text),
+      })
+    );
+  }
+
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: "[↑↓] Navigate  [Enter] Switch  [Shortcut] Jump  [Esc] Cancel",
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
+    {
+      position: "absolute",
+      left: "50%",
+      top: "50%",
+      width: maxWidth,
+      height: boxHeight,
+      marginLeft: -Math.floor(maxWidth / 2),
+      marginTop: -Math.floor(boxHeight / 2),
+      paddingLeft: 2,
+      paddingRight: 2,
+      paddingTop: 1,
+      paddingBottom: 1,
+      backgroundColor: C.bgAlt,
+      borderStyle: "rounded",
+      borderColor: C.blue,
+      zIndex: 20_000,
+      flexDirection: "column",
+    },
+    ...rows
   );
 }
 
@@ -1431,28 +1609,211 @@ function renderHelp() {
     { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
     Text({ content: t`${bold(fg(C.blue)("opensmi — Help"))}` }),
     Text({ content: "" }),
+    Text({ content: t`${fg(C.cyan)("Tab Navigation:")}` }),
+    Text({ content: "  ctrl+x t         Open tab switcher" }),
+    Text({ content: "  ctrl+x q         Quit application" }),
+    Text({ content: "  In tab switcher: ↑/↓ navigate, Enter switch, Esc cancel" }),
+    Text({ content: "  Quick shortcuts: [d]ashboard [g]My GPUs [h]elp [n]ode detail" }),
+    Text({ content: "" }),
     Text({ content: t`${fg(C.cyan)("Dashboard:")}` }),
-    Text({ content: "  ↑/↓ or j/k   Navigate nodes" }),
-    Text({ content: "  Enter         Node detail view" }),
-    Text({ content: "  l             Launch command (auto GPU assign)" }),
-    Text({ content: "  r             Refresh (poll all nodes)" }),
-    Text({ content: "  q / Ctrl+C    Quit" }),
+    Text({ content: "  ↑/↓ or j/k       Navigate nodes" }),
+    Text({ content: "  Enter            Node detail view" }),
+    Text({ content: "  r                Refresh (poll all nodes)" }),
+    Text({ content: "  ctrl+x ↓         Focus runner pane" }),
+    Text({ content: "  ctrl+x f         Fold/unfold runner pane" }),
     Text({ content: "" }),
     Text({ content: t`${fg(C.cyan)("Detail view:")}` }),
-    Text({ content: "  ↑/↓ or j/k        Select GPU" }),
-    Text({ content: "  a                Allocate selected GPU" }),
-    Text({ content: "  x                Clear allocation" }),
-    Text({ content: "  Shift+K          Kill violators (best-effort)" }),
-    Text({ content: "  Esc / Backspace   Back to dashboard" }),
-    Text({ content: "  r                 Refresh" }),
+    Text({ content: "  ↑/↓ or j/k       Select GPU" }),
+    Text({ content: "  a                Allocate selected GPU (admin)" }),
+    Text({ content: "  *                Allocate to everyone (admin)" }),
+    Text({ content: "  x                Clear allocation (admin)" }),
+    Text({ content: "  Shift+K          Kill violators (admin)" }),
+    Text({ content: "  Esc / Backspace  Back to dashboard" }),
+    Text({ content: "  r                Refresh" }),
+    Text({ content: "" }),
+    Text({ content: t`${fg(C.cyan)("My GPU View:")}` }),
+    Text({ content: "  ↑/↓ or j/k       Navigate GPU bundles" }),
+    Text({ content: "  [a]              Jump to allocated GPUs" }),
+    Text({ content: "  [p]              Jump to active processes" }),
+    Text({ content: "  [+]              Jump to pinned GPUs" }),
+    Text({ content: "  ctrl+x r         Run command on bundle" }),
+    Text({ content: "  r                Refresh" }),
+    Text({ content: "  Esc              Back to dashboard" }),
+    Text({ content: "" }),
+    Text({ content: t`${fg(C.cyan)("Runner Pane (when focused):")}` }),
+    Text({ content: "  Enter            Start typing mode" }),
+    Text({ content: "  ctrl+x Enter     Execute commands" }),
+    Text({ content: "  Tab              Toggle direct/tmux mode" }),
+    Text({ content: "  Shift+Tab        Toggle single/one-to-one distribution" }),
+    Text({ content: "  +/-              Increase/decrease GPU count" }),
+    Text({ content: "  g                Toggle auto/manual GPU selection" }),
+    Text({ content: "  ↑/↓              Navigate input lines (one-to-one mode)" }),
+    Text({ content: "  Esc              Exit focus" }),
     Text({ content: "" }),
     Text({ content: t`${fg(C.cyan)("Colors:")}` }),
     Text({ content: t`  ${fg(C.green)("Green")}   — Allocated user (OK)` }),
     Text({ content: t`  ${fg(C.red)("Red")}     — Violation (wrong/unallocated user)` }),
+    Text({ content: t`  ${fg(C.yellow)("Yellow")}  — Selected item` }),
+    Text({ content: t`  ${fg(C.cyan)("Cyan")}    — Available / interactive` }),
     Text({ content: t`  ${fg(C.textDim)("Gray")}    — Idle / no process` }),
-    Text({ content: "  Dashboard shows GPU load % and allocation expiry countdown when available" }),
     Text({ content: "" }),
-    Text({ content: t`${fg(C.textDim)("[Esc]")} Back` })
+    Text({ content: t`${fg(C.textDim)("[Esc]")} Back to dashboard` })
+  );
+}
+
+function renderMyGpuView() {
+  const bundles = computeGpuBundles();
+  myGpuViewState.bundles = bundles;
+  
+  if (bundles.length === 0) {
+    return Box(
+      { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+      Text({ content: t`${bold(fg(C.blue)("My GPUs"))} · Operator: ${fg(C.cyan)(OPERATOR)}`, fg: C.text }),
+      Text({ content: "" }),
+      Text({ content: "No GPUs found", fg: C.yellow }),
+      Text({ content: "" }),
+      Text({ content: "• No allocations to you", fg: C.textDim }),
+      Text({ content: "• No active processes from you", fg: C.textDim }),
+      Text({ content: "• No pinned GPUs", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "[+] Pin a GPU from dashboard (not implemented yet)", fg: C.textDim }),
+      Text({ content: "[Esc] Back to dashboard", fg: C.textDim })
+    );
+  }
+  
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)("My GPUs"))} ${fg(C.textDim)("· Operator:")} ${fg(C.cyan)(OPERATOR)}`,
+    }),
+    Text({
+      content: t`Bundles: ${bundles.length}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      fg: C.text,
+    })
+  );
+  
+  const bundleRows: any[] = [];
+  bundleRows.push(
+    Text({
+      content: t`${fg(C.cyan)("GPU Bundles")}`,
+      fg: C.cyan,
+    })
+  );
+  
+  for (let i = 0; i < bundles.length; i++) {
+    const bundle = bundles[i]!;
+    const isSelected = i === myGpuViewState.selectedBundleIdx;
+    const prefix = isSelected ? "▸ " : "  ";
+    const shortcutLabel = bundle.shortcut ? ` [${bundle.shortcut}]` : "";
+    
+    bundleRows.push(
+      Text({
+        content: `${prefix}${bundle.label}${shortcutLabel}`,
+        fg: isSelected ? C.yellow : C.text,
+      })
+    );
+  }
+  
+  bundleRows.push(Text({ content: "" }));
+  
+  const selectedBundle = bundles[myGpuViewState.selectedBundleIdx];
+  const gpuDetails: any[] = [];
+  
+  if (selectedBundle && snapshot) {
+    gpuDetails.push(
+      Text({
+        content: t`${bold(fg(C.cyan)(selectedBundle.label))}`,
+      })
+    );
+    gpuDetails.push(Text({ content: "" }));
+    
+    for (const gpuRef of selectedBundle.gpus) {
+      const node = snapshot.nodes.find(n => n.node_alias === gpuRef.node);
+      if (!node || node.error) {
+        gpuDetails.push(
+          Text({
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} — ERROR`,
+            fg: C.red,
+          })
+        );
+        continue;
+      }
+      
+      const gpu = node.gpus.find(g => g.index === gpuRef.gpu);
+      if (!gpu) {
+        gpuDetails.push(
+          Text({
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} — NOT FOUND`,
+            fg: C.red,
+          })
+        );
+        continue;
+      }
+      
+      const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
+      const alloc = getAllocation(gpuRef.node, gpuRef.gpu);
+      const allocStr = alloc ? alloc.target : "(none)";
+      const utilVal = gpuUtilPct(gpu);
+      const utilStr = utilVal !== null ? `${utilVal}%` : "?";
+      const activityStr = gpuActivityStatus(node, gpuRef.gpu, gpu.uuid);
+      
+      gpuDetails.push(
+        Text({
+          content: `  ${gpuRef.node}:GPU${gpuRef.gpu}  |  ${gpu.name}  |  ${gpuMemStr(gpu.memory_used_mib)}/${gpuMemStr(gpu.memory_total_mib)}  |  Load ${utilStr}  |  ${activityStr}`,
+          fg: procs.length > 0 ? C.green : C.textDim,
+        })
+      );
+      
+      for (const p of procs) {
+        const mem = p.used_memory_mib !== null ? `${p.used_memory_mib} MiB` : "?";
+        const rt = runtimeStr(p.runtime_s);
+        gpuDetails.push(
+          Text({
+            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rt.padStart(6)}  ${p.process_name}`,
+            fg: C.text,
+          })
+        );
+      }
+    }
+  }
+  
+  const footer = Box(
+    {
+      width: "100%",
+      flexDirection: "column",
+      paddingLeft: 1,
+      paddingTop: 1,
+    },
+    Text({
+      content: runnerInputTyping
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
+        : (runnerFocused
+            ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`
+            : t`[↑↓] Navigate Bundles  [ctrl+x r] Run Command  [ctrl+x ↓] Runner  [ctrl+x t] Switch Tab  [Esc] Dashboard`),
+      fg: C.textDim,
+    }),
+    Text({
+      content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
+    })
+  );
+  
+  return Box(
+    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
+      header,
+      ...bundleRows,
+      ...gpuDetails,
+      footer
+    ),
+    renderRunnerPane()
   );
 }
 
@@ -1731,6 +2092,225 @@ function renderKill() {
       backgroundColor: C.bg,
     },
     modal
+  );
+}
+
+function renderGpuAssignmentPanel() {
+  if (!snapshot) {
+    return Box(
+      { flexDirection: "column", width: "100%", gap: 0 },
+      Text({ content: "GPU Assignment", fg: C.textDim }),
+      Text({ content: "  No snapshot available", fg: C.red })
+    );
+  }
+  
+  let modeText = launchGpuMode === "auto" 
+    ? "(Auto-ranked)              [click to exclude]  [g] manual"
+    : "(Manual selection)         [click to toggle]  [g] auto";
+  
+  if (launchSourceBundle) {
+    modeText = `(From bundle: ${launchSourceBundle})         [g] auto`;
+  }
+  
+  const headerNode = Text({ 
+    content: `GPU Assignment  ${modeText}`, 
+    fg: C.textDim 
+  });
+  
+  const gpuRows: BoxRenderable[] = [];
+  
+  if (launchSelectedGpus.length === 0) {
+    gpuRows.push(
+      Text({ 
+        content: "  No GPUs selected. Press [+] to add GPUs.", 
+        fg: C.yellow 
+      })
+    );
+  }
+  
+  const gpuInfoMap = new Map<string, { gpu: GPUInfo; node: NodeSnapshot; allocated: boolean; allocTarget: string }>();
+  for (const node of snapshot.nodes) {
+    for (const gpu of node.gpus) {
+      const key = `${node.node_alias}:${gpu.index}`;
+      const alloc = allocations.find(a => a.node_alias === node.node_alias && a.gpu_index === gpu.index);
+      gpuInfoMap.set(key, {
+        gpu,
+        node,
+        allocated: !!alloc,
+        allocTarget: alloc?.target || ""
+      });
+    }
+  }
+  
+  if (launchSelectedGpus.length > 0) {
+    
+    for (let i = 0; i < launchSelectedGpus.length; i++) {
+      const selectedGpu = launchSelectedGpus[i]!;
+      const key = `${selectedGpu.node}:${selectedGpu.gpu}`;
+      const gpuData = gpuInfoMap.get(key);
+      
+      if (!gpuData) {
+        gpuRows.push(
+          Text({ 
+            content: `  [${i + 1}] ● ${key}  (GPU not found in snapshot)`, 
+            fg: C.red 
+          })
+        );
+        continue;
+      }
+      
+      const { gpu, node, allocated, allocTarget } = gpuData;
+      
+      // Calculate GPU info
+      const memFree = gpu.memory_free_mib ?? 0;
+      const memTotal = gpu.memory_total_mib ?? 0;
+      const memFreeG = Math.floor(memFree / 1024);
+      const util = gpu.utilization_gpu_percent ?? gpu.utilization_gpu ?? 0;
+      
+      // Calculate idle time
+      const gpuIdleKey = `${node.node_alias}:${gpu.uuid}`;
+      const idleStartTime = gpuIdleStart[gpuIdleKey] || Date.now();
+      const idleMs = Date.now() - idleStartTime;
+      const idleHours = Math.floor(idleMs / (1000 * 60 * 60));
+      const idleMinutes = Math.floor((idleMs % (1000 * 60 * 60)) / (1000 * 60));
+      const idleDisplay = idleHours > 0 ? `${idleHours}h` : `${idleMinutes}m`;
+      
+      // Count processes on this GPU
+      const procCount = node.processes.filter(p => p.gpu_uuid === gpu.uuid).length;
+      
+      // Build status indicators
+      const isSelected = true; // All GPUs in launchSelectedGpus are selected
+      const selectionIndicator = isSelected ? "●" : "○";
+      
+      // Build reasoning text (why this GPU was selected)
+      let reasoning = "";
+      let reasoningColor = C.green; // Default good state
+      
+      if (launchGpuMode === "auto") {
+        if (procCount === 0 && util < 10) {
+          reasoning = "✓ idle, unused";
+          reasoningColor = C.green;
+        } else if (procCount === 0) {
+          reasoning = "✓ no processes";
+          reasoningColor = C.green;
+        } else if (procCount < 3) {
+          reasoning = "✓ few processes";
+          reasoningColor = C.yellow;
+        } else {
+          reasoning = "⚠ busy";
+          reasoningColor = C.red;
+        }
+      }
+      
+      // Allocation warning
+      let allocWarning = "";
+      let hasAllocConflict = false;
+      if (allocated && allocTarget !== OPERATOR && !allocTarget.split(",").includes(OPERATOR)) {
+        allocWarning = `  ✗ allocated to ${allocTarget}`;
+        reasoning = `${reasoning}  ${allocWarning}`;
+        hasAllocConflict = true;
+        reasoningColor = C.red; // Override with red for allocation conflict
+      }
+      
+      // Build line content
+      const linePrefix = launchDistMode === "one-to-one" 
+        ? `Command ${i + 1} → ` 
+        : `  `;
+      
+      const lineContent = `${linePrefix}[${i + 1}] ${selectionIndicator} ${node.node_alias}:GPU${gpu.index}  [${allocTarget || OPERATOR}]  ${memFreeG}G free  idle ${idleDisplay}  ${reasoning}`;
+      
+      // Color logic: red for conflicts, yellow for warnings, green for good, textDim for neutral
+      const lineFg = hasAllocConflict ? C.red : (procCount > 2 ? C.yellow : (procCount === 0 ? C.green : C.textDim));
+      
+      // Create clickable GPU row
+      const gpuRow = Box(
+        {
+          width: "100%",
+          height: 1,
+          position: "relative",
+        },
+        Text({ content: lineContent, fg: lineFg }),
+        Box({
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 1,
+          onMouseDown: (e: any) => {
+            runnerMouseDownTime = Date.now();
+            runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+          },
+          onMouseUp: (e: any) => {
+            const elapsed = Date.now() - runnerMouseDownTime;
+            const moved = runnerMouseDownPos && (
+              Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+              Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+            );
+            
+            if (moved || elapsed > 300) {
+              return; // Was a drag, don't trigger click
+            }
+            
+            // Handle GPU click based on mode
+            if (launchGpuMode === "auto") {
+              // In auto mode, clicking excludes GPU (not implemented yet - would need exclusion list)
+              setStatus("Auto mode: GPU exclusion not yet implemented. Use [g] for manual mode.");
+            } else {
+              // In selected mode, clicking removes GPU
+              const idx = launchManualGpus.findIndex(
+                g => g.node === selectedGpu.node && g.gpu === selectedGpu.gpu
+              );
+              if (idx !== -1) {
+                launchManualGpus.splice(idx, 1);
+                launchNumGpus = launchManualGpus.length;
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                setStatus(`Removed ${key} from selection`);
+              }
+            }
+            requestRender?.();
+          },
+        })
+      );
+      
+      gpuRows.push(gpuRow);
+    }
+  }
+  
+  const numSelected = launchSelectedGpus.length;
+  const numWithConflicts = launchSelectedGpus.filter((gpu, i) => {
+    const key = `${gpu.node}:${gpu.gpu}`;
+    const gpuData = gpuInfoMap.get(key);
+    if (!gpuData) return false;
+    const { allocated, allocTarget } = gpuData;
+    return allocated && allocTarget !== OPERATOR && !allocTarget.split(",").includes(OPERATOR);
+  }).length;
+  
+  const summaryText = numSelected === 0
+    ? Text({ content: `  Selected: 0 GPUs`, fg: C.textDim })
+    : (numWithConflicts > 0
+      ? Text({ content: `  Selected: ${numSelected} GPUs  (${numWithConflicts} with allocation conflicts)`, fg: C.red })
+      : Text({ content: `  Selected: ${numSelected} GPUs  ✓ All available`, fg: C.green }));
+  
+  const helpText = launchGpuMode === "auto"
+    ? Text({ content: "  [click GPU] toggle  [+/-] adjust count  [g] switch to manual", fg: C.textDim })
+    : Text({ content: "  [click GPU] remove  [+/-] adjust  [g] switch to auto", fg: C.textDim });
+  
+  return Box(
+    {
+      flexDirection: "column",
+      width: "100%",
+      gap: 0,
+      borderStyle: "single",
+      borderColor: C.border,
+      padding: 0,
+      paddingLeft: 1,
+      paddingRight: 1,
+    },
+    headerNode,
+    ...gpuRows,
+    summaryText,
+    helpText
   );
 }
 
@@ -2023,13 +2603,17 @@ function renderRunnerPane() {
     }
   }
 
+  const gpuAssignmentPanel = renderGpuAssignmentPanel();
+  
   const contentNodes = [
     headerBox,
     modeInfo,
     gpuText,
     Text({ content: " " }),
     ...commandNodes,
-    ...tmuxNodes
+    ...tmuxNodes,
+    Text({ content: " " }),
+    gpuAssignmentPanel
   ];
 
   const errorBox = errorText ? Box(
@@ -2525,6 +3109,21 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
 
 // ── Main ───────────────────────────────────────────────────────────
 
+/**
+ * Navigate to a tab using the tab registry.
+ * This ensures lifecycle hooks execute and state stays synchronized.
+ * 
+ * @param tabId - The tab ID to navigate to
+ * @returns true if navigation succeeded, false otherwise
+ */
+async function navigateToTab(tabId: string): Promise<boolean> {
+  const switched = await tabRegistry.switchTo(tabId);
+  if (switched) {
+    screen = tabRegistry.activeTabId as typeof screen;
+  }
+  return switched;
+}
+
 const SMOKE_TEST = process.argv.includes("--smoke-test") || process.env.OPENSMI_SMOKE_TEST === "1";
 
 async function main() {
@@ -2647,6 +3246,9 @@ async function main() {
       case "help":
         newNode = renderHelp();
         break;
+      case "my-gpu-view":
+        newNode = renderMyGpuView();
+        break;
       case "alloc":
         newNode = renderAlloc();
         break;
@@ -2658,14 +3260,15 @@ async function main() {
         break;
     }
 
-    // Wrap the screen in a relative container so we can overlay toast UI.
     const toast = renderToast();
     const loading = renderLoadingBadge();
+    const tabSwitcher = renderTabSwitcher();
     const root = Box(
       { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
       newNode,
       ...(toast ? [toast] : []),
-      ...(loading ? [loading] : [])
+      ...(loading ? [loading] : []),
+      ...(tabSwitcher ? [tabSwitcher] : [])
     );
     container.add(root);
 
@@ -2693,7 +3296,42 @@ async function main() {
   }
   requestRender = render;
 
-  // Render immediately so the user sees "Loading..." during the first poll.
+  tabRegistry.register({
+    id: "dashboard",
+    label: "Dashboard",
+    shortcut: "d",
+    render: renderDashboard,
+    onEnter: async () => {
+      await Promise.all([pollCluster(), loadAllocations()]);
+    },
+  });
+
+  tabRegistry.register({
+    id: "detail",
+    label: "Node Detail",
+    shortcut: "n",
+    render: renderDetail,
+    hidden: true,
+  });
+
+  tabRegistry.register({
+    id: "help",
+    label: "Help",
+    shortcut: "h",
+    render: renderHelp,
+  });
+
+  tabRegistry.register({
+    id: "my-gpu-view",
+    label: "My GPUs",
+    shortcut: "g",
+    render: renderMyGpuView,
+    onEnter: async () => {
+      await loadMyGpuViewState();
+      await Promise.all([pollCluster(), loadAllocations()]);
+    },
+  });
+
   render();
 
   // Initial load
@@ -2716,8 +3354,59 @@ async function main() {
 
   // Key handling
   renderer.keyInput.on("keypress", async (key: KeyEvent) => {
-    if (screen === "dashboard") {
-      // === PREFIX KEY SYSTEM (highest priority for global shortcuts) ===
+    if (tabSwitcherOpen) {
+      if (key.name === "escape") {
+        tabSwitcherOpen = false;
+        render();
+        return;
+      }
+      
+      if (key.name === "return") {
+        const tabs = tabRegistry.getAllVisible();
+        const selectedTab = tabs[tabSwitcherIdx];
+        if (selectedTab) {
+          const switched = await tabRegistry.switchTo(selectedTab.id);
+          if (switched) {
+            screen = selectedTab.id as typeof screen;
+          }
+          tabSwitcherOpen = false;
+          render();
+        }
+        return;
+      }
+      
+      if (key.name === "up" || key.name === "k") {
+        const tabs = tabRegistry.getAllVisible();
+        tabSwitcherIdx = (tabSwitcherIdx - 1 + tabs.length) % tabs.length;
+        render();
+        return;
+      }
+      
+      if (key.name === "down" || key.name === "j") {
+        const tabs = tabRegistry.getAllVisible();
+        tabSwitcherIdx = (tabSwitcherIdx + 1) % tabs.length;
+        render();
+        return;
+      }
+      
+      if (key.name.length === 1) {
+        const tabs = tabRegistry.getAllVisible();
+        const matchedTab = tabs.find(t => t.shortcut === key.name);
+        if (matchedTab) {
+          const switched = await tabRegistry.switchTo(matchedTab.id);
+          if (switched) {
+            screen = matchedTab.id as typeof screen;
+          }
+          tabSwitcherOpen = false;
+          render();
+        }
+        return;
+      }
+      
+      return;
+    }
+    
+    if (screen === "dashboard" || screen === "my-gpu-view") {
       if (key.name === "x" && key.ctrl) {
         prefixKeyPressed = true;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
@@ -2752,10 +3441,56 @@ async function main() {
       }
       
       if (prefixKeyPressed && key.name === "f") {
-        // ctrl+x f: fold/unfold
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         runnerPaneFolded = !runnerPaneFolded;
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "t") {
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        
+        tabSwitcherOpen = true;
+        tabSwitcherIdx = tabRegistry.getAllVisible().findIndex(t => t.id === tabRegistry.activeTabId);
+        if (tabSwitcherIdx < 0) tabSwitcherIdx = 0;
+        
+        render();
+        return;
+      }
+      
+      if (prefixKeyPressed && key.name === "r" && screen === "my-gpu-view") {
+        prefixKeyPressed = false;
+        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+        
+        const selectedBundle = myGpuViewState.bundles[myGpuViewState.selectedBundleIdx];
+        if (selectedBundle && selectedBundle.gpus.length > 0) {
+          launchGpuMode = "selected";
+          launchManualGpus = [...selectedBundle.gpus];
+          launchNumGpus = selectedBundle.gpus.length;
+          launchSelectedGpus = [...selectedBundle.gpus];
+          launchSourceBundle = selectedBundle.label;
+          
+          if (launchDistMode === "one-to-one") {
+            launchCommands = [];
+            for (let i = 0; i < launchNumGpus; i++) {
+              const gpu = launchSelectedGpus[i];
+              launchCommands.push(getGpuCommandPlaceholder(gpu));
+            }
+          }
+          
+          runnerPaneFolded = false;
+          runnerFocused = true;
+          runnerInputBuffer = launchCommand;
+          runnerFocusedInputIdx = 0;
+          runnerInputTyping = false;
+          
+          setStatus(`Runner opened with ${launchNumGpus} GPU(s) from ${selectedBundle.label}`, 2000);
+        } else {
+          setStatus("No GPUs in selected bundle");
+        }
+        
         render();
         return;
       }
@@ -3079,7 +3814,22 @@ async function main() {
           return;
         }
         
-        // GPU mode toggle (g key) removed - simplified to: + = auto, click = manual
+        if (key.name === "g" && !runnerInputTyping) {
+          if (launchGpuMode === "auto") {
+            launchGpuMode = "selected";
+            launchManualGpus = [...launchSelectedGpus];
+            launchSourceBundle = null;
+            setStatus("GPU mode: Manual selection (click GPUs in panel or dashboard)");
+          } else {
+            launchGpuMode = "auto";
+            launchManualGpus = [];
+            launchSourceBundle = null;
+            await refreshLaunchGpuSelection();
+            setStatus("GPU mode: Auto-ranked selection");
+          }
+          render();
+          return;
+        }
         
         // Detect typing when any printable key is pressed
         if (key.sequence && key.sequence.length === 1) {
@@ -3101,8 +3851,7 @@ async function main() {
           render();
         }
       } else if (key.name === "return") {
-        // Navigate to detail view
-        screen = "detail";
+        await navigateToTab("detail");
         const node = snapshot?.nodes[selectedNodeIdx];
         selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
         if (node) void checkSudoForNode(node.node_alias);
@@ -3111,7 +3860,7 @@ async function main() {
         await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
         render();
       } else if (key.name === "?" || key.name === "h") {
-        screen = "help";
+        await navigateToTab("help");
         render();
       }
       // [l] Launch modal disabled — pane replaces full-screen modal
@@ -3130,7 +3879,47 @@ async function main() {
       //   render();
       // }
       
-      // (ctrl+x q handler moved to top of dashboard screen)
+      if (screen === "my-gpu-view") {
+        if (key.name === "escape" || key.name === "backspace") {
+          await navigateToTab("dashboard");
+          render();
+          return;
+        }
+        
+        if (key.name === "up" || key.name === "k") {
+          const bundles = myGpuViewState.bundles;
+          if (bundles.length > 0) {
+            myGpuViewState.selectedBundleIdx = (myGpuViewState.selectedBundleIdx - 1 + bundles.length) % bundles.length;
+            render();
+          }
+          return;
+        }
+        
+        if (key.name === "down" || key.name === "j") {
+          const bundles = myGpuViewState.bundles;
+          if (bundles.length > 0) {
+            myGpuViewState.selectedBundleIdx = (myGpuViewState.selectedBundleIdx + 1) % bundles.length;
+            render();
+          }
+          return;
+        }
+        
+        if (key.name === "r") {
+          await Promise.all([pollCluster(), loadAllocations()]);
+          render();
+          return;
+        }
+        
+        if (key.name.length === 1) {
+          const bundles = myGpuViewState.bundles;
+          const matchedIdx = bundles.findIndex(b => b.shortcut === key.name);
+          if (matchedIdx >= 0) {
+            myGpuViewState.selectedBundleIdx = matchedIdx;
+            render();
+          }
+          return;
+        }
+      }
     } else if (screen === "detail") {
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
         if (!snapshot) return;
@@ -3229,7 +4018,7 @@ async function main() {
         screen = "kill";
         render();
       } else if (key.name === "escape" || key.name === "backspace") {
-        screen = "dashboard";
+        await navigateToTab("dashboard");
         render();
       } else if (key.name === "r") {
         await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
@@ -3243,7 +4032,7 @@ async function main() {
       // }
     } else if (screen === "kill") {
       if (key.name === "escape") {
-        screen = "detail";
+        await navigateToTab("detail");
         killCtx = null;
         killErrorMsg = "";
         killOutput = "";
@@ -3269,24 +4058,22 @@ async function main() {
         killInProgress = false;
         render();
 
-        // Auto-return to detail after 2s
         setTimeout(async () => {
           if (screen === "kill") {
             killCtx = null;
             killErrorMsg = "";
             killOutput = "";
-            screen = "detail";
+            await navigateToTab("detail");
             await Promise.all([pollCluster(), loadAllocations()]);
             render();
           }
         }, 2000);
       }
     } else if (screen === "alloc") {
-      // IMPORTANT: don't bind Backspace here — it must delete characters in the Input.
       if (key.name === "escape") {
         key.preventDefault();
         key.stopPropagation();
-        screen = "detail";
+        await navigateToTab("detail");
         allocCtx = null;
         allocErrorMsg = "";
         allocUserListFocused = false;
@@ -3408,7 +4195,7 @@ async function main() {
           allocCtx = null;
           allocErrorMsg = "";
           await Promise.all([pollCluster(), loadAllocations()]);
-          screen = "detail";
+          await navigateToTab("detail");
           render();
         } catch (e: any) {
           allocErrorMsg = e?.message || String(e);
@@ -3430,12 +4217,12 @@ async function main() {
         key.name === "?" ||
         key.name === "q"
       ) {
-        screen = "dashboard";
+        await navigateToTab("dashboard");
         render();
       }
     } else if (screen === "launch") {
       if (key.name === "escape") {
-        screen = "dashboard";
+        await navigateToTab("dashboard");
         render();
       } else if (key.name === "tab" && !key.shift) {
         key.preventDefault();
