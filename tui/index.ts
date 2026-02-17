@@ -598,6 +598,152 @@ async function loadJobsFromCLI(): Promise<void> {
   }
 }
 
+async function findAvailableGpus(count: number): Promise<Array<{ node: string; gpu: number }>> {
+  /**
+   * Find available idle GPUs using the existing rank_gpus logic.
+   * 
+   * "Available" means:
+   *   - No active processes on the GPU
+   *   - GPU utilization is 0%
+   *   - Not already reserved by another queued job
+   * 
+   * Returns: Top N available GPUs sorted by priority (rank_gpus order)
+   */
+  if (!snapshot || count <= 0) {
+    return [];
+  }
+  
+  try {
+    // Write snapshot and allocations to temp files
+    const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(snapshot));
+    
+    const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
+    await Bun.write(allocFile, JSON.stringify(allocations));
+    
+    // Get GPUs reserved by queued jobs
+    const queuedJobs = jobList.filter(j => j.status === "queued");
+    const reservedGpuKeys = new Set<string>();
+    for (const job of queuedJobs) {
+      for (const [node, gpu_idx] of job.gpus) {
+        reservedGpuKeys.add(`${node}:${gpu_idx}`);
+      }
+    }
+    const reservedGpusJson = JSON.stringify(Array.from(reservedGpuKeys));
+    
+    const findScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.gpu_ranker import rank_gpus
+from opensmi.launch_history import load_history
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    snap_data = json.loads(f.read())
+
+class SimpleGPU:
+    def __init__(self, d):
+        self.index = d['index']
+        self.uuid = d['uuid']
+        self.name = d['name']
+        self.memory_total_mib = d.get('memory_total_mib')
+        self.memory_used_mib = d.get('memory_used_mib')
+        self.memory_free_mib = d.get('memory_free_mib')
+        self.utilization_gpu_percent = d.get('utilization_gpu_percent')
+        self.temperature_c = d.get('temperature_c')
+        self.power_draw_w = d.get('power_draw_w')
+
+class SimpleProc:
+    def __init__(self, d):
+        self.gpu_uuid = d['gpu_uuid']
+        self.pid = d['pid']
+        self.process_name = d['process_name']
+        self.used_memory_mib = d.get('used_memory_mib')
+        self.user = d.get('user', 'unknown')
+        self.runtime_s = d.get('runtime_s')
+
+class SimpleNode:
+    def __init__(self, d):
+        self.node_alias = d['node_alias']
+        self.address = d['address']
+        self.hostname = d.get('hostname')
+        self.os = d.get('os')
+        self.timestamp = d.get('timestamp')
+        self.gpus = [SimpleGPU(g) for g in d.get('gpus', [])]
+        self.processes = [SimpleProc(p) for p in d.get('processes', [])]
+        self.error = d.get('error')
+
+class SimpleSnap:
+    def __init__(self, d):
+        self.cluster_name = d['cluster_name']
+        self.timestamp = d['timestamp']
+        self.nodes = [SimpleNode(n) for n in d['nodes']]
+
+snap = SimpleSnap(snap_data)
+state_dir = get_state_dir()
+history = load_history(state_dir)
+
+with open("${allocFile}", "r") as f:
+    alloc_data = json.loads(f.read())
+
+current_user = "${OPERATOR}"
+reserved = set(${reservedGpusJson})
+
+# Rank all GPUs
+ranked = rank_gpus(snap, history, alloc_data, current_user)
+
+# Filter for idle GPUs not reserved by queued jobs
+available = []
+for node_alias, gpu_idx, gpu_info in ranked:
+    gpu_key = f"{node_alias}:{gpu_idx}"
+    if gpu_key in reserved:
+        continue
+    
+    # Check if GPU is idle (no processes, 0% utilization)
+    node = next((n for n in snap.nodes if n.node_alias == node_alias), None)
+    if not node:
+        continue
+    
+    gpu_uuid = gpu_info.uuid
+    has_processes = any(p.gpu_uuid == gpu_uuid for p in node.processes)
+    utilization = gpu_info.utilization_gpu_percent or 0
+    
+    if not has_processes and utilization == 0:
+        available.append({"node": node_alias, "gpu": gpu_idx})
+        if len(available) >= ${count}:
+            break
+
+print(json.dumps(available))
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", findScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    
+    // Cleanup temp files
+    try {
+      await Bun.$`rm -f ${tmpFile} ${allocFile}`;
+    } catch {}
+    
+    if (exitCode !== 0) {
+      console.error(`findAvailableGpus failed: ${stderr}`);
+      return [];
+    }
+    
+    return JSON.parse(stdout.trim());
+  } catch (e) {
+    console.error("findAvailableGpus error:", e);
+    return [];
+  }
+}
+
 async function cancelJobAction(job: Job): Promise<void> {
   try {
     setStatus(`Cancelling job ${job.id}...`);
