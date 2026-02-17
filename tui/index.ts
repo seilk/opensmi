@@ -899,17 +899,22 @@ async function watchRunningJobs(): Promise<void> {
     return;
   }
   
+  // Check each running job's tmux session health
   for (const job of runningJobs) {
     try {
       const alive = await checkJobAlive(job);
       
       if (!alive) {
-        // Tmux session terminated
+        // Tmux session terminated - determine restart behavior based on policy
+        // restart_policy="on-failure": restart up to max_retries (default 3)
+        // restart_policy="always": restart indefinitely (no limit)
+        // restart_policy="never": mark as failed immediately
         const shouldRestart = 
           (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
           (job.restart_policy === "always");
         
         if (shouldRestart) {
+          // Re-queue for auto-dispatch
           job.status = "queued";
           job.retry_count++;
           job.started_at = null;
@@ -922,6 +927,7 @@ async function watchRunningJobs(): Promise<void> {
           const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
           setStatus(`Job ${job.id} died, re-queuing ${retryInfo} - ${cmdPreview.slice(0, 30)}...`, 3000);
         } else {
+          // Mark as failed (max retries exceeded or restart_policy="never")
           job.status = "failed";
           job.finished_at = new Date().toISOString();
           job.error = job.error || "tmux session terminated unexpectedly";
