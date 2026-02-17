@@ -188,5 +188,154 @@ class TestJobRetry(unittest.TestCase):
         self.assertEqual(retried.commands, original.commands)
 
 
+class TestJobCleanup(unittest.TestCase):
+    def test_cleanup_keeps_recent_done_jobs(self):
+        jobs = [
+            Job(
+                id=f"done{i:03d}",
+                command=f"python test{i}.py",
+                user="alice",
+                status="done",
+                submitted_at=f"2026-02-18T00:{i:02d}:00Z",
+                finished_at=f"2026-02-18T00:{i:02d}:30Z",
+            )
+            for i in range(150)
+        ]
+
+        cleaned = cleanup_old_jobs(jobs, max_done=100, max_failed=50)
+
+        done_jobs = [j for j in cleaned if j.status == "done"]
+        self.assertEqual(len(done_jobs), 100)
+
+        for job in done_jobs:
+            job_num = int(job.id[4:])
+            self.assertGreaterEqual(job_num, 49)
+
+    def test_cleanup_keeps_recent_failed_jobs(self):
+        jobs = [
+            Job(
+                id=f"fail{i:03d}",
+                command=f"python test{i}.py",
+                user="alice",
+                status="failed",
+                submitted_at=f"2026-02-18T00:{i:02d}:00Z",
+                finished_at=f"2026-02-18T00:{i:02d}:30Z",
+            )
+            for i in range(80)
+        ]
+
+        cleaned = cleanup_old_jobs(jobs, max_done=100, max_failed=50)
+
+        failed_jobs = [j for j in cleaned if j.status == "failed"]
+        self.assertEqual(len(failed_jobs), 50)
+
+        for job in failed_jobs:
+            job_num = int(job.id[4:])
+            self.assertGreaterEqual(job_num, 30)
+
+    def test_cleanup_preserves_running_and_queued_jobs(self):
+        jobs = [
+            Job(
+                id="queued1",
+                command="python test1.py",
+                user="alice",
+                status="queued",
+                submitted_at="2026-02-18T00:00:00Z",
+            ),
+            Job(
+                id="running1",
+                command="python test2.py",
+                user="bob",
+                status="running",
+                submitted_at="2026-02-18T00:01:00Z",
+                started_at="2026-02-18T00:01:10Z",
+            ),
+        ]
+
+        for i in range(200):
+            jobs.append(
+                Job(
+                    id=f"done{i:03d}",
+                    command=f"python test{i}.py",
+                    user="alice",
+                    status="done",
+                    submitted_at=f"2026-02-18T00:{i % 60:02d}:00Z",
+                    finished_at=f"2026-02-18T00:{i % 60:02d}:30Z",
+                )
+            )
+
+        cleaned = cleanup_old_jobs(jobs, max_done=100, max_failed=50)
+
+        queued = [j for j in cleaned if j.status == "queued"]
+        running = [j for j in cleaned if j.status == "running"]
+        done = [j for j in cleaned if j.status == "done"]
+
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(len(running), 1)
+        self.assertEqual(len(done), 100)
+
+        self.assertIn("queued1", [j.id for j in cleaned])
+        self.assertIn("running1", [j.id for j in cleaned])
+
+
+class TestFileLocking(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_concurrent_writes_dont_corrupt(self):
+        initial_job = Job(
+            id="initial1",
+            command="python init.py",
+            user="system",
+            status="done",
+            submitted_at="2026-02-18T00:00:00Z",
+        )
+        save_jobs(self.tmpdir, [initial_job])
+
+        results = []
+        errors = []
+
+        def writer_thread(thread_id: int):
+            try:
+                for i in range(10):
+                    jobs = load_jobs(self.tmpdir)
+                    new_job = Job(
+                        id=f"t{thread_id:02d}_{i:03d}",
+                        command=f"python thread{thread_id}_job{i}.py",
+                        user=f"user{thread_id}",
+                        status="queued",
+                        submitted_at=f"2026-02-18T{thread_id:02d}:{i:02d}:00Z",
+                    )
+                    jobs.append(new_job)
+                    save_jobs(self.tmpdir, jobs)
+                    time.sleep(0.001)
+                results.append(thread_id)
+            except Exception as e:
+                errors.append((thread_id, str(e)))
+
+        threads = [threading.Thread(target=writer_thread, args=(i,)) for i in range(5)]
+
+        for t in threads:
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(errors), 0, f"Errors occurred: {errors}")
+
+        self.assertEqual(len(results), 5)
+
+        final_jobs = load_jobs(self.tmpdir)
+
+        self.assertGreater(len(final_jobs), 0)
+
+        self.assertIn("initial1", [j.id for j in final_jobs])
+
+
 if __name__ == "__main__":
     unittest.main()
