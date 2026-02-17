@@ -9,16 +9,48 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from .allocations import Allocation, load_allocations, remove_allocation, save_allocations, upsert_allocation
+from .allocations import (
+    Allocation,
+    load_allocations,
+    remove_allocation,
+    save_allocations,
+    upsert_allocation,
+)
 from .collector import fetch_users, poll_cluster, snapshot_to_jsonable
-from .models import NodeTarget, PreflightCheck, PreflightCheckType, RemoteExecutionContext
+from .models import (
+    NodeTarget,
+    PreflightCheck,
+    PreflightCheckType,
+    RemoteExecutionContext,
+)
 from .config import load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script, ssh_run
-from .executor import inject_cuda_visible_devices, route_command_to_target, run_preflight_checks
-from .state import ensure_state_dir, get_state_dir, latest_snapshot_path, resolve_config_path
+from .executor import (
+    inject_cuda_visible_devices,
+    route_command_to_target,
+    run_preflight_checks,
+)
+from .state import (
+    ensure_state_dir,
+    get_state_dir,
+    latest_snapshot_path,
+    resolve_config_path,
+)
 from .violations import find_violations
 from .update import UpdateError, update as update_release
 from .uninstall import UninstallError, run_uninstall
+from .jobs import (
+    Job,
+    cancel_job,
+    check_job_alive,
+    get_job,
+    load_jobs,
+    retry_job,
+    save_jobs,
+    upsert_job,
+)
+from datetime import datetime, timezone
+import time
 
 
 def _current_operator() -> str:
@@ -66,7 +98,9 @@ def _find_node(cfg, alias: str):
     raise ValueError(f"Unknown node alias: {alias}")
 
 
-def _check_remote_sudo_group(cfg, node_alias: str, *, timeout_s: int = 8) -> tuple[bool, list[str]]:
+def _check_remote_sudo_group(
+    cfg, node_alias: str, *, timeout_s: int = 8
+) -> tuple[bool, list[str]]:
     """Return (ok, groups) for the SSH user on that node."""
     node = _find_node(cfg, node_alias)
 
@@ -80,7 +114,9 @@ def _check_remote_sudo_group(cfg, node_alias: str, *, timeout_s: int = 8) -> tup
     return ok, groups
 
 
-def _require_admin(cfg, action: str, *, node_aliases: Optional[list[str]] = None) -> None:
+def _require_admin(
+    cfg, action: str, *, node_aliases: Optional[list[str]] = None
+) -> None:
     """Require admin.
 
     Policy:
@@ -154,7 +190,10 @@ def _cmd_onboard(args: argparse.Namespace) -> int:
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
 
     if cfg_path.exists() and not bool(args.force):
-        print(f"Config already exists: {cfg_path} (use --force to overwrite)", file=sys.stderr)
+        print(
+            f"Config already exists: {cfg_path} (use --force to overwrite)",
+            file=sys.stderr,
+        )
         return 2
 
     if args.from_ssh_config:
@@ -195,7 +234,10 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         default_alias = f"GPU-{idx:02d}"
 
         while True:
-            alias = input(f"  Node #{idx} alias [{default_alias}]: ").strip() or default_alias
+            alias = (
+                input(f"  Node #{idx} alias [{default_alias}]: ").strip()
+                or default_alias
+            )
             address = input(f"  Node #{idx} address (IP or hostname): ").strip()
             if not address:
                 print("  Address required. Try again.")
@@ -208,7 +250,9 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         print("No nodes added. Aborting.")
         return 1
 
-    admin = input(f"\nMaster admin username [{nodes[0].get('user', 'admin')}]: ").strip() or nodes[0].get("user", "admin")
+    admin = input(
+        f"\nMaster admin username [{nodes[0].get('user', 'admin')}]: "
+    ).strip() or nodes[0].get("user", "admin")
 
     data = {
         "cluster_name": cluster_name,
@@ -222,7 +266,9 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         },
     }
 
-    cfg_path.write_text(_json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    cfg_path.write_text(
+        _json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
     print(f"\n✅ Config written: {cfg_path}")
     print(f"Next steps:")
     print(f"  opensmi poll            # verify connectivity")
@@ -314,7 +360,9 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
         },
     }
 
-    cfg_path.write_text(_json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    cfg_path.write_text(
+        _json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
     print(f"\n✅ Config written: {cfg_path}")
     print(f"Next: opensmi poll")
     return 0
@@ -422,7 +470,8 @@ def _cmd_poll(args: argparse.Namespace) -> int:
         ensure_state_dir(state_dir)
         out_path = latest_snapshot_path(state_dir)
         out_path.write_text(
-            json.dumps(snapshot_to_jsonable(cluster_snap), indent=2, sort_keys=False) + "\n",
+            json.dumps(snapshot_to_jsonable(cluster_snap), indent=2, sort_keys=False)
+            + "\n",
             encoding="utf-8",
         )
 
@@ -431,7 +480,9 @@ def _cmd_poll(args: argparse.Namespace) -> int:
 
 def _load_cfg(args: argparse.Namespace):
     state_dir = get_state_dir(args.state_dir)
-    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=getattr(args, "config", None))
+    cfg_path = resolve_config_path(
+        state_dir=state_dir, cli_config=getattr(args, "config", None)
+    )
 
     if not cfg_path.exists():
         print(
@@ -447,6 +498,7 @@ def _load_cfg(args: argparse.Namespace):
 
 # ── alloc ──────────────────────────────────────────────────────────
 
+
 def _cmd_alloc_list(args: argparse.Namespace) -> int:
     state_dir = get_state_dir(args.state_dir)
     allocs = load_allocations(state_dir)
@@ -457,7 +509,16 @@ def _cmd_alloc_list(args: argparse.Namespace) -> int:
     header = ["Node", "GPU", "User", "By", "At", "Notes"]
     rows = []
     for a in sorted(allocs, key=lambda x: (x.node_alias, x.gpu_index)):
-        rows.append([a.node_alias, str(a.gpu_index), a.target, a.assigned_by, a.assigned_at[:16], a.notes or ""])
+        rows.append(
+            [
+                a.node_alias,
+                str(a.gpu_index),
+                a.target,
+                a.assigned_by,
+                a.assigned_at[:16],
+                a.notes or "",
+            ]
+        )
 
     widths = [len(h) for h in header]
     for r in rows:
@@ -514,6 +575,7 @@ def _cmd_alloc_clear(args: argparse.Namespace) -> int:
 
 # ── violations ─────────────────────────────────────────────────────
 
+
 def _cmd_violations(args: argparse.Namespace) -> int:
     state_dir, cfg = _load_cfg(args)
     allocs = load_allocations(state_dir)
@@ -529,12 +591,15 @@ def _cmd_violations(args: argparse.Namespace) -> int:
     for v in viols:
         exp = f" (expected: {v.expected})" if v.expected else ""
         pids = ",".join(str(p) for p in v.pids)
-        print(f"  {v.node_alias} GPU{v.gpu_index}: {v.user} [{v.reason}]{exp}  PIDs={pids}")
+        print(
+            f"  {v.node_alias} GPU{v.gpu_index}: {v.user} [{v.reason}]{exp}  PIDs={pids}"
+        )
 
     return 1
 
 
 # ── kill ───────────────────────────────────────────────────────────
+
 
 def _cmd_kill(args: argparse.Namespace) -> int:
     _state_dir, cfg = _load_cfg(args)
@@ -555,7 +620,10 @@ def _cmd_kill(args: argparse.Namespace) -> int:
     sig = str(args.signal).upper().strip()
     allowed = {"TERM", "KILL", "INT", "HUP"}
     if sig not in allowed:
-        print(f"Unsupported signal: {sig} (allowed: {', '.join(sorted(allowed))})", file=sys.stderr)
+        print(
+            f"Unsupported signal: {sig} (allowed: {', '.join(sorted(allowed))})",
+            file=sys.stderr,
+        )
         return 2
 
     use_sudo = not bool(args.no_sudo)
@@ -642,6 +710,7 @@ echo \"__OPENSMI_KILL_END__\"
 
 # ── alloc seed ─────────────────────────────────────────────────────
 
+
 def _cmd_alloc_seed(args: argparse.Namespace) -> int:
     """Seed allocations from current live GPU usage."""
     from .allocations import _now_iso
@@ -684,7 +753,10 @@ def _cmd_alloc_seed(args: argparse.Namespace) -> int:
                     target = "*"
                 else:
                     target = users[0]
-                    print(f"  {node.node_alias} GPU{gpu_index}: multi-user ({','.join(users)}), assigned → {target}", file=sys.stderr)
+                    print(
+                        f"  {node.node_alias} GPU{gpu_index}: multi-user ({','.join(users)}), assigned → {target}",
+                        file=sys.stderr,
+                    )
             else:
                 if args.idle == "star":
                     target = "*"
@@ -712,11 +784,13 @@ def _cmd_alloc_seed(args: argparse.Namespace) -> int:
 
 # ── watch ──────────────────────────────────────────────────────────
 
+
 def _cmd_watch(args: argparse.Namespace) -> int:
     """Poll periodically, report violations to stdout and optionally Slack."""
     import time
     import urllib.request
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
     _KST = _tz(_td(hours=9))
 
     def _kst_time() -> str:
@@ -772,7 +846,9 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 for v in new_viols:
                     exp = f" (expected: {v.expected})" if v.expected else ""
                     pids = ",".join(str(p) for p in v.pids)
-                    lines.append(f"  {v.node_alias} GPU{v.gpu_index}: {v.user} [{v.reason}]{exp} PIDs={pids}")
+                    lines.append(
+                        f"  {v.node_alias} GPU{v.gpu_index}: {v.user} [{v.reason}]{exp} PIDs={pids}"
+                    )
 
                 msg = "\n".join(lines)
                 print(msg)
@@ -810,10 +886,14 @@ def _cmd_sudo_check(args: argparse.Namespace) -> int:
     _state_dir, cfg = _load_cfg(args)
 
     try:
-        ok, groups = _check_remote_sudo_group(cfg, args.node, timeout_s=int(args.timeout))
+        ok, groups = _check_remote_sudo_group(
+            cfg, args.node, timeout_s=int(args.timeout)
+        )
     except Exception as e:
         if args.json:
-            print(json.dumps({"node": args.node, "ok": False, "error": str(e)}, indent=2))
+            print(
+                json.dumps({"node": args.node, "ok": False, "error": str(e)}, indent=2)
+            )
         else:
             print(f"ERROR: {e}", file=sys.stderr)
         return 2
@@ -835,6 +915,314 @@ def _cmd_sudo_check(args: argparse.Namespace) -> int:
         print(f"{args.node}: {status} (groups: {' '.join(groups)})")
 
     return 0
+
+
+def _cmd_job_list(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    jobs = load_jobs(state_dir)
+
+    if args.status:
+        jobs = [j for j in jobs if j.status == args.status]
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "id": j.id,
+                            "command": j.command,
+                            "commands": j.commands,
+                            "gpus": j.gpus,
+                            "status": j.status,
+                            "submitted_at": j.submitted_at,
+                            "started_at": j.started_at,
+                            "finished_at": j.finished_at,
+                            "user": j.user,
+                            "exec_mode": j.exec_mode,
+                            "dist_mode": j.dist_mode,
+                            "queue_mode": j.queue_mode,
+                            "error": j.error,
+                        }
+                        for j in jobs
+                    ]
+                },
+                indent=2,
+            )
+        )
+    else:
+        if not jobs:
+            print("No jobs found.")
+            return 0
+
+        for j in jobs:
+            gpu_str = (
+                ", ".join(f"{alias}:{idx}" for alias, idx in j.gpus)
+                if j.gpus
+                else f"(auto×{j.requested_gpu_count})"
+            )
+            cmd_str = (
+                j.command[:40]
+                if j.command
+                else (j.commands[0][:40] if j.commands else "")
+            )
+            status_icon = {
+                "queued": "○",
+                "running": "●",
+                "done": "✓",
+                "failed": "✗",
+                "cancelled": "⊘",
+            }.get(j.status, "?")
+            print(f"{j.id}  {status_icon} {j.status:9s}  {gpu_str:20s}  {cmd_str}")
+
+    return 0
+
+
+def _cmd_job_submit(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    ensure_state_dir(state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    jobs = load_jobs(state_dir)
+
+    gpus = []
+    requested_gpu_count = 0
+
+    if args.auto_gpus:
+        requested_gpu_count = int(args.auto_gpus)
+        queue_mode = "queued"
+    elif args.node and args.gpus:
+        node_alias = args.node
+        gpu_indices = _parse_gpu_csv(args.gpus)
+        gpus = [(node_alias, idx) for idx in gpu_indices]
+        queue_mode = "queued" if args.queue else "immediate"
+    else:
+        print(
+            "ERROR: Either provide --node and --gpus, or --auto-gpus", file=sys.stderr
+        )
+        return 2
+
+    job = Job(
+        id=Job.new_id(),
+        command=str(args.command),
+        gpus=gpus,
+        requested_gpu_count=requested_gpu_count,
+        dist_mode="single",
+        exec_mode="tmux" if args.tmux else "direct",
+        status="queued",
+        submitted_at=datetime.now(timezone.utc).isoformat(),
+        user=_current_operator(),
+        restart_policy=str(args.restart),
+        queue_mode=queue_mode,
+    )
+
+    if not args.queue and args.node and args.gpus:
+        node = _find_node(cfg, args.node)
+        gpu_indices = _parse_gpu_csv(args.gpus)
+
+        target = NodeTarget(
+            node_alias=args.node, gpu_indices=gpu_indices, node_config=node
+        )
+        session = f"opensmi-{job.id}-{args.node}" if args.tmux else None
+        env_cfg = inject_cuda_visible_devices(target)
+
+        ctx = RemoteExecutionContext(
+            target=target,
+            command=str(args.command),
+            env_vars=env_cfg.to_env_dict(),
+            execution_mode="tmux" if args.tmux else "direct",
+            tmux_session=session,
+            timeout_s=300,
+        )
+
+        result = asyncio.run(route_command_to_target(ctx))
+
+        if result.success:
+            job.status = "running"
+            job.started_at = datetime.now(timezone.utc).isoformat()
+            if session:
+                job.tmux_sessions = [session]
+        else:
+            job.status = "failed"
+            job.error = result.stderr or "Execution failed"
+            job.finished_at = datetime.now(timezone.utc).isoformat()
+
+    jobs = upsert_job(jobs, job)
+    save_jobs(state_dir, jobs)
+
+    if args.json:
+        print(json.dumps({"job_id": job.id, "status": job.status}, indent=2))
+    else:
+        print(f"Job {job.id} submitted: {job.status}")
+        if job.tmux_sessions:
+            print(f"Attach: ssh {args.node} -t tmux attach -t {job.tmux_sessions[0]}")
+
+    return 0
+
+
+def _cmd_job_status(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    jobs = load_jobs(state_dir)
+
+    job = get_job(jobs, args.job_id)
+    if not job:
+        if args.json:
+            print(json.dumps({"error": "Job not found"}, indent=2))
+        else:
+            print(f"Job {args.job_id} not found", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "id": job.id,
+                    "command": job.command,
+                    "commands": job.commands,
+                    "gpus": job.gpus,
+                    "tmux_sessions": job.tmux_sessions,
+                    "status": job.status,
+                    "submitted_at": job.submitted_at,
+                    "started_at": job.started_at,
+                    "finished_at": job.finished_at,
+                    "user": job.user,
+                    "exec_mode": job.exec_mode,
+                    "dist_mode": job.dist_mode,
+                    "restart_policy": job.restart_policy,
+                    "retry_count": job.retry_count,
+                    "max_retries": job.max_retries,
+                    "queue_mode": job.queue_mode,
+                    "error": job.error,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(f"Job {job.id}")
+        print(f"  Status:    {job.status}")
+        print(f"  Command:   {job.command or '(one-to-one mode)'}")
+        if job.gpus:
+            gpu_str = ", ".join(f"{alias}:GPU{idx}" for alias, idx in job.gpus)
+            print(f"  GPUs:      {gpu_str}")
+        print(f"  Mode:      {job.exec_mode} / {job.dist_mode}")
+        if job.tmux_sessions:
+            print(f"  Sessions:  {', '.join(job.tmux_sessions)}")
+        print(f"  Submitted: {job.submitted_at}")
+        if job.started_at:
+            print(f"  Started:   {job.started_at}")
+        if job.finished_at:
+            print(f"  Finished:  {job.finished_at}")
+        if job.error:
+            print(f"  Error:     {job.error}")
+
+    return 0
+
+
+def _cmd_job_cancel(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    jobs = load_jobs(state_dir)
+    job = get_job(jobs, args.job_id)
+
+    if not job:
+        print(f"Job {args.job_id} not found", file=sys.stderr)
+        return 1
+
+    success = asyncio.run(cancel_job(job, cfg))
+
+    if success:
+        jobs = upsert_job(jobs, job)
+        save_jobs(state_dir, jobs)
+        print(f"Job {job.id} cancelled")
+        return 0
+    else:
+        print(
+            f"Job {job.id} cannot be cancelled (status: {job.status})", file=sys.stderr
+        )
+        return 1
+
+
+def _cmd_job_retry(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+
+    jobs = load_jobs(state_dir)
+    job = get_job(jobs, args.job_id)
+
+    if not job:
+        print(f"Job {args.job_id} not found", file=sys.stderr)
+        return 1
+
+    new_job = retry_job(job)
+    jobs = upsert_job(jobs, new_job)
+    save_jobs(state_dir, jobs)
+
+    print(f"Job {job.id} retried as {new_job.id}")
+    return 0
+
+
+def _cmd_job_delete(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+
+    jobs = load_jobs(state_dir)
+    job = get_job(jobs, args.job_id)
+
+    if not job:
+        print(f"Job {args.job_id} not found", file=sys.stderr)
+        return 1
+
+    jobs = [j for j in jobs if j.id != args.job_id]
+    save_jobs(state_dir, jobs)
+
+    print(f"Job {job.id} deleted")
+    return 0
+
+
+def _cmd_job_log(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    jobs = load_jobs(state_dir)
+    job = get_job(jobs, args.job_id)
+
+    if not job:
+        print(f"Job {args.job_id} not found", file=sys.stderr)
+        return 1
+
+    if not job.tmux_sessions:
+        print(f"Job {job.id} has no tmux sessions", file=sys.stderr)
+        return 1
+
+    session = job.tmux_sessions[0]
+    node_alias = job.gpus[0][0] if job.gpus else None
+
+    if not node_alias:
+        print(f"Job {job.id} has no node information", file=sys.stderr)
+        return 1
+
+    node = _find_node(cfg, node_alias)
+
+    try:
+        rc, stdout, stderr = asyncio.run(
+            ssh_run(
+                node,
+                ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{args.lines}"],
+                timeout_s=10,
+            )
+        )
+
+        if rc == 0:
+            print(stdout)
+            return 0
+        else:
+            print(f"Failed to capture tmux pane: {stderr}", file=sys.stderr)
+            return 2
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
@@ -900,7 +1288,9 @@ def _preflight_results_to_jsonable(results: list) -> list[dict]:
     for r in results:
         out.append(
             {
-                "check_type": getattr(r.check.check_type, "value", str(r.check.check_type)),
+                "check_type": getattr(
+                    r.check.check_type, "value", str(r.check.check_type)
+                ),
                 "node_alias": r.check.node_alias,
                 "passed": bool(r.passed),
                 "error_message": r.error_message,
@@ -963,20 +1353,39 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
 
     if not checks:
         if args.json:
-            print(json.dumps({"ok": False, "error": "No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus."}))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus.",
+                    }
+                )
+            )
         else:
-            print("No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus.", file=sys.stderr)
+            print(
+                "No preflight checks requested. Provide --mode tmux and/or --command and/or --gpus.",
+                file=sys.stderr,
+            )
         return 2
 
     results = asyncio.run(run_preflight_checks(checks))
 
     if args.json:
-        print(json.dumps({"ok": all(r.passed for r in results), "results": _preflight_results_to_jsonable(results)}))
+        print(
+            json.dumps(
+                {
+                    "ok": all(r.passed for r in results),
+                    "results": _preflight_results_to_jsonable(results),
+                }
+            )
+        )
     else:
         for r in results:
             status = "PASS" if r.passed else "FAIL"
             msg = r.error_message or ""
-            print(f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip())
+            print(
+                f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip()
+            )
 
     return 0 if all(r.passed for r in results) else 3
 
@@ -1033,14 +1442,18 @@ def _cmd_exec(args: argparse.Namespace) -> int:
                 for r in preflight_results:
                     status = "PASS" if r.passed else "FAIL"
                     msg = r.error_message or ""
-                    print(f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip())
+                    print(
+                        f"{r.check.node_alias} {r.check.check_type.value}: {status} {msg}".rstrip()
+                    )
             return 3
 
     target = NodeTarget(node_alias=args.node, gpu_indices=gpus, node_config=node)
 
     session = None
     if args.mode == "tmux":
-        session = str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
+        session = (
+            str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
+        )
 
     env_cfg = inject_cuda_visible_devices(target)
 
@@ -1057,7 +1470,9 @@ def _cmd_exec(args: argparse.Namespace) -> int:
 
     payload = {
         "ok": bool(result.success),
-        "preflight": _preflight_results_to_jsonable(preflight_results) if preflight_results else [],
+        "preflight": _preflight_results_to_jsonable(preflight_results)
+        if preflight_results
+        else [],
         "result": _exec_result_to_jsonable(result),
     }
 
@@ -1072,7 +1487,11 @@ def _cmd_exec(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="opensmi", description="GPU allocation manager")
     p.add_argument("--version", action="version", version=f"opensmi {__version__}")
-    p.add_argument("--state-dir", default=None, help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)")
+    p.add_argument(
+        "--state-dir",
+        default=None,
+        help="State dir (default: ~/.opensmi or OPENSMI_STATE_DIR)",
+    )
     p.add_argument(
         "--config",
         default=None,
@@ -1082,9 +1501,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=False)
 
     sp_init = sub.add_parser("init", help="Create default opensmi.json")
-    sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
-    sp_init.add_argument("--wizard", action="store_true", help="Interactive setup wizard")
-    sp_init.add_argument("--nodes", type=int, default=None, help="Number of nodes (wizard only)")
+    sp_init.add_argument(
+        "--force", action="store_true", help="Overwrite existing config"
+    )
+    sp_init.add_argument(
+        "--wizard", action="store_true", help="Interactive setup wizard"
+    )
+    sp_init.add_argument(
+        "--nodes", type=int, default=None, help="Number of nodes (wizard only)"
+    )
     sp_init.add_argument(
         "--from-ssh-config",
         default=None,
@@ -1093,9 +1518,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_init.set_defaults(func=_cmd_init)
 
-    sp_on = sub.add_parser("onboard", help="Interactive onboarding to create opensmi.json")
+    sp_on = sub.add_parser(
+        "onboard", help="Interactive onboarding to create opensmi.json"
+    )
     sp_on.add_argument("--force", action="store_true", help="Overwrite existing config")
-    sp_on.add_argument("--nodes", type=int, default=None, help="Number of nodes (wizard only)")
+    sp_on.add_argument(
+        "--nodes", type=int, default=None, help="Number of nodes (wizard only)"
+    )
     sp_on.add_argument(
         "--from-ssh-config",
         default=None,
@@ -1105,9 +1534,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp_on.set_defaults(func=_cmd_onboard)
 
     sp_poll = sub.add_parser("poll", help="Poll cluster via SSH + nvidia-smi")
-    sp_poll.add_argument("--timeout", default=15, type=int, help="Per-node timeout seconds")
+    sp_poll.add_argument(
+        "--timeout", default=15, type=int, help="Per-node timeout seconds"
+    )
     sp_poll.add_argument("--json", action="store_true", help="Print full JSON snapshot")
-    sp_poll.add_argument("--write-latest", action="store_true", help="Write <state-dir>/latest_snapshot.json")
+    sp_poll.add_argument(
+        "--write-latest",
+        action="store_true",
+        help="Write <state-dir>/latest_snapshot.json",
+    )
     sp_poll.set_defaults(func=_cmd_poll)
 
     # ── alloc ──
@@ -1131,41 +1566,75 @@ def build_parser() -> argparse.ArgumentParser:
     sp_ac.set_defaults(func=_cmd_alloc_clear)
 
     sp_seed = alloc_sub.add_parser("seed", help="Seed allocations from live GPU usage")
-    sp_seed.add_argument("--timeout", default=15, type=int, help="Per-node poll timeout")
+    sp_seed.add_argument(
+        "--timeout", default=15, type=int, help="Per-node poll timeout"
+    )
     sp_seed.add_argument("--by", default=None, help="Admin name for audit")
-    sp_seed.add_argument("--force", action="store_true", help="Overwrite existing allocations")
-    sp_seed.add_argument("--multi", default="star", choices=["star", "first"], help="Multi-user GPU: * or first user")
-    sp_seed.add_argument("--idle", default="star", choices=["star", "skip"], help="Idle GPU: * (open) or skip")
+    sp_seed.add_argument(
+        "--force", action="store_true", help="Overwrite existing allocations"
+    )
+    sp_seed.add_argument(
+        "--multi",
+        default="star",
+        choices=["star", "first"],
+        help="Multi-user GPU: * or first user",
+    )
+    sp_seed.add_argument(
+        "--idle",
+        default="star",
+        choices=["star", "skip"],
+        help="Idle GPU: * (open) or skip",
+    )
     sp_seed.set_defaults(func=_cmd_alloc_seed)
 
     # ── violations ──
-    sp_v = sub.add_parser("violations", help="Check for allocation violations (polls live data)")
-    sp_v.add_argument("--timeout", default=15, type=int, help="Per-node timeout seconds")
+    sp_v = sub.add_parser(
+        "violations", help="Check for allocation violations (polls live data)"
+    )
+    sp_v.add_argument(
+        "--timeout", default=15, type=int, help="Per-node timeout seconds"
+    )
     sp_v.set_defaults(func=_cmd_violations)
 
     # ── kill ──
     sp_k = sub.add_parser("kill", help="Signal (kill) remote PIDs on a node")
     sp_k.add_argument("node", help="Node alias (e.g. GPU-01)")
     sp_k.add_argument("pids", nargs="+", help="One or more PIDs")
-    sp_k.add_argument("--signal", default="TERM", help="Signal: TERM|KILL|INT|HUP (default TERM)")
+    sp_k.add_argument(
+        "--signal", default="TERM", help="Signal: TERM|KILL|INT|HUP (default TERM)"
+    )
     sp_k.add_argument("--timeout", default=10, type=int, help="SSH timeout seconds")
-    sp_k.add_argument("--no-sudo", action="store_true", help="Do not use sudo -n (only kills own processes)")
+    sp_k.add_argument(
+        "--no-sudo",
+        action="store_true",
+        help="Do not use sudo -n (only kills own processes)",
+    )
     sp_k.set_defaults(func=_cmd_kill)
 
     # ── watch ──
     sp_w = sub.add_parser("watch", help="Watch for violations and notify (Slack)")
-    sp_w.add_argument("--interval", default=60, type=int, help="Poll interval seconds (default 60)")
+    sp_w.add_argument(
+        "--interval", default=60, type=int, help="Poll interval seconds (default 60)"
+    )
     sp_w.add_argument("--timeout", default=15, type=int, help="Per-node poll timeout")
-    sp_w.add_argument("--slack-webhook", default=None, help="Slack incoming webhook URL")
+    sp_w.add_argument(
+        "--slack-webhook", default=None, help="Slack incoming webhook URL"
+    )
     sp_w.set_defaults(func=_cmd_watch)
 
     # ── users ──
-    sp_u = sub.add_parser("users", help="List usernames from cluster nodes (best-effort)")
-    sp_u.add_argument("--timeout", default=10, type=int, help="Per-node timeout seconds")
+    sp_u = sub.add_parser(
+        "users", help="List usernames from cluster nodes (best-effort)"
+    )
+    sp_u.add_argument(
+        "--timeout", default=10, type=int, help="Per-node timeout seconds"
+    )
     sp_u.add_argument("--json", action="store_true", help="Print JSON")
     sp_u.set_defaults(func=_cmd_users)
 
-    sp_sc = sub.add_parser("sudo-check", help="Check if the SSH user is in a sudo-capable group on a node")
+    sp_sc = sub.add_parser(
+        "sudo-check", help="Check if the SSH user is in a sudo-capable group on a node"
+    )
     sp_sc.add_argument("node", help="Node alias")
     sp_sc.add_argument("--timeout", default=8, type=int, help="SSH timeout seconds")
     sp_sc.add_argument("--json", action="store_true", help="Print JSON")
@@ -1174,41 +1643,158 @@ def build_parser() -> argparse.ArgumentParser:
     # ── remote execution ──
     sp_pf = sub.add_parser("preflight", help="Run remote execution preflight checks")
     sp_pf.add_argument("node", help="Node alias")
-    sp_pf.add_argument("--gpus", default=None, help="GPU indices CSV (e.g. 0,1); omit to skip GPU check")
+    sp_pf.add_argument(
+        "--gpus",
+        default=None,
+        help="GPU indices CSV (e.g. 0,1); omit to skip GPU check",
+    )
     sp_pf.add_argument("--command", default=None, help="Command to syntax-check")
-    sp_pf.add_argument("--mode", default="tmux", choices=["direct", "tmux"], help="Execution mode (affects checks)")
+    sp_pf.add_argument(
+        "--mode",
+        default="tmux",
+        choices=["direct", "tmux"],
+        help="Execution mode (affects checks)",
+    )
     sp_pf.add_argument("--json", action="store_true", help="Print JSON")
     sp_pf.set_defaults(func=_cmd_preflight)
 
-    sp_ex = sub.add_parser("exec", help="Execute a command on a node with GPU assignment")
+    sp_ex = sub.add_parser(
+        "exec", help="Execute a command on a node with GPU assignment"
+    )
     sp_ex.add_argument("node", help="Node alias")
     sp_ex.add_argument("--gpus", required=True, help="GPU indices CSV (e.g. 0,1)")
     sp_ex.add_argument("--command", required=True, help="Command to execute")
-    sp_ex.add_argument("--mode", default="direct", choices=["direct", "tmux"], help="Execution mode")
-    sp_ex.add_argument("--session", default=None, help="tmux session name (tmux mode only)")
-    sp_ex.add_argument("--timeout", default=300, type=int, help="Execution timeout seconds")
-    sp_ex.add_argument("--skip-preflight", action="store_true", help="Skip preflight checks")
+    sp_ex.add_argument(
+        "--mode", default="direct", choices=["direct", "tmux"], help="Execution mode"
+    )
+    sp_ex.add_argument(
+        "--session", default=None, help="tmux session name (tmux mode only)"
+    )
+    sp_ex.add_argument(
+        "--timeout", default=300, type=int, help="Execution timeout seconds"
+    )
+    sp_ex.add_argument(
+        "--skip-preflight", action="store_true", help="Skip preflight checks"
+    )
     sp_ex.add_argument("--json", action="store_true", help="Print JSON")
     sp_ex.set_defaults(func=_cmd_exec)
 
-    sp_up = sub.add_parser("update", help="Update opensmi (CLI and/or TUI) from GitHub Releases")
-    sp_up.add_argument("--repo", default=None, help="GitHub repo OWNER/REPO (default: seilk/opensmi)")
-    sp_up.add_argument("--version", default="latest", help="Tag (e.g. v0.1.0) or 'latest' (default)")
-    sp_up.add_argument("--bin-dir", default=None, help="Install dir for binaries (default: ~/.local/bin)")
-    sp_up.add_argument("--tui-only", action="store_true", help="Update only opensmi-tui")
-    sp_up.add_argument("--cli-only", action="store_true", help="Update only opensmi CLI")
-    sp_up.add_argument("--cli-method", default="auto", choices=["auto", "pip", "pyz"], help="CLI method")
-    sp_up.add_argument("--no-verify", action="store_true", help="Skip SHA256SUMS verification")
+    # ── job ──
+    sp_job = sub.add_parser("job", help="Manage GPU jobs")
+    job_sub = sp_job.add_subparsers(dest="job_cmd", required=True)
+
+    sp_jl = job_sub.add_parser("list", help="List jobs")
+    sp_jl.add_argument(
+        "--status",
+        choices=["queued", "running", "done", "failed", "cancelled"],
+        help="Filter by status",
+    )
+    sp_jl.add_argument("--json", action="store_true", help="Print JSON")
+    sp_jl.set_defaults(func=_cmd_job_list)
+
+    sp_js = job_sub.add_parser("submit", help="Submit a job")
+    sp_js.add_argument("node", nargs="?", help="Node alias (optional with --auto-gpus)")
+    sp_js.add_argument("--gpus", help="Comma-separated GPU indices")
+    sp_js.add_argument("--auto-gpus", type=int, help="Auto-select N GPUs")
+    sp_js.add_argument("--command", required=True, help="Command to execute")
+    sp_js.add_argument("--queue", action="store_true", help="Queue for auto-dispatch")
+    sp_js.add_argument(
+        "--tmux", action="store_true", default=True, help="Use tmux (default)"
+    )
+    sp_js.add_argument(
+        "--restart",
+        choices=["never", "on-failure", "always"],
+        default="never",
+        help="Restart policy",
+    )
+    sp_js.add_argument("--json", action="store_true", help="Print JSON")
+    sp_js.set_defaults(func=_cmd_job_submit)
+
+    sp_jst = job_sub.add_parser("status", help="Show job status")
+    sp_jst.add_argument("job_id", help="Job ID")
+    sp_jst.add_argument("--json", action="store_true", help="Print JSON")
+    sp_jst.set_defaults(func=_cmd_job_status)
+
+    sp_jc = job_sub.add_parser("cancel", help="Cancel a job")
+    sp_jc.add_argument("job_id", help="Job ID")
+    sp_jc.set_defaults(func=_cmd_job_cancel)
+
+    sp_jr = job_sub.add_parser("retry", help="Retry a failed job")
+    sp_jr.add_argument("job_id", help="Job ID")
+    sp_jr.set_defaults(func=_cmd_job_retry)
+
+    sp_jd = job_sub.add_parser("delete", help="Delete a job from history")
+    sp_jd.add_argument("job_id", help="Job ID")
+    sp_jd.set_defaults(func=_cmd_job_delete)
+
+    sp_jlog = job_sub.add_parser("log", help="Fetch job output from tmux")
+    sp_jlog.add_argument("job_id", help="Job ID")
+    sp_jlog.add_argument(
+        "--lines", type=int, default=50, help="Number of lines to fetch (default: 50)"
+    )
+    sp_jlog.set_defaults(func=_cmd_job_log)
+
+    sp_up = sub.add_parser(
+        "update", help="Update opensmi (CLI and/or TUI) from GitHub Releases"
+    )
+    sp_up.add_argument(
+        "--repo", default=None, help="GitHub repo OWNER/REPO (default: seilk/opensmi)"
+    )
+    sp_up.add_argument(
+        "--version", default="latest", help="Tag (e.g. v0.1.0) or 'latest' (default)"
+    )
+    sp_up.add_argument(
+        "--bin-dir",
+        default=None,
+        help="Install dir for binaries (default: ~/.local/bin)",
+    )
+    sp_up.add_argument(
+        "--tui-only", action="store_true", help="Update only opensmi-tui"
+    )
+    sp_up.add_argument(
+        "--cli-only", action="store_true", help="Update only opensmi CLI"
+    )
+    sp_up.add_argument(
+        "--cli-method",
+        default="auto",
+        choices=["auto", "pip", "pyz"],
+        help="CLI method",
+    )
+    sp_up.add_argument(
+        "--no-verify", action="store_true", help="Skip SHA256SUMS verification"
+    )
     sp_up.set_defaults(func=_cmd_update)
 
-    sp_un = sub.add_parser("uninstall", help="Uninstall opensmi (CLI and/or TUI) from this machine")
-    sp_un.add_argument("--bin-dir", default=None, help="Bin dir to clean (default: ~/.local/bin)")
-    sp_un.add_argument("--tui-only", action="store_true", help="Remove only opensmi-tui")
-    sp_un.add_argument("--cli-only", action="store_true", help="Remove only opensmi CLI")
-    sp_un.add_argument("--purge-state", action="store_true", help="Also delete state dir (~/.opensmi); requires --yes")
-    sp_un.add_argument("--yes", action="store_true", help="Confirm destructive actions (required for --purge-state)")
-    sp_un.add_argument("--force", action="store_true", help="Force removing opensmi from bin dir even if it doesn't look like our wrapper")
-    sp_un.add_argument("--dry-run", action="store_true", help="Print what would be removed")
+    sp_un = sub.add_parser(
+        "uninstall", help="Uninstall opensmi (CLI and/or TUI) from this machine"
+    )
+    sp_un.add_argument(
+        "--bin-dir", default=None, help="Bin dir to clean (default: ~/.local/bin)"
+    )
+    sp_un.add_argument(
+        "--tui-only", action="store_true", help="Remove only opensmi-tui"
+    )
+    sp_un.add_argument(
+        "--cli-only", action="store_true", help="Remove only opensmi CLI"
+    )
+    sp_un.add_argument(
+        "--purge-state",
+        action="store_true",
+        help="Also delete state dir (~/.opensmi); requires --yes",
+    )
+    sp_un.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm destructive actions (required for --purge-state)",
+    )
+    sp_un.add_argument(
+        "--force",
+        action="store_true",
+        help="Force removing opensmi from bin dir even if it doesn't look like our wrapper",
+    )
+    sp_un.add_argument(
+        "--dry-run", action="store_true", help="Print what would be removed"
+    )
     sp_un.set_defaults(func=_cmd_uninstall)
 
     return p
