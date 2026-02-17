@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import sys
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 from .models import NodeConfig
 
@@ -144,4 +146,68 @@ async def ssh_bash_script(
         stdin_bytes=script.encode("utf-8"),
         timeout_s=timeout_s,
         max_retries=max_retries,
+    )
+
+
+@dataclass
+class RemoteExecResult:
+    """Result of a remote command execution."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    node_alias: str
+    command: str
+    success: bool = field(init=False)
+
+    def __post_init__(self):
+        self.success = self.exit_code == 0
+
+
+async def ssh_exec_remote(
+    node: NodeConfig,
+    command: str,
+    *,
+    env_vars: Optional[Dict[str, str]] = None,
+    timeout_s: int = 300,
+    max_retries: int = 1,
+) -> RemoteExecResult:
+    """Execute a remote command with environment variable injection and result capture.
+
+    Args:
+        node: Target node configuration
+        command: Shell command to execute
+        env_vars: Optional environment variables to inject (e.g., {"CUDA_VISIBLE_DEVICES": "0,1"})
+        timeout_s: Execution timeout in seconds (default: 300s for long-running commands)
+        max_retries: Number of retry attempts on connection failures (default: 1)
+
+    Returns:
+        RemoteExecResult with exit_code, stdout, stderr, and success status
+
+    Raises:
+        SSHRunError: On SSH connection/execution failures
+        SSHRetryExhausted: When all retry attempts are exhausted
+    """
+    # Build the command with environment variable injection
+    # Use shlex.quote() to prevent shell injection via env var values
+    if env_vars:
+        env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env_vars.items())
+        full_command = f"{env_prefix} {command}"
+    else:
+        full_command = command
+
+    # Execute via bash to ensure proper shell expansion and environment handling
+    rc, stdout, stderr = await ssh_run_with_retry(
+        node,
+        ["bash", "-c", full_command],
+        timeout_s=timeout_s,
+        max_retries=max_retries,
+    )
+
+    return RemoteExecResult(
+        exit_code=rc,
+        stdout=stdout,
+        stderr=stderr,
+        node_alias=node.alias,
+        command=command,
     )
