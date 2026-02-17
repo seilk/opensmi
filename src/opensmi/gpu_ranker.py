@@ -1,10 +1,13 @@
 """GPU ranking logic for automatic GPU selection.
 
-Ranks GPUs by:
-1. last_used_at (oldest first; never-used = highest priority)
-2. active process count (fewer is better)
-3. GPU utilization (lower is better)
-4. GPU index (ascending)
+Multi-tier priority ranking:
+1. Tier 1: GPUs explicitly allocated to current user
+2. Tier 2: GPUs allocated to '*' (all users)
+3. Tier 3: Unallocated idle GPUs (proc=0, util=0)
+4. Tier 4: Unallocated light-load GPUs
+5. Tier 5: Busy GPUs (last resort)
+
+Within each tier, sort by idle time (last_used, oldest first).
 """
 
 from __future__ import annotations
@@ -17,19 +20,40 @@ from opensmi.models import ClusterSnapshot, GPUInfo, NodeSnapshot
 def rank_gpus(
     snapshot: ClusterSnapshot,
     launch_history: Optional[Dict[str, Dict[int, str]]] = None,
+    allocations: Optional[List[Dict]] = None,
+    current_user: Optional[str] = None,
 ) -> List[Tuple[str, int, GPUInfo]]:
     """Rank all GPUs in the cluster for automatic allocation.
 
     Args:
         snapshot: Current cluster state
         launch_history: Optional dict of {node_alias: {gpu_index: iso_timestamp}}
+        allocations: Optional list of allocation dicts
+        current_user: Optional current user for priority ranking
 
     Returns:
         List of (node_alias, gpu_index, gpu_info) tuples, sorted by priority
         (best candidates first)
     """
     launch_history = launch_history or {}
-    candidates: List[Tuple[str, int, GPUInfo, str, int, int]] = []
+    allocations = allocations or []
+    current_user = current_user or ""
+    
+    # Build allocation map: (node, gpu_idx) -> target
+    alloc_map: Dict[Tuple[str, int], str] = {}
+    for alloc in allocations:
+        node = alloc.get("node_alias", "")
+        gpu_idx = alloc.get("gpu_index", -1)
+        target = alloc.get("target", "")
+        if node and gpu_idx >= 0:
+            alloc_map[(node, gpu_idx)] = target
+    
+    # Tier lists
+    tier1: List[Tuple[str, int, GPUInfo, str, int, int]] = []  # My explicit allocation
+    tier2: List[Tuple[str, int, GPUInfo, str, int, int]] = []  # '*' allocation
+    tier3: List[Tuple[str, int, GPUInfo, str, int, int]] = []  # Unallocated idle
+    tier4: List[Tuple[str, int, GPUInfo, str, int, int]] = []  # Unallocated light
+    tier5: List[Tuple[str, int, GPUInfo, str, int, int]] = []  # Busy
 
     for node in snapshot.nodes:
         if node.error:
@@ -41,19 +65,45 @@ def rank_gpus(
             process_counts[proc.gpu_uuid] = process_counts.get(proc.gpu_uuid, 0) + 1
 
         for gpu in node.gpus:
-            # Extract ranking keys
             last_used = _get_last_used(launch_history, node.node_alias, gpu.index)
             active_count = process_counts.get(gpu.uuid, 0)
             utilization = gpu.utilization_gpu_percent or 0
-
-            candidates.append(
-                (node.node_alias, gpu.index, gpu, last_used, active_count, utilization)
-            )
-
-    # Sort by: (1) last_used (oldest first), (2) active_count, (3) utilization, (4) gpu.index
-    candidates.sort(key=lambda x: (x[3], x[4], x[5], x[2].index))
-
-    return [(alias, idx, gpu) for alias, idx, gpu, _, _, _ in candidates]
+            
+            key = (node.node_alias, gpu.index)
+            alloc_target = alloc_map.get(key, "")
+            
+            entry = (node.node_alias, gpu.index, gpu, last_used, active_count, utilization)
+            
+            # Tier 1: My explicit allocation
+            if alloc_target == current_user:
+                tier1.append(entry)
+            # Tier 2: All-user allocation
+            elif alloc_target == "*":
+                tier2.append(entry)
+            # Tier 3: Unallocated + idle
+            elif not alloc_target and active_count == 0 and utilization == 0:
+                tier3.append(entry)
+            # Tier 4: Unallocated + light load
+            elif not alloc_target:
+                tier4.append(entry)
+            # Tier 5: Allocated to someone else (fallback)
+            else:
+                tier5.append(entry)
+    
+    # Sort each tier by: (last_used, active_count, utilization, gpu.index)
+    def sort_key(x):
+        return (x[3], x[4], x[5], x[2].index)
+    
+    tier1.sort(key=sort_key)
+    tier2.sort(key=sort_key)
+    tier3.sort(key=sort_key)
+    tier4.sort(key=sort_key)
+    tier5.sort(key=sort_key)
+    
+    # Combine tiers
+    all_tiers = tier1 + tier2 + tier3 + tier4 + tier5
+    
+    return [(alias, idx, gpu) for alias, idx, gpu, _, _, _ in all_tiers]
 
 
 def _get_last_used(
@@ -86,33 +136,7 @@ def select_top_gpus(
 
     Returns:
         List of (node_alias, gpu_index) tuples for the top N GPUs,
-        prioritizing GPUs allocated to current_user
+        with multi-tier priority ranking
     """
-    allocations = allocations or []
-    current_user = current_user or ""
-    
-    # Build set of (node_alias, gpu_index) allocated to current user
-    my_gpus = set()
-    if current_user:
-        for alloc in allocations:
-            target = alloc.get("target", "")
-            if target == current_user or target == "*":
-                node = alloc.get("node_alias", "")
-                gpu_idx = alloc.get("gpu_index", -1)
-                if node and gpu_idx >= 0:
-                    my_gpus.add((node, gpu_idx))
-    
-    ranked = rank_gpus(snapshot, launch_history)
-    
-    # Split into own allocations and others
-    own_alloc = []
-    others = []
-    for alias, idx, gpu in ranked:
-        if (alias, idx) in my_gpus:
-            own_alloc.append((alias, idx))
-        else:
-            others.append((alias, idx))
-    
-    # Return own allocations first, then others
-    result = own_alloc + others
-    return result[:n]
+    ranked = rank_gpus(snapshot, launch_history, allocations, current_user)
+    return [(alias, idx) for alias, idx, _ in ranked[:n]]
