@@ -153,6 +153,7 @@ let launchGpuMode: "auto" | "selected" = "auto";
 let launchManualGpus: Array<{ node: string; gpu: number }> = [];
 let launchSelectionReasoning = "";
 let launchSourceBundle: string | null = null; // Track which bundle opened the runner
+let launchQueueMode: "immediate" | "queued" = "immediate"; // Queue mode for job submission
 
 type RunnerState = "idle" | "queued" | "preparing" | "sent" | "running" | "failed";
 let runnerState: RunnerState = "idle";
@@ -1772,6 +1773,7 @@ function renderHelp() {
     Text({ text: "  Ctrl+L        Maximize runner toggle" }),
     Text({ text: "  Tab           Toggle execution mode (direct/tmux)" }),
     Text({ text: "  Shift+Tab     Toggle distribution mode (single/one-to-one)" }),
+    Text({ text: "  Q             Toggle queue mode (immediate/queued)" }),
     Text({ text: "  +/-           Adjust GPU count" }),
     Text({ text: "  Enter         Execute command" }),
     Text({ text: "" }),
@@ -2662,7 +2664,7 @@ function renderRunnerPane() {
     content: runnerInputTyping
       ? "[Esc] Stop  [ctrl+x Enter] Execute"
       : (runnerFocused
-          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-] Options"
+          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/Q] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
     fg: C.textDim 
   });
@@ -2702,7 +2704,7 @@ function renderRunnerPane() {
   }
   
   const modeInfo = Text({ 
-    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
+    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Queue: ${launchQueueMode}  Count: ${launchNumGpus}`, 
     fg: C.textDim 
   });
   
@@ -2997,7 +2999,7 @@ function renderLaunch() {
   });
   
   const modeLabel = Text({ 
-    content: `Exec: ${launchMode === "direct" ? "Direct" : "Tmux"} [Tab]  Dist: ${launchDistMode === "single" ? "Single" : "1:1"} [Shift+Tab]`, 
+    content: `Exec: ${launchMode === "direct" ? "Direct" : "Tmux"} [Tab]  Dist: ${launchDistMode === "single" ? "Single" : "1:1"} [Shift+Tab]  Queue: ${launchQueueMode} [Q]`, 
     fg: C.textDim 
   });
   
@@ -3147,6 +3149,96 @@ function renderLaunch() {
   );
 }
 
+async function saveJobToStore(): Promise<void> {
+  try {
+    const jobData: Partial<Job> = {
+      command: launchDistMode === "single" ? launchCommand : "",
+      commands: launchDistMode === "one-to-one" ? launchCommands.filter(c => c.trim()) : [],
+      gpus: launchSelectedGpus.map(g => [g.node, g.gpu] as [string, number]),
+      requested_gpu_count: launchNumGpus,
+      dist_mode: launchDistMode,
+      exec_mode: launchMode,
+      queue_mode: launchQueueMode,
+    };
+    
+    const tmpFile = `/tmp/opensmi-job-${Date.now()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(jobData));
+    
+    const submitScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=Job.new_id(),
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    status="queued",
+    submitted_at=datetime.now(timezone.utc).isoformat(),
+    user="${OPERATOR}",
+    restart_policy="never",
+    queue_mode=job_data["queue_mode"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+
+print(json.dumps({"job_id": job.id, "status": job.status}))
+`;
+    
+    const submitProc = Bun.spawn([PYTHON, "-c", submitScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(submitProc.stdout).text();
+    const stderr = await new Response(submitProc.stderr).text();
+    await submitProc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (submitProc.exitCode !== 0) {
+      setLaunchError(`Failed to save job: ${stderr}`);
+      runnerState = "failed";
+      return;
+    }
+    
+    let result: any;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      setLaunchError("Failed to parse job submission response");
+      runnerState = "failed";
+      return;
+    }
+    
+    runnerState = "running";
+    setStatus(`Job ${result.job_id} queued successfully`);
+    launchOutput = `Job queued: ${result.job_id}\nStatus: ${result.status}\nGPUs: ${launchNumGpus}\nMode: ${launchDistMode} / ${launchMode}`;
+    
+    await loadJobsFromCLI();
+  } catch (e: any) {
+    setLaunchError(`Failed to queue job: ${e?.message || String(e)}`);
+    runnerState = "failed";
+  }
+}
+
 async function executeLaunch(): Promise<void> {
   runnerState = "queued";
   runnerStderr = [];
@@ -3191,6 +3283,13 @@ async function executeLaunch(): Promise<void> {
   runnerState = "preparing";
   
   try {
+    // If queue mode is "queued", save to job store instead of executing immediately
+    if (launchQueueMode === "queued") {
+      await saveJobToStore();
+      return;
+    }
+    
+    // Immediate mode: execute now
     const tmpFile = `/tmp/opensmi-gpus-${Date.now()}.json`;
     await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
     
@@ -4143,6 +4242,14 @@ async function main() {
             launchManualGpus.pop(); // Remove last selected GPU
           }
           await refreshLaunchGpuSelection();
+          render();
+          return;
+        }
+        
+        if ((key.name === "q" || key.name === "Q") && !runnerInputTyping) {
+          key.preventDefault();
+          launchQueueMode = launchQueueMode === "immediate" ? "queued" : "immediate";
+          setStatus(`Queue mode: ${launchQueueMode}`, 1500);
           render();
           return;
         }
