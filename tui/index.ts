@@ -346,10 +346,10 @@ async function refreshLaunchGpuSelection(): Promise<void> {
   
   // In "auto" mode, rank and select GPUs automatically
   try {
-    const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
     
-    const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
+    const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
     const rankScript = `
@@ -619,10 +619,10 @@ async function findAvailableGpus(count: number): Promise<Array<{ node: string; g
   
   try {
     // Write snapshot and allocations to temp files
-    const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
     
-    const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
+    const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
     // Build set of GPUs already assigned to queued jobs (to avoid double-booking)
@@ -1052,7 +1052,7 @@ async function executeJobRemote(job: Job): Promise<void> {
 }
 
 async function updateJobInStore(job: Job): Promise<void> {
-  const tmpFile = `/tmp/opensmi-job-update-${Date.now()}.json`;
+  const tmpFile = `/tmp/opensmi-job-update-${crypto.randomUUID()}.json`;
   await Bun.write(tmpFile, JSON.stringify(job));
   
   const updateScript = `
@@ -3677,7 +3677,7 @@ async function saveJobToStore(): Promise<void> {
       queue_mode: launchQueueMode,
     };
     
-    const tmpFile = `/tmp/opensmi-job-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(jobData));
     
     const submitScript = `
@@ -3772,7 +3772,7 @@ async function createImmediateJob(): Promise<string | null> {
       tmux_sessions: [],
     };
     
-    const tmpFile = `/tmp/opensmi-job-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(jobData));
     
     const submitScript = `
@@ -3949,7 +3949,7 @@ async function executeLaunch(): Promise<void> {
     }
     
     // Update launch history
-    const tmpFile = `/tmp/opensmi-gpus-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-gpus-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
     
     const updateScript = `
