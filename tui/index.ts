@@ -748,10 +748,21 @@ print(json.dumps(available))
   }
 }
 
+let isDispatching = false;
+
 async function dispatchQueuedJobs(): Promise<void> {
-  if (!snapshot) {
+  if (!snapshot || isDispatching) {
     return;
   }
+  isDispatching = true;
+  try {
+    await _dispatchQueuedJobsInner();
+  } finally {
+    isDispatching = false;
+  }
+}
+
+async function _dispatchQueuedJobsInner(): Promise<void> {
   
   // Get queued jobs in FIFO order (sorted by submission time)
   const queuedJobs = jobList
@@ -3683,6 +3694,7 @@ async function saveJobToStore(): Promise<void> {
       dist_mode: launchDistMode,
       exec_mode: launchMode,
       queue_mode: launchQueueMode,
+      user: OPERATOR,
     };
     
     const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
@@ -3711,7 +3723,7 @@ job = Job(
     exec_mode=job_data["exec_mode"],
     status="queued",
     submitted_at=datetime.now(timezone.utc).isoformat(),
-    user="${OPERATOR}",
+    user=job_data["user"],
     restart_policy="never",
     queue_mode=job_data["queue_mode"],
 )
