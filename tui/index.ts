@@ -607,6 +607,10 @@ async function findAvailableGpus(count: number): Promise<Array<{ node: string; g
    *   - GPU utilization is 0%
    *   - Not already reserved by another queued job
    * 
+   * Reserved GPUs: Queued jobs that have already been assigned specific GPUs
+   * (e.g. immediate mode jobs that were converted to queued) should not have
+   * their GPUs re-allocated to new jobs.
+   * 
    * Returns: Top N available GPUs sorted by priority (rank_gpus order)
    */
   if (!snapshot || count <= 0) {
@@ -621,7 +625,7 @@ async function findAvailableGpus(count: number): Promise<Array<{ node: string; g
     const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
-    // Get GPUs reserved by queued jobs
+    // Build set of GPUs already assigned to queued jobs (to avoid double-booking)
     const queuedJobs = jobList.filter(j => j.status === "queued");
     const reservedGpuKeys = new Set<string>();
     for (const job of queuedJobs) {
