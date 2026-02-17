@@ -7,6 +7,7 @@ with support for environment variable injection and execution modes.
 from __future__ import annotations
 
 import asyncio
+import base64
 import shlex
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -225,10 +226,10 @@ async def route_command_to_target(
             wrapped_command = f"{env_prefix} {context.command}"
         else:
             wrapped_command = context.command
+        # Encode the wrapped command to avoid nested quote breakage inside tmux/bash layers.
+        payload_b64 = base64.b64encode(wrapped_command.encode("utf-8")).decode("ascii")
+        bootstrap = f"echo {shlex.quote(payload_b64)} | base64 --decode | bash"
 
-        # Create a detached tmux session with the command.
-        # Build argv then shell-quote each argument to avoid injection and quoting bugs.
-        # Run the payload through `bash -lc` so env prefix + shell features work as users expect.
         tmux_argv = [
             "tmux",
             "new-session",
@@ -237,7 +238,7 @@ async def route_command_to_target(
             context.tmux_session,
             "bash",
             "-lc",
-            wrapped_command,
+            bootstrap,
         ]
         tmux_cmd = " ".join(shlex.quote(a) for a in tmux_argv)
 

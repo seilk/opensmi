@@ -272,8 +272,8 @@ class TestRouteCommandToTarget(unittest.TestCase):
             self.assertIn("tmux new-session", actual_command)
             self.assertIn("-d", actual_command)
             self.assertIn("session-123", actual_command)
-            self.assertIn("CUDA_VISIBLE_DEVICES=0,1", actual_command)
-            self.assertIn("python train.py", actual_command)
+            self.assertIn("base64 --decode", actual_command)
+            self.assertIn("echo ", actual_command)
 
     def test_route_missing_node_config(self):
         target_no_config = NodeTarget(
@@ -486,9 +486,8 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
             self.assertIn("tmux new-session", command)
             self.assertIn("-d", command)
             self.assertIn("training-session", command)
-            self.assertIn("CUDA_VISIBLE_DEVICES=0", command)
-            self.assertIn("DEBUG=1", command)
-            self.assertIn("python train.py --epochs 100", command)
+            self.assertIn("base64 --decode", command)
+            self.assertIn("echo ", command)
 
     def test_tmux_mode_without_env_vars(self):
         """Test tmux mode works correctly without environment variables."""
@@ -527,7 +526,7 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
             # We shell-quote the payload; don't assert exact quoting, just content.
             self.assertIn("bash -lc", command)
             self.assertIn("echo", command)
-            self.assertIn("hello", command)
+            self.assertIn("base64 --decode", command)
 
     def test_route_respects_node_config_timeout(self):
         """Test that custom timeout is respected in execution."""
