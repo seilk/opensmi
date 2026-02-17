@@ -65,6 +65,29 @@ interface Allocation {
   notes: string;
 }
 
+interface Job {
+  id: string;
+  command: string;
+  commands: string[];
+  gpus: [string, number][];  // [(node_alias, gpu_idx), ...]
+  requested_gpu_count: number;
+  dist_mode: "single" | "one-to-one";
+  exec_mode: "direct" | "tmux";
+  tmux_sessions: string[];
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  submitted_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  exit_codes: number[];
+  error: string | null;
+  user: string;
+  restart_policy: "never" | "on-failure" | "always";
+  retry_count: number;
+  max_retries: number;
+  tags: string[];
+  queue_mode: "immediate" | "queued";
+}
+
 // ── State ──────────────────────────────────────────────────────────
 
 let snapshot: ClusterSnapshot | null = null;
@@ -74,7 +97,7 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" | "jobs" = "dashboard";
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -130,6 +153,7 @@ let launchGpuMode: "auto" | "selected" = "auto";
 let launchManualGpus: Array<{ node: string; gpu: number }> = [];
 let launchSelectionReasoning = "";
 let launchSourceBundle: string | null = null; // Track which bundle opened the runner
+let launchQueueMode: "immediate" | "queued" = "immediate"; // Queue mode for job submission
 
 type RunnerState = "idle" | "queued" | "preparing" | "sent" | "running" | "failed";
 let runnerState: RunnerState = "idle";
@@ -182,6 +206,11 @@ let systemUsers: string[] = [];
 let systemUsersLoadedAt = 0;
 let knownUsers: string[] = [];
 let requestRender: (() => void) | null = null;
+
+let jobList: Job[] = [];
+let selectedJobIdx = 0;
+let jobDetailView: Job | null = null;
+let jobsLastLoadTime = 0;
 
 function getStateDir(): string {
   const homedir = process.env.HOME || "~";
@@ -317,10 +346,10 @@ async function refreshLaunchGpuSelection(): Promise<void> {
   
   // In "auto" mode, rank and select GPUs automatically
   try {
-    const tmpFile = `/tmp/opensmi-snap-${Date.now()}.json`;
+    const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
     
-    const allocFile = `/tmp/opensmi-alloc-${Date.now()}.json`;
+    const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
     const rankScript = `
@@ -527,7 +556,6 @@ function updateGpuIdleTracking(): void {
 
 async function loadAllocations(): Promise<void> {
   try {
-    // We load from the JSON file directly (source of truth for the TUI)
     const homedir = process.env.HOME || "~";
     const stateDir = process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
     const allocPath = `${stateDir}/allocations.json`;
@@ -542,6 +570,636 @@ async function loadAllocations(): Promise<void> {
     allocations = [];
   } finally {
     recomputeKnownUsers();
+  }
+}
+
+async function loadJobsFromCLI(): Promise<void> {
+  try {
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "list", "--json"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    if (proc.exitCode !== 0) {
+      jobList = [];
+      return;
+    }
+    
+    const data = JSON.parse(output);
+    jobList = (data.jobs || []) as Job[];
+    jobsLastLoadTime = Date.now();
+  } catch {
+    jobList = [];
+  }
+}
+
+async function findAvailableGpus(count: number): Promise<Array<{ node: string; gpu: number }>> {
+  /**
+   * Find available idle GPUs using the existing rank_gpus logic.
+   * 
+   * "Available" means:
+   *   - No active processes on the GPU
+   *   - GPU utilization is 0%
+   *   - Not already reserved by another queued job
+   * 
+   * Reserved GPUs: Queued jobs that have already been assigned specific GPUs
+   * (e.g. immediate mode jobs that were converted to queued) should not have
+   * their GPUs re-allocated to new jobs.
+   * 
+   * Returns: Top N available GPUs sorted by priority (rank_gpus order)
+   */
+  if (!snapshot || count <= 0) {
+    return [];
+  }
+  
+  try {
+    // Write snapshot and allocations to temp files
+    const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(snapshot));
+    
+    const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
+    await Bun.write(allocFile, JSON.stringify(allocations));
+    
+    // Build set of GPUs already assigned to queued jobs (to avoid double-booking)
+    const queuedJobs = jobList.filter(j => j.status === "queued");
+    const reservedGpuKeys = new Set<string>();
+    for (const job of queuedJobs) {
+      for (const [node, gpu_idx] of job.gpus) {
+        reservedGpuKeys.add(`${node}:${gpu_idx}`);
+      }
+    }
+    const reservedGpusJson = JSON.stringify(Array.from(reservedGpuKeys));
+    
+    const findScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.gpu_ranker import rank_gpus
+from opensmi.launch_history import load_history
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    snap_data = json.loads(f.read())
+
+class SimpleGPU:
+    def __init__(self, d):
+        self.index = d['index']
+        self.uuid = d['uuid']
+        self.name = d['name']
+        self.memory_total_mib = d.get('memory_total_mib')
+        self.memory_used_mib = d.get('memory_used_mib')
+        self.memory_free_mib = d.get('memory_free_mib')
+        self.utilization_gpu_percent = d.get('utilization_gpu_percent')
+        self.temperature_c = d.get('temperature_c')
+        self.power_draw_w = d.get('power_draw_w')
+
+class SimpleProc:
+    def __init__(self, d):
+        self.gpu_uuid = d['gpu_uuid']
+        self.pid = d['pid']
+        self.process_name = d['process_name']
+        self.used_memory_mib = d.get('used_memory_mib')
+        self.user = d.get('user', 'unknown')
+        self.runtime_s = d.get('runtime_s')
+
+class SimpleNode:
+    def __init__(self, d):
+        self.node_alias = d['node_alias']
+        self.address = d['address']
+        self.hostname = d.get('hostname')
+        self.os = d.get('os')
+        self.timestamp = d.get('timestamp')
+        self.gpus = [SimpleGPU(g) for g in d.get('gpus', [])]
+        self.processes = [SimpleProc(p) for p in d.get('processes', [])]
+        self.error = d.get('error')
+
+class SimpleSnap:
+    def __init__(self, d):
+        self.cluster_name = d['cluster_name']
+        self.timestamp = d['timestamp']
+        self.nodes = [SimpleNode(n) for n in d['nodes']]
+
+snap = SimpleSnap(snap_data)
+state_dir = get_state_dir()
+history = load_history(state_dir)
+
+with open("${allocFile}", "r") as f:
+    alloc_data = json.loads(f.read())
+
+current_user = "${OPERATOR}"
+reserved = set(${reservedGpusJson})
+
+# Rank all GPUs
+ranked = rank_gpus(snap, history, alloc_data, current_user)
+
+# Filter for idle GPUs not reserved by queued jobs
+available = []
+for node_alias, gpu_idx, gpu_info in ranked:
+    gpu_key = f"{node_alias}:{gpu_idx}"
+    if gpu_key in reserved:
+        continue
+    
+    # Check if GPU is idle (no processes, 0% utilization)
+    node = next((n for n in snap.nodes if n.node_alias == node_alias), None)
+    if not node:
+        continue
+    
+    gpu_uuid = gpu_info.uuid
+    has_processes = any(p.gpu_uuid == gpu_uuid for p in node.processes)
+    utilization = gpu_info.utilization_gpu_percent or 0
+    
+    if not has_processes and utilization == 0:
+        available.append({"node": node_alias, "gpu": gpu_idx})
+        if len(available) >= ${count}:
+            break
+
+print(json.dumps(available))
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", findScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    
+    // Cleanup temp files
+    try {
+      await Bun.$`rm -f ${tmpFile} ${allocFile}`;
+    } catch {}
+    
+    if (exitCode !== 0) {
+      console.error(`findAvailableGpus failed: ${stderr}`);
+      return [];
+    }
+    
+    return JSON.parse(stdout.trim());
+  } catch (e) {
+    console.error("findAvailableGpus error:", e);
+    return [];
+  }
+}
+
+async function dispatchQueuedJobs(): Promise<void> {
+  if (!snapshot) {
+    return;
+  }
+  
+  // Get queued jobs in FIFO order (sorted by submission time)
+  const queuedJobs = jobList
+    .filter(j => j.status === "queued" && j.queue_mode === "queued")
+    .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
+  
+  if (queuedJobs.length === 0) {
+    return;
+  }
+  
+  // Process each queued job in order (FIFO)
+  for (let i = 0; i < queuedJobs.length; i++) {
+    const job = queuedJobs[i];
+    const needed = job.requested_gpu_count || job.gpus.length;
+    
+    if (needed === 0) {
+      continue;
+    }
+    
+    try {
+      const available = await findAvailableGpus(needed);
+      
+      if (available.length < needed) {
+        // Job is still waiting for GPUs - show status for first job only
+        if (i === 0) {
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
+        }
+        continue;
+      }
+      
+      // GPUs found - show allocation details
+      const gpuList = available.slice(0, needed)
+        .map(g => `${g.node}:${g.gpu}`)
+        .join(", ");
+      
+      job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
+      job.status = "running";
+      job.started_at = new Date().toISOString();
+      
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      setStatus(`Auto-dispatching job ${job.id} → [${gpuList}]`, 2000);
+      
+      await executeJobRemote(job);
+      await updateJobInStore(job);
+      await loadJobsFromCLI();
+      
+      setStatus(`✓ Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
+      
+      requestRender?.();
+      
+    } catch (e: any) {
+      console.error(`Failed to dispatch job ${job.id}:`, e);
+      
+      job.status = "failed";
+      job.finished_at = new Date().toISOString();
+      job.error = `Dispatch failed: ${e?.message || String(e)}`;
+      
+      const errorMsg = e?.message || String(e);
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      setStatus(`✗ Auto-dispatch failed for job ${job.id}: ${errorMsg.slice(0, 40)}`, 4000);
+      
+      try {
+        await updateJobInStore(job);
+        await loadJobsFromCLI();
+      } catch (updateErr) {
+        console.error(`Failed to update job ${job.id} status:`, updateErr);
+      }
+      
+      requestRender?.();
+    }
+  }
+}
+
+async function checkJobAlive(job: Job): Promise<boolean> {
+  if (job.exec_mode !== "tmux" || job.tmux_sessions.length === 0) {
+    return false;
+  }
+  
+  const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
+  await Bun.write(tmpFile, JSON.stringify(job));
+  
+  const checkScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, check_job_alive
+from opensmi.config import load_config
+from opensmi.state import resolve_config_path
+import asyncio
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+job = Job(
+    id=job_data["id"],
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+    status=job_data["status"],
+    submitted_at=job_data["submitted_at"],
+    started_at=job_data.get("started_at"),
+    finished_at=job_data.get("finished_at"),
+    exit_codes=job_data["exit_codes"],
+    error=job_data.get("error"),
+    user=job_data["user"],
+    restart_policy=job_data["restart_policy"],
+    retry_count=job_data["retry_count"],
+    max_retries=job_data["max_retries"],
+    tags=job_data["tags"],
+    queue_mode=job_data["queue_mode"],
+)
+
+cfg_path = resolve_config_path()
+cfg = load_config(cfg_path)
+
+async def main():
+    alive = await check_job_alive(job, cfg)
+    print("true" if alive else "false")
+
+asyncio.run(main())
+`;
+  
+  try {
+    const proc = Bun.spawn([PYTHON, "-c", checkScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    const code = await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (code !== 0) {
+      return false;
+    }
+    
+    return stdout.trim() === "true";
+  } catch (e) {
+    console.error(`Failed to check job ${job.id} alive status:`, e);
+    return false;
+  }
+}
+
+async function watchRunningJobs(): Promise<void> {
+  const runningJobs = jobList.filter(j => j.status === "running" && j.exec_mode === "tmux");
+  
+  if (runningJobs.length === 0) {
+    return;
+  }
+  
+  // Check each running job's tmux session health
+  for (const job of runningJobs) {
+    try {
+      const alive = await checkJobAlive(job);
+      
+      if (!alive) {
+        // Tmux session terminated - determine restart behavior based on policy
+        // restart_policy="on-failure": restart up to max_retries (default 3)
+        // restart_policy="always": restart indefinitely (no limit)
+        // restart_policy="never": mark as failed immediately
+        const shouldRestart = 
+          (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
+          (job.restart_policy === "always");
+        
+        if (shouldRestart) {
+          // Re-queue for auto-dispatch
+          job.status = "queued";
+          job.retry_count++;
+          job.started_at = null;
+          job.tmux_sessions = [];
+          
+          const retryInfo = job.restart_policy === "always" 
+            ? `(retry ${job.retry_count})`
+            : `(retry ${job.retry_count}/${job.max_retries})`;
+          
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Job ${job.id} died, re-queuing ${retryInfo} - ${cmdPreview.slice(0, 30)}...`, 3000);
+        } else {
+          // Mark as failed (max retries exceeded or restart_policy="never")
+          job.status = "failed";
+          job.finished_at = new Date().toISOString();
+          job.error = job.error || "tmux session terminated unexpectedly";
+          
+          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          setStatus(`Job ${job.id} failed: session terminated - ${cmdPreview.slice(0, 30)}...`, 3000);
+        }
+        
+        await updateJobInStore(job);
+        await loadJobsFromCLI();
+        requestRender?.();
+      }
+    } catch (e: any) {
+      console.error(`Failed to watch job ${job.id}:`, e);
+    }
+  }
+}
+
+async function cleanupOldJobs(): Promise<void> {
+  const cleanupScript = `
+import sys
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import load_jobs, save_jobs, cleanup_old_jobs
+from opensmi.state import get_state_dir
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+cleaned_jobs = cleanup_old_jobs(jobs, max_done=100, max_failed=50)
+if len(cleaned_jobs) != len(jobs):
+    save_jobs(state_dir, cleaned_jobs)
+    print(f"Cleaned up {len(jobs) - len(cleaned_jobs)} old jobs")
+else:
+    print("No cleanup needed")
+`;
+  
+  try {
+    const proc = Bun.spawn([PYTHON, "-c", cleanupScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+  } catch (e: any) {
+    console.error("Failed to cleanup old jobs:", e);
+  }
+}
+
+async function executeJobRemote(job: Job): Promise<void> {
+  const tmuxSessions: string[] = [];
+  
+  if (job.dist_mode === "single") {
+    const nodesByGpu = new Map<string, number[]>();
+    
+    for (const [node, gpu] of job.gpus) {
+      if (!nodesByGpu.has(node)) {
+        nodesByGpu.set(node, []);
+      }
+      nodesByGpu.get(node)!.push(gpu);
+    }
+    
+    for (const [node, gpus] of nodesByGpu.entries()) {
+      const gpusCsv = gpus.join(",");
+      const sessionName = job.exec_mode === "tmux" 
+        ? `opensmi-${job.id}-${node}`
+        : undefined;
+      
+      const payload = await executeRemoteExec({
+        node,
+        gpusCsv,
+        mode: job.exec_mode,
+        command: job.command,
+        session: sessionName,
+      });
+      
+      if (!payload.ok) {
+        throw new Error(`Failed to execute on ${node}: ${payload.rawStderr.trim()}`);
+      }
+      
+      if (sessionName) {
+        tmuxSessions.push(sessionName);
+      }
+    }
+  } else {
+    for (let i = 0; i < job.commands.length; i++) {
+      const cmd = job.commands[i];
+      const [node, gpu] = job.gpus[i];
+      
+      if (!cmd || !node || gpu === undefined) {
+        continue;
+      }
+      
+      const gpuIndex = String(gpu);
+      const sessionName = job.exec_mode === "tmux"
+        ? `opensmi-${job.id}-${node}-gpu${gpu}`
+        : undefined;
+      
+      const payload = await executeRemoteExec({
+        node,
+        gpusCsv: gpuIndex,
+        mode: job.exec_mode,
+        command: cmd,
+        session: sessionName,
+      });
+      
+      if (!payload.ok) {
+        throw new Error(`Failed to execute on ${node}:GPU${gpu}: ${payload.rawStderr.trim()}`);
+      }
+      
+      if (sessionName) {
+        tmuxSessions.push(sessionName);
+      }
+    }
+  }
+  
+  job.tmux_sessions = tmuxSessions;
+}
+
+async function updateJobInStore(job: Job): Promise<void> {
+  const tmpFile = `/tmp/opensmi-job-update-${crypto.randomUUID()}.json`;
+  await Bun.write(tmpFile, JSON.stringify(job));
+  
+  const updateScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=job_data["id"],
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+    status=job_data["status"],
+    submitted_at=job_data["submitted_at"],
+    started_at=job_data.get("started_at"),
+    finished_at=job_data.get("finished_at"),
+    exit_codes=job_data["exit_codes"],
+    error=job_data.get("error"),
+    user=job_data["user"],
+    restart_policy=job_data["restart_policy"],
+    retry_count=job_data["retry_count"],
+    max_retries=job_data["max_retries"],
+    tags=job_data["tags"],
+    queue_mode=job_data["queue_mode"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+print("OK")
+`;
+  
+  const proc = Bun.spawn([PYTHON, "-c", updateScript], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: OPENSMI_ENV,
+    cwd: OPENSMI_CWD,
+  });
+  
+  const stderr = await new Response(proc.stderr).text();
+  await proc.exited;
+  
+  try {
+    await Bun.$`rm -f ${tmpFile}`;
+  } catch {}
+  
+  if (proc.exitCode !== 0) {
+    throw new Error(`Failed to update job in store: ${stderr}`);
+  }
+}
+
+async function cancelJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Cancelling job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "cancel", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      setStatus(`Job ${job.id} cancelled`, 2000);
+      await loadJobsFromCLI();
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to cancel job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error cancelling job: ${e?.message || String(e)}`, 3000);
+  }
+}
+
+async function retryJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Retrying job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "retry", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      const match = output.match(/New job ID: ([a-f0-9]+)/);
+      const newId = match ? match[1] : "created";
+      setStatus(`Job retried: ${newId}`, 2000);
+      await loadJobsFromCLI();
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to retry job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error retrying job: ${e?.message || String(e)}`, 3000);
+  }
+}
+
+async function deleteJobAction(job: Job): Promise<void> {
+  try {
+    setStatus(`Deleting job ${job.id}...`);
+    const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "delete", job.id], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    if (proc.exitCode === 0) {
+      setStatus(`Job ${job.id} deleted`, 2000);
+      await loadJobsFromCLI();
+      if (selectedJobIdx >= jobList.length) {
+        selectedJobIdx = Math.max(0, jobList.length - 1);
+      }
+      jobDetailView = null;
+    } else {
+      const stderr = await new Response(proc.stderr).text();
+      setStatus(`Failed to delete job: ${stderr.trim().slice(0, 50)}`, 3000);
+    }
+  } catch (e: any) {
+    setStatus(`Error deleting job: ${e?.message || String(e)}`, 3000);
   }
 }
 
@@ -1606,58 +2264,257 @@ function renderDetail() {
 
 function renderHelp() {
   return Box(
+    {
+      direction: "vertical",
+      width: "100%",
+      height: "100%",
+      padding: { left: 2, top: 1, right: 2, bottom: 1 },
+    },
+    Text({ text: bold("Help - Keyboard Shortcuts"), fg: "cyan" }),
+    Text({ text: "" }),
+    Text({ text: "Navigation:" }),
+    Text({ text: "  ↑/↓ or j/k    Move selection" }),
+    Text({ text: "  Enter         Open detail / action" }),
+    Text({ text: "  Esc           Back to dashboard" }),
+    Text({ text: "" }),
+    Text({ text: "Tabs (Switcher: Ctrl+X, T):" }),
+    Text({ text: "  d             Dashboard" }),
+    Text({ text: "  n             Node detail (in Dashboard)" }),
+    Text({ text: "  g             My GPU View" }),
+    Text({ text: "  j             Jobs" }),
+    Text({ text: "  h             Help" }),
+    Text({ text: "" }),
+    Text({ text: "Dashboard Actions:" }),
+    Text({ text: "  l             Open command runner" }),
+    Text({ text: "  a             Allocate GPU to user" }),
+    Text({ text: "  x             Clear GPU allocation" }),
+    Text({ text: "  Shift+K       Kill violator processes" }),
+    Text({ text: "  r             Refresh cluster data" }),
+    Text({ text: "" }),
+    Text({ text: "Command Runner (l or Ctrl+R):" }),
+    Text({ text: "  Ctrl+R        Toggle runner open/close" }),
+    Text({ text: "  Ctrl+J / K    Decrease/increase pane height" }),
+    Text({ text: "  Ctrl+L        Maximize runner toggle" }),
+    Text({ text: "  Tab           Toggle execution mode (direct/tmux)" }),
+    Text({ text: "  Shift+Tab     Toggle distribution mode (single/one-to-one)" }),
+    Text({ text: "  Q             Toggle queue mode (immediate/queued)" }),
+    Text({ text: "  +/-           Adjust GPU count" }),
+    Text({ text: "  Enter         Execute command" }),
+    Text({ text: "" }),
+    Text({ text: "Quit:" }),
+    Text({ text: "  q             Quit TUI" }),
+  );
+}
+
+function getJobStatusIcon(status: string): { icon: string; color: string } {
+  switch (status) {
+    case "queued":
+      return { icon: "○", color: C.textDim };
+    case "running":
+      return { icon: "●", color: C.green };
+    case "done":
+      return { icon: "✓", color: C.cyan };
+    case "failed":
+      return { icon: "✗", color: C.red };
+    case "cancelled":
+      return { icon: "⊘", color: C.textDim };
+    default:
+      return { icon: "?", color: C.textDim };
+  }
+}
+
+function formatJobTimestamp(isoString: string | null): string {
+  if (!isoString) return "—";
+  try {
+    const d = new Date(isoString);
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  } catch {
+    return "—";
+  }
+}
+
+function formatJobDuration(startedAt: string | null, finishedAt: string | null): string {
+  if (!startedAt) return "—";
+  const start = new Date(startedAt).getTime();
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  const durationMs = end - start;
+  const durationS = Math.floor(durationMs / 1000);
+  
+  if (durationS < 60) return `${durationS}s`;
+  const minutes = Math.floor(durationS / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h${mins}m`;
+}
+
+function formatJobGpus(job: Job): string {
+  if (job.gpus.length === 0) {
+    if (job.requested_gpu_count > 0) {
+      return `(auto×${job.requested_gpu_count})`;
+    }
+    return "—";
+  }
+  
+  return job.gpus.map(([node, gpu]) => `${node}:${gpu}`).join(",");
+}
+
+function renderJobsView() {
+  if (jobDetailView) {
+    return renderJobDetailView();
+  }
+  return renderJobsListView();
+}
+
+function renderJobsListView() {
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)("Jobs"))}`,
+    }),
+    Text({
+      content: t`Total: ${jobList.length}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      fg: C.text,
+    })
+  );
+
+  if (jobList.length === 0) {
+    return Box(
+      { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+      header,
+      Text({ content: "" }),
+      Text({ content: "No jobs submitted yet", fg: C.yellow }),
+      Text({ content: "" }),
+      Text({ content: "Submit a job via:", fg: C.textDim }),
+      Text({ content: "  • Command runner (press 'l')", fg: C.textDim }),
+      Text({ content: "  • CLI: opensmi job submit", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: t`${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back`, fg: C.textDim })
+    );
+  }
+
+  const rows: any[] = [];
+  rows.push(
+    Text({
+      content: t`${fg(C.cyan)("  ID        Status      GPUs              Command           Time")}`,
+      fg: C.cyan,
+    })
+  );
+
+  for (let i = 0; i < jobList.length; i++) {
+    const job = jobList[i];
+    const selected = i === selectedJobIdx;
+    const statusInfo = getJobStatusIcon(job.status);
+    
+    const commandDisplay = job.dist_mode === "single" 
+      ? job.command.slice(0, 30) 
+      : `[${job.commands.length} cmds]`;
+    
+    const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
+    const timeDisplay = formatJobTimestamp(job.submitted_at);
+    
+    const prefix = selected ? "▶ " : "  ";
+    const idDisplay = job.id.padEnd(8);
+    const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
+    
+    const line = t`${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${timeDisplay}`;
+    
+    rows.push(
+      Text({
+        content: selected ? t`${fg(C.yellow)(line)}` : line,
+        fg: selected ? C.yellow : statusInfo.color,
+      })
+    );
+  }
+
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
     { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
-    Text({ content: t`${bold(fg(C.blue)("opensmi — Help"))}` }),
+    header,
     Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Tab Navigation:")}` }),
-    Text({ content: "  ctrl+x t         Open tab switcher" }),
-    Text({ content: "  ctrl+x q         Quit application" }),
-    Text({ content: "  In tab switcher: ↑/↓ navigate, Enter switch, Esc cancel" }),
-    Text({ content: "  Quick shortcuts: [d]ashboard [g]My GPUs [h]elp [n]ode detail" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Dashboard:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Navigate nodes" }),
-    Text({ content: "  Enter            Node detail view" }),
-    Text({ content: "  r                Refresh (poll all nodes)" }),
-    Text({ content: "  ctrl+x ↓         Focus runner pane" }),
-    Text({ content: "  ctrl+x f         Fold/unfold runner pane" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Detail view:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Select GPU" }),
-    Text({ content: "  a                Allocate selected GPU (admin)" }),
-    Text({ content: "  *                Allocate to everyone (admin)" }),
-    Text({ content: "  x                Clear allocation (admin)" }),
-    Text({ content: "  Shift+K          Kill violators (admin)" }),
-    Text({ content: "  Esc / Backspace  Back to dashboard" }),
-    Text({ content: "  r                Refresh" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("My GPU View:")}` }),
-    Text({ content: "  ↑/↓ or j/k       Navigate GPU bundles" }),
-    Text({ content: "  [a]              Jump to allocated GPUs" }),
-    Text({ content: "  [p]              Jump to active processes" }),
-    Text({ content: "  [+]              Jump to pinned GPUs" }),
-    Text({ content: "  ctrl+x r         Run command on bundle" }),
-    Text({ content: "  r                Refresh" }),
-    Text({ content: "  Esc              Back to dashboard" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Runner Pane (when focused):")}` }),
-    Text({ content: "  Enter            Start typing mode" }),
-    Text({ content: "  ctrl+x Enter     Execute commands" }),
-    Text({ content: "  Tab              Toggle direct/tmux mode" }),
-    Text({ content: "  Shift+Tab        Toggle single/one-to-one distribution" }),
-    Text({ content: "  +/-              Increase/decrease GPU count" }),
-    Text({ content: "  g                Toggle auto/manual GPU selection" }),
-    Text({ content: "  ↑/↓              Navigate input lines (one-to-one mode)" }),
-    Text({ content: "  Esc              Exit focus" }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.cyan)("Colors:")}` }),
-    Text({ content: t`  ${fg(C.green)("Green")}   — Allocated user (OK)` }),
-    Text({ content: t`  ${fg(C.red)("Red")}     — Violation (wrong/unallocated user)` }),
-    Text({ content: t`  ${fg(C.yellow)("Yellow")}  — Selected item` }),
-    Text({ content: t`  ${fg(C.cyan)("Cyan")}    — Available / interactive` }),
-    Text({ content: t`  ${fg(C.textDim)("Gray")}    — Idle / no process` }),
-    Text({ content: "" }),
-    Text({ content: t`${fg(C.textDim)("[Esc]")} Back to dashboard` })
+    ...rows
+  );
+}
+
+function renderJobDetailView() {
+  if (!jobDetailView) return renderJobsListView();
+  
+  const job = jobDetailView;
+  const statusInfo = getJobStatusIcon(job.status);
+  
+  const rows: any[] = [];
+  rows.push(
+    Text({
+      content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, 40)}`,
+    })
+  );
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
+  rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
+  
+  if (job.gpus.length > 0) {
+    const gpuList = job.gpus.map(([node, gpu]) => `${node}:GPU${gpu}`).join(", ");
+    rows.push(Text({ content: t`GPUs:      ${gpuList}` }));
+  } else if (job.requested_gpu_count > 0) {
+    rows.push(Text({ content: t`GPUs:      ${fg(C.yellow)(`Waiting for ${job.requested_gpu_count} GPUs`)}` }));
+  }
+  
+  rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}` }));
+  rows.push(Text({ content: t`Queue:     ${job.queue_mode}` }));
+  rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries} retries)` : ""}` }));
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
+  if (job.started_at) {
+    rows.push(Text({ content: t`Started:   ${job.started_at}` }));
+  }
+  if (job.finished_at) {
+    rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
+  }
+  if (job.started_at) {
+    const duration = formatJobDuration(job.started_at, job.finished_at);
+    rows.push(Text({ content: t`Duration:  ${duration}` }));
+  }
+  
+  if (job.tmux_sessions.length > 0) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.cyan)("Tmux Sessions:")}` }));
+    for (const session of job.tmux_sessions) {
+      rows.push(Text({ content: `  ${session}`, fg: C.textDim }));
+    }
+  }
+  
+  if (job.error) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
+  }
+  
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: t`${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry  ${fg(C.textDim)("[Esc]")} Back`,
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
+    { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+    ...rows
   );
 }
 
@@ -2331,7 +3188,7 @@ function renderRunnerPane() {
     content: runnerInputTyping
       ? "[Esc] Stop  [ctrl+x Enter] Execute"
       : (runnerFocused
-          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-] Options"
+          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/Q] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
     fg: C.textDim 
   });
@@ -2371,7 +3228,7 @@ function renderRunnerPane() {
   }
   
   const modeInfo = Text({ 
-    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Count: ${launchNumGpus}`, 
+    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Queue: ${launchQueueMode}  Count: ${launchNumGpus}`, 
     fg: C.textDim 
   });
   
@@ -2666,7 +3523,7 @@ function renderLaunch() {
   });
   
   const modeLabel = Text({ 
-    content: `Exec: ${launchMode === "direct" ? "Direct" : "Tmux"} [Tab]  Dist: ${launchDistMode === "single" ? "Single" : "1:1"} [Shift+Tab]`, 
+    content: `Exec: ${launchMode === "direct" ? "Direct" : "Tmux"} [Tab]  Dist: ${launchDistMode === "single" ? "Single" : "1:1"} [Shift+Tab]  Queue: ${launchQueueMode} [Q]`, 
     fg: C.textDim 
   });
   
@@ -2816,6 +3673,247 @@ function renderLaunch() {
   );
 }
 
+async function saveJobToStore(): Promise<void> {
+  try {
+    const jobData: Partial<Job> = {
+      command: launchDistMode === "single" ? launchCommand : "",
+      commands: launchDistMode === "one-to-one" ? launchCommands.filter(c => c.trim()) : [],
+      gpus: launchSelectedGpus.map(g => [g.node, g.gpu] as [string, number]),
+      requested_gpu_count: launchNumGpus,
+      dist_mode: launchDistMode,
+      exec_mode: launchMode,
+      queue_mode: launchQueueMode,
+    };
+    
+    const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(jobData));
+    
+    const submitScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=Job.new_id(),
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    status="queued",
+    submitted_at=datetime.now(timezone.utc).isoformat(),
+    user="${OPERATOR}",
+    restart_policy="never",
+    queue_mode=job_data["queue_mode"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+
+print(json.dumps({"job_id": job.id, "status": job.status}))
+`;
+    
+    const submitProc = Bun.spawn([PYTHON, "-c", submitScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(submitProc.stdout).text();
+    const stderr = await new Response(submitProc.stderr).text();
+    await submitProc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (submitProc.exitCode !== 0) {
+      setLaunchError(`Failed to save job: ${stderr}`);
+      runnerState = "failed";
+      return;
+    }
+    
+    let result: any;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      setLaunchError("Failed to parse job submission response");
+      runnerState = "failed";
+      return;
+    }
+    
+    runnerState = "running";
+    setStatus(`Job ${result.job_id} queued successfully`);
+    launchOutput = `Job queued: ${result.job_id}\nStatus: ${result.status}\nGPUs: ${launchNumGpus}\nMode: ${launchDistMode} / ${launchMode}`;
+    
+    await loadJobsFromCLI();
+  } catch (e: any) {
+    setLaunchError(`Failed to queue job: ${e?.message || String(e)}`);
+    runnerState = "failed";
+  }
+}
+
+/**
+ * Create job record from current launch configuration for immediate mode.
+ * Returns job_id if successful, null otherwise.
+ */
+async function createImmediateJob(): Promise<string | null> {
+  try {
+    const jobData: Partial<Job> = {
+      command: launchDistMode === "single" ? launchCommand : "",
+      commands: launchDistMode === "one-to-one" ? launchCommands.filter(c => c.trim()) : [],
+      gpus: launchSelectedGpus.map(g => [g.node, g.gpu] as [string, number]),
+      requested_gpu_count: 0,
+      dist_mode: launchDistMode,
+      exec_mode: launchMode,
+      queue_mode: "immediate",
+      tmux_sessions: [],
+      user: OPERATOR,
+    };
+    
+    const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(jobData));
+    
+    const submitScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=Job.new_id(),
+    command=job_data["command"],
+    commands=job_data["commands"],
+    gpus=[tuple(g) for g in job_data["gpus"]],
+    requested_gpu_count=job_data["requested_gpu_count"],
+    dist_mode=job_data["dist_mode"],
+    exec_mode=job_data["exec_mode"],
+    status="queued",
+    submitted_at=datetime.now(timezone.utc).isoformat(),
+    started_at=datetime.now(timezone.utc).isoformat(),
+    user=job_data["user"],
+    restart_policy="never",
+    queue_mode=job_data["queue_mode"],
+    tmux_sessions=job_data["tmux_sessions"],
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+
+print(job.id)
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", submitScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (proc.exitCode !== 0) {
+      console.error(`Failed to create job: ${await new Response(proc.stderr).text()}`);
+      return null;
+    }
+    
+    return stdout.trim() || null;
+  } catch (e: any) {
+    console.error(`Failed to create immediate job: ${e?.message || String(e)}`);
+    return null;
+  }
+}
+
+/**
+ * Update job status and tmux sessions after immediate execution.
+ */
+async function updateImmediateJob(
+  jobId: string,
+  status: "running" | "done" | "failed",
+  tmuxSessions: string[],
+  error: string | null = null
+): Promise<void> {
+  try {
+    const updateData = {
+      job_id: jobId,
+      status: status,
+      tmux_sessions: tmuxSessions,
+      error: error,
+    };
+    
+    const tmpFile = `/tmp/opensmi-update-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(updateData));
+    
+    const updateScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import load_jobs, save_jobs, get_job, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    update_data = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+job = get_job(jobs, update_data["job_id"])
+
+if job:
+    job.status = update_data["status"]
+    job.tmux_sessions = update_data["tmux_sessions"]
+    if update_data["status"] in ("done", "failed"):
+        job.finished_at = datetime.now(timezone.utc).isoformat()
+    if update_data["error"]:
+        job.error = update_data["error"]
+    jobs = upsert_job(jobs, job)
+    save_jobs(state_dir, jobs)
+else:
+    sys.exit(1)
+`;
+    
+    const proc = Bun.spawn([PYTHON, "-c", updateScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+    
+    await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+    
+    if (proc.exitCode !== 0) {
+      console.error(`Failed to update job ${jobId}`);
+    }
+  } catch (e: any) {
+    console.error(`Failed to update job ${jobId}: ${e?.message || String(e)}`);
+  }
+}
+
 async function executeLaunch(): Promise<void> {
   runnerState = "queued";
   runnerStderr = [];
@@ -2860,7 +3958,24 @@ async function executeLaunch(): Promise<void> {
   runnerState = "preparing";
   
   try {
-    const tmpFile = `/tmp/opensmi-gpus-${Date.now()}.json`;
+    // If queue mode is "queued", save to job store instead of executing immediately
+    if (launchQueueMode === "queued") {
+      await saveJobToStore();
+      return;
+    }
+    
+    // Immediate mode: execute now and track in job store
+    
+    // Create job record before execution
+    const currentJobId = await createImmediateJob();
+    if (!currentJobId) {
+      setLaunchError("Failed to create job record");
+      runnerState = "failed";
+      return;
+    }
+    
+    // Update launch history
+    const tmpFile = `/tmp/opensmi-gpus-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
     
     const updateScript = `
@@ -2891,16 +4006,44 @@ print("OK")
     
     runnerState = "sent";
     
+    // Execute and collect tmux session names
+    const tmuxSessions: string[] = [];
+    
     if (launchDistMode === "single") {
       const gpuIndices = launchSelectedGpus.map(g => g.gpu).join(",");
       if (launchMode === "tmux") {
+        const nodes = Array.from(new Set(launchSelectedGpus.map(g => g.node)));
+        const sessionName = launchTmuxSession.trim() || `opensmi-${currentJobId}-${nodes[0]}`;
+        tmuxSessions.push(sessionName);
+        // Set launchTmuxSession so executeLaunchTmux uses it
+        if (!launchTmuxSession.trim()) {
+          launchTmuxSession = sessionName;
+        }
         await executeLaunchTmux(launchCommand, gpuIndices);
       } else {
         await executeLaunchDirect(launchCommand, gpuIndices);
       }
     } else {
+      // One-to-one mode
+      if (launchMode === "tmux") {
+        for (let i = 0; i < launchNumGpus; i++) {
+          const cmd = launchCommands[i]?.trim();
+          if (!cmd) continue;
+          const gpu = launchSelectedGpus[i];
+          if (!gpu) continue;
+          const sessionName = launchTmuxSession.trim()
+            ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
+            : `opensmi-${currentJobId}-${gpu.node}-gpu${gpu.gpu}`;
+          tmuxSessions.push(sessionName);
+        }
+      }
       await executeLaunchOneToOne();
     }
+    
+    // Update job status after execution
+    const finalStatus = launchErrorMsg ? "failed" : (launchMode === "tmux" ? "running" : "done");
+    await updateImmediateJob(currentJobId, finalStatus, tmuxSessions, launchErrorMsg || null);
+    await loadJobsFromCLI();
     
     if (launchErrorMsg === "") {
       runnerState = "running";
@@ -3352,6 +4495,16 @@ async function main() {
   });
 
   tabRegistry.register({
+    id: "jobs",
+    label: "Jobs",
+    shortcut: "j",
+    render: renderJobsView,
+    onEnter: async () => {
+      await loadJobsFromCLI();
+    },
+  });
+
+  tabRegistry.register({
     id: "my-gpu-view",
     label: "My GPUs",
     shortcut: "g",
@@ -3370,16 +4523,45 @@ async function main() {
     pollCluster(),
     loadAllocations(),
     loadSystemUsers(true),
+    loadJobsFromCLI(),
   ]);
+  await dispatchQueuedJobs();
+  await watchRunningJobs();
   bootLoading = false;
   render();
 
   // Auto-refresh every 15s (disabled while editing allocations or runner typing)
   const refreshInterval = setInterval(async () => {
-    if (screen !== "dashboard" && screen !== "detail") return;
-    if (runnerFocused || runnerInputTyping) return; // Skip refresh when user is editing
+    if (screen !== "dashboard" && screen !== "detail" && screen !== "jobs") return;
+    if (runnerFocused || runnerInputTyping) return;
+    
+    // Always poll cluster to ensure dispatcher has fresh GPU availability data
     await Promise.all([pollCluster(), loadAllocations()]);
+    
+    // Load jobs if on jobs tab
+    if (screen === "jobs") {
+      await loadJobsFromCLI();
+    }
+    
+    // Dispatch queued jobs after snapshot update
+    await dispatchQueuedJobs();
+    
+    // Watch running jobs for health and auto-restart
+    await watchRunningJobs();
     render();
+  }, 15_000);
+
+  // Cleanup old jobs every hour
+  let cleanupCounter = 0;
+  const cleanupInterval = setInterval(async () => {
+    cleanupCounter++;
+    // Run cleanup every hour (240 cycles of 15s)
+    if (cleanupCounter % 240 === 0) {
+      await cleanupOldJobs();
+      // Reload jobs to reflect cleanup
+      await loadJobsFromCLI();
+      requestRender?.();
+    }
   }, 15_000);
 
   // Key handling
@@ -3797,6 +4979,14 @@ async function main() {
             launchManualGpus.pop(); // Remove last selected GPU
           }
           await refreshLaunchGpuSelection();
+          render();
+          return;
+        }
+        
+        if ((key.name === "q" || key.name === "Q") && !runnerInputTyping) {
+          key.preventDefault();
+          launchQueueMode = launchQueueMode === "immediate" ? "queued" : "immediate";
+          setStatus(`Queue mode: ${launchQueueMode}`, 1500);
           render();
           return;
         }
@@ -4249,6 +5439,55 @@ async function main() {
       ) {
         await navigateToTab("dashboard");
         render();
+      }
+    } else if (screen === "jobs") {
+      if (jobDetailView) {
+        if (key.name === "escape" || key.name === "backspace") {
+          jobDetailView = null;
+          render();
+        } else if (key.name === "c") {
+          await cancelJobAction(jobDetailView);
+          render();
+        } else if (key.name === "r") {
+          await retryJobAction(jobDetailView);
+          render();
+        }
+      } else {
+        if (key.name === "escape" || key.name === "backspace") {
+          await navigateToTab("dashboard");
+          render();
+        } else if (key.name === "up" || key.name === "k") {
+          selectedJobIdx = Math.max(0, selectedJobIdx - 1);
+          render();
+        } else if (key.name === "down" || key.name === "j") {
+          selectedJobIdx = Math.min(jobList.length - 1, selectedJobIdx + 1);
+          render();
+        } else if (key.name === "return") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            jobDetailView = jobList[selectedJobIdx];
+            render();
+          }
+        } else if (key.name === "c") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await cancelJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        } else if (key.name === "r" && key.shift) {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await retryJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        } else if (key.name === "r" && !key.shift) {
+          setStatus("Refreshing jobs...");
+          await loadJobsFromCLI();
+          setStatus("Jobs refreshed", 1000);
+          render();
+        } else if (key.name === "d") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await deleteJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        }
       }
     } else if (screen === "launch") {
       if (key.name === "escape") {
