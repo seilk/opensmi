@@ -831,6 +831,9 @@ async function checkJobAlive(job: Job): Promise<boolean> {
     return false;
   }
   
+  const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
+  await Bun.write(tmpFile, JSON.stringify(job));
+  
   const checkScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -839,7 +842,8 @@ from opensmi.config import load_config
 from opensmi.state import resolve_config_path
 import asyncio
 
-job_data = json.loads('''${JSON.stringify(job).replace(/'/g, "\\'")}''')
+with open("${tmpFile}", "r") as f:
+    job_data = json.load(f)
 
 job = Job(
     id=job_data["id"],
@@ -884,6 +888,10 @@ asyncio.run(main())
     
     const stdout = await new Response(proc.stdout).text();
     const code = await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
     
     if (code !== 0) {
       return false;
@@ -3770,6 +3778,7 @@ async function createImmediateJob(): Promise<string | null> {
       exec_mode: launchMode,
       queue_mode: "immediate",
       tmux_sessions: [],
+      user: OPERATOR,
     };
     
     const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
@@ -3799,7 +3808,7 @@ job = Job(
     status="queued",
     submitted_at=datetime.now(timezone.utc).isoformat(),
     started_at=datetime.now(timezone.utc).isoformat(),
-    user="${OPERATOR}",
+    user=job_data["user"],
     restart_policy="never",
     queue_mode=job_data["queue_mode"],
     tmux_sessions=job_data["tmux_sessions"],
@@ -3847,7 +3856,16 @@ async function updateImmediateJob(
   error: string | null = null
 ): Promise<void> {
   try {
-    const errorEscaped = error ? error.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n") : "";
+    const updateData = {
+      job_id: jobId,
+      status: status,
+      tmux_sessions: tmuxSessions,
+      error: error,
+    };
+    
+    const tmpFile = `/tmp/opensmi-update-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(updateData));
+    
     const updateScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -3855,16 +3873,20 @@ from opensmi.jobs import load_jobs, save_jobs, get_job, upsert_job
 from opensmi.state import get_state_dir
 from datetime import datetime, timezone
 
+with open("${tmpFile}", "r") as f:
+    update_data = json.load(f)
+
 state_dir = get_state_dir()
 jobs = load_jobs(state_dir)
-job = get_job(jobs, "${jobId}")
+job = get_job(jobs, update_data["job_id"])
 
 if job:
-    job.status = "${status}"
-    job.tmux_sessions = ${JSON.stringify(tmuxSessions)}
-    if "${status}" in ("done", "failed"):
+    job.status = update_data["status"]
+    job.tmux_sessions = update_data["tmux_sessions"]
+    if update_data["status"] in ("done", "failed"):
         job.finished_at = datetime.now(timezone.utc).isoformat()
-    ${error ? `job.error = """${errorEscaped}"""` : ""}
+    if update_data["error"]:
+        job.error = update_data["error"]
     jobs = upsert_job(jobs, job)
     save_jobs(state_dir, jobs)
 else:
@@ -3879,6 +3901,10 @@ else:
     });
     
     await proc.exited;
+    
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
     
     if (proc.exitCode !== 0) {
       console.error(`Failed to update job ${jobId}`);
