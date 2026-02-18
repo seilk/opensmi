@@ -93,8 +93,10 @@ def _remote_sudo_groups(cfg) -> set[str]:
 
 
 def _find_node(cfg, alias: str):
+    # Sanitize input alias to match config (config aliases are sanitized at load time)
+    safe = alias.replace("#", "-").replace(":", "-")
     for n in cfg.nodes:
-        if n.alias == alias:
+        if n.alias == safe:
             return n
     raise ValueError(f"Unknown node alias: {alias}")
 

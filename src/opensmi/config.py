@@ -48,7 +48,7 @@ def load_config(path: Path) -> ClusterConfig:
     for raw in data.get("nodes", []):
         nodes.append(
             NodeConfig(
-                alias=str(raw["alias"]),
+                alias=str(raw["alias"]).replace("#", "-").replace(":", "-"),
                 address=str(raw["address"]),
                 user=str(raw.get("user") or data.get("default_user") or "ubuntu"),
                 port=int(raw.get("port", 22)),

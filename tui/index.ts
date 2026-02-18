@@ -3412,7 +3412,7 @@ async function loadSetupNodes(): Promise<void> {
 
   for (const n of nodes) {
     setupNodes.push({
-      alias: String(n.alias || ""),
+      alias: String(n.alias || "").replace(/#/g, "-").replace(/:/g, "-"),
       env_manager: String(n.env_manager || ""),
       env_name: String(n.env_name || ""),
       work_dir: String(n.work_dir || ""),
@@ -3437,7 +3437,9 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
       const cfg = JSON.parse(raw);
       if (!Array.isArray(cfg.nodes)) continue;
 
-      const target = cfg.nodes.find((n: any) => n.alias === node.alias);
+      const target = cfg.nodes.find((n: any) => 
+        String(n.alias || "").replace(/#/g, "-").replace(/:/g, "-") === node.alias
+      );
       if (!target) continue;
 
       // Set or remove fields (keep config clean)
