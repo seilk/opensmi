@@ -5373,9 +5373,6 @@ async function main() {
       else if (key.name === "j") {
         await navigateToTab("jobs");
         render();
-      } else if (key.name === "s") {
-        await navigateToTab("setup");
-        render();
       } else if (key.name === "g" && !runnerFocused) {
         await navigateToTab("my-gpu-view");
         render();
