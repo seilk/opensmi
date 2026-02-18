@@ -35,3 +35,4 @@ CLAUDE.md
 
 # Misc
 *.log
+.dev-build-backup/
