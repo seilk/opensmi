@@ -1176,14 +1176,18 @@ async function cancelJobAction(job: Job): Promise<void> {
     await proc.exited;
     
     if (proc.exitCode === 0) {
+      tuiLog("INFO", `cancelJobAction: job=${job.id} cancelled`);
       setStatus(`Job ${job.id} cancelled`, 2000);
       await loadJobsFromCLI();
       jobDetailView = null;
+      requestRender?.();
     } else {
       const stderr = await new Response(proc.stderr).text();
+      tuiLog("ERROR", `cancelJobAction failed: ${stderr.trim()}`);
       setStatus(`Failed to cancel job: ${stderr.trim().slice(0, 50)}`, 3000);
     }
   } catch (e: any) {
+    tuiLog("ERROR", `cancelJobAction error: ${e?.message || String(e)}`);
     setStatus(`Error cancelling job: ${e?.message || String(e)}`, 3000);
   }
 }
@@ -1204,14 +1208,22 @@ async function retryJobAction(job: Job): Promise<void> {
     if (proc.exitCode === 0) {
       const match = output.match(/New job ID: ([a-f0-9]+)/);
       const newId = match ? match[1] : "created";
-      setStatus(`Job retried: ${newId}`, 2000);
+      tuiLog("INFO", `retryJobAction: old=${job.id} new=${newId}`);
+      setStatus(`Job retried → ${newId}, dispatching...`, 2000);
       await loadJobsFromCLI();
       jobDetailView = null;
+      
+      // Immediately dispatch the new queued job instead of waiting 15s
+      await dispatchQueuedJobs();
+      await loadJobsFromCLI();
+      requestRender?.();
     } else {
       const stderr = await new Response(proc.stderr).text();
+      tuiLog("ERROR", `retryJobAction failed: ${stderr.trim()}`);
       setStatus(`Failed to retry job: ${stderr.trim().slice(0, 50)}`, 3000);
     }
   } catch (e: any) {
+    tuiLog("ERROR", `retryJobAction error: ${e?.message || String(e)}`);
     setStatus(`Error retrying job: ${e?.message || String(e)}`, 3000);
   }
 }

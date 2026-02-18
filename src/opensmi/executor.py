@@ -247,9 +247,6 @@ async def route_command_to_target(
         # Write a wrapper script that tmux will execute.
         # The script: SSH into the node, decode + run the command, then
         # wait so the user can inspect output before the session closes.
-        import os
-        import tempfile
-
         wrapper_dir = os.path.join(
             os.path.expanduser("~"), ".opensmi", "tmp"
         )
@@ -262,7 +259,7 @@ async def route_command_to_target(
 echo "opensmi: connecting to {shlex.quote(node.alias)} ({ssh_target})..."
 echo "opensmi: command → {shlex.quote(context.command[:120])}"
 echo ""
-{ssh_base_str} -t {shlex.quote(ssh_target)} "echo {payload_b64} | base64 --decode | bash -l"
+{ssh_base_str} -tt {shlex.quote(ssh_target)} "echo {payload_b64} | base64 --decode | bash"
 rc=$?
 echo ""
 echo "--- Job exited with code $rc (press Enter to close tmux session) ---"
