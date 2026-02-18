@@ -3338,7 +3338,7 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
 }
 
 function renderSetupView() {
-  tuiLog("DEBUG", `renderSetupView: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
+  tuiLog("INFO", `renderSetupView called: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
   const rows: any[] = [];
 
   rows.push(Text({ content: t`${bold("Setup")} — Per-Node Environment Configuration`, fg: C.text }));
@@ -4660,6 +4660,9 @@ async function main() {
     }
 
     let newNode: any;
+    if (screen === "setup" || screen === "help") {
+      tuiLog("INFO", `render: screen=${screen}, about to switch`);
+    }
     switch (screen) {
       case "dashboard":
         newNode = renderDashboard();
