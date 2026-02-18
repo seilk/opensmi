@@ -1113,71 +1113,87 @@ else:
   }
 }
 
+async function killTmuxSessions(sessions: string[]): Promise<void> {
+  for (const s of sessions) {
+    try {
+      await Bun.$`tmux kill-session -t ${s} 2>/dev/null || true`;
+    } catch {}
+  }
+}
+
 async function executeJobRemote(job: Job): Promise<void> {
   const tmuxSessions: string[] = [];
   
-  if (job.dist_mode === "single") {
-    const nodesByGpu = new Map<string, number[]>();
-    
-    for (const [node, gpu] of job.gpus) {
-      if (!nodesByGpu.has(node)) {
-        nodesByGpu.set(node, []);
+  try {
+    if (job.dist_mode === "single") {
+      const nodesByGpu = new Map<string, number[]>();
+      
+      for (const [node, gpu] of job.gpus) {
+        if (!nodesByGpu.has(node)) {
+          nodesByGpu.set(node, []);
+        }
+        nodesByGpu.get(node)!.push(gpu);
       }
-      nodesByGpu.get(node)!.push(gpu);
+      
+      for (const [node, gpus] of nodesByGpu.entries()) {
+        const gpusCsv = gpus.join(",");
+        const sessionName = job.exec_mode === "tmux" 
+          ? `opensmi-${job.id}-${tmuxSafeName(node)}`
+          : undefined;
+        
+        const payload = await executeRemoteExec({
+          node,
+          gpusCsv,
+          mode: job.exec_mode,
+          command: job.command,
+          session: sessionName,
+        });
+        
+        if (!payload.ok) {
+          throw new Error(`Failed to execute on ${node}: ${payload.rawStderr.trim()}`);
+        }
+        
+        if (sessionName) {
+          tmuxSessions.push(sessionName);
+        }
+      }
+    } else {
+      for (let i = 0; i < job.commands.length; i++) {
+        const cmd = job.commands[i];
+        const [node, gpu] = job.gpus[i];
+        
+        if (!cmd || !node || gpu === undefined) {
+          continue;
+        }
+        
+        const gpuIndex = String(gpu);
+        const sessionName = job.exec_mode === "tmux"
+          ? `opensmi-${job.id}-${tmuxSafeName(node)}-gpu${gpu}`
+          : undefined;
+        
+        const payload = await executeRemoteExec({
+          node,
+          gpusCsv: gpuIndex,
+          mode: job.exec_mode,
+          command: cmd,
+          session: sessionName,
+        });
+        
+        if (!payload.ok) {
+          throw new Error(`Failed to execute on ${node}:GPU${gpu}: ${payload.rawStderr.trim()}`);
+        }
+        
+        if (sessionName) {
+          tmuxSessions.push(sessionName);
+        }
+      }
     }
-    
-    for (const [node, gpus] of nodesByGpu.entries()) {
-      const gpusCsv = gpus.join(",");
-      const sessionName = job.exec_mode === "tmux" 
-        ? `opensmi-${job.id}-${tmuxSafeName(node)}`
-        : undefined;
-      
-      const payload = await executeRemoteExec({
-        node,
-        gpusCsv,
-        mode: job.exec_mode,
-        command: job.command,
-        session: sessionName,
-      });
-      
-      if (!payload.ok) {
-        throw new Error(`Failed to execute on ${node}: ${payload.rawStderr.trim()}`);
-      }
-      
-      if (sessionName) {
-        tmuxSessions.push(sessionName);
-      }
+  } catch (err) {
+    // On partial failure, kill any already-launched sessions to prevent orphaned GPU usage
+    if (tmuxSessions.length > 0) {
+      await killTmuxSessions(tmuxSessions);
     }
-  } else {
-    for (let i = 0; i < job.commands.length; i++) {
-      const cmd = job.commands[i];
-      const [node, gpu] = job.gpus[i];
-      
-      if (!cmd || !node || gpu === undefined) {
-        continue;
-      }
-      
-      const gpuIndex = String(gpu);
-      const sessionName = job.exec_mode === "tmux"
-        ? `opensmi-${job.id}-${tmuxSafeName(node)}-gpu${gpu}`
-        : undefined;
-      
-      const payload = await executeRemoteExec({
-        node,
-        gpusCsv: gpuIndex,
-        mode: job.exec_mode,
-        command: cmd,
-        session: sessionName,
-      });
-      
-      if (!payload.ok) {
-        throw new Error(`Failed to execute on ${node}:GPU${gpu}: ${payload.rawStderr.trim()}`);
-      }
-      
-      if (sessionName) {
-        tmuxSessions.push(sessionName);
-      }
-    }
+    throw err;
   }
   
   job.tmux_sessions = tmuxSessions;
