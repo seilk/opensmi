@@ -3472,8 +3472,6 @@ function renderRunnerPane() {
     }
   }
 
-  const gpuAssignmentPanel = renderGpuAssignmentPanel();
-  
   const contentNodes = [
     headerBox,
     modeInfo,
@@ -3481,8 +3479,6 @@ function renderRunnerPane() {
     Text({ content: " " }),
     ...commandNodes,
     ...tmuxNodes,
-    Text({ content: " " }),
-    gpuAssignmentPanel
   ];
 
   const errorBox = errorText ? Box(
