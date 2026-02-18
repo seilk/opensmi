@@ -282,6 +282,11 @@ async def route_command_to_target(
         # Write a wrapper script that tmux will execute.
         # The script: SSH into the node, decode + run the command, then
         # wait so the user can inspect output before the session closes.
+        #
+        # DESIGN: To avoid ALL quoting issues, user input is NEVER embedded
+        # in the shell script. Instead we write a JSON config file and a
+        # generic launcher that reads it. The only dynamic shell content is
+        # the path to the JSON file.
         wrapper_dir = os.path.join(
             os.path.expanduser("~"), ".opensmi", "tmp"
         )
@@ -290,18 +295,46 @@ async def route_command_to_target(
             wrapper_dir, f"tmux-{context.tmux_session}.sh"
         )
 
-        # Sanitize command preview for shell echo (avoid quoting nightmares)
-        safe_preview = context.command[:120].replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        # 1) Write job config as JSON (no shell escaping needed)
+        import json as _json
+        job_config = {
+            "node_alias": node.alias,
+            "ssh_target": ssh_target,
+            "ssh_args": _ssh_base_cmd(node),
+            "payload_b64": payload_b64,
+            "command_preview": context.command[:120],
+        }
+        config_path = os.path.join(
+            wrapper_dir, f"tmux-{context.tmux_session}.json"
+        )
+        with open(config_path, "w") as f:
+            _json.dump(job_config, f)
 
-        wrapper_script = f"""#!/bin/bash
-echo "opensmi: connecting to {node.alias} ({ssh_target})..."
-echo "opensmi: command → {safe_preview}"
-echo ""
-{ssh_base_str} -tt {shlex.quote(ssh_target)} "echo {payload_b64} | base64 --decode | bash"
-rc=$?
-echo ""
-echo "--- Job exited with code $rc (press Enter to close tmux session) ---"
-read
+        # 2) Launcher: a Python script that reads the JSON config.
+        #    Zero shell quoting — Python handles everything natively.
+        wrapper_script = f"""#!/usr/bin/env python3
+import json, subprocess, sys, shlex
+
+with open("{config_path}") as f:
+    cfg = json.load(f)
+
+print(f"opensmi: connecting to '{{cfg['node_alias']}}' ({{cfg['ssh_target']}})...")
+print(f"opensmi: command → {{cfg['command_preview']}}")
+print()
+
+ssh_cmd = cfg["ssh_args"] + [
+    "-tt", cfg["ssh_target"],
+    f"echo {{cfg['payload_b64']}} | base64 --decode | bash",
+]
+rc = subprocess.call(ssh_cmd)
+
+print()
+print(f"--- Job exited with code {{rc}} (press Enter to close tmux session) ---")
+try:
+    input()
+except (EOFError, KeyboardInterrupt):
+    pass
+sys.exit(rc)
 """
 
         with open(wrapper_path, "w") as f:
