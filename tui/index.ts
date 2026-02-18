@@ -2533,15 +2533,14 @@ function renderJobsListView() {
 
   if (jobList.length === 0) {
     return Box(
-      { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
       header,
       Text({ content: "" }),
       Text({ content: "" }),
       Text({ content: "  No jobs yet.", fg: C.textDim }),
       Text({ content: "" }),
       Text({ content: "  How to submit:", fg: C.cyan }),
-      Text({ content: "    l             Open launch modal, type command, Enter", fg: C.textDim }),
-      Text({ content: "    ctrl+x ↓      Focus runner pane, Enter to edit, Enter to run", fg: C.textDim }),
+      Text({ content: "    ctrl+x ↓      Focus runner pane, type command, ctrl+x Enter to run", fg: C.textDim }),
       Text({ content: "    CLI           opensmi job submit <node> --gpus 0 --command \"...\"", fg: C.textDim }),
       Text({ content: "    CLI (queue)   opensmi job submit --auto-gpus 2 --command \"...\" --queue", fg: C.textDim }),
       Text({ content: "" }),
@@ -2551,6 +2550,7 @@ function renderJobsListView() {
     );
   }
 
+  const termWidth = process.stdout.columns || 80;
   const rows: any[] = [];
   rows.push(
     Text({
@@ -2559,13 +2559,17 @@ function renderJobsListView() {
     })
   );
 
+  // Dynamic column: command gets remaining space after fixed columns
+  // Fixed: prefix(2) + id(9) + status(12) + gpus(18) + runtime(10) + spacing(5) = ~56
+  const cmdWidth = Math.max(termWidth - 56, 10);
+
   for (let i = 0; i < jobList.length; i++) {
     const job = jobList[i];
     const selected = i === selectedJobIdx;
     const statusInfo = getJobStatusIcon(job.status);
     
     const commandDisplay = job.dist_mode === "single" 
-      ? job.command.slice(0, 30) 
+      ? job.command.slice(0, cmdWidth) 
       : `[${job.commands.length} cmds]`;
     
     const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
@@ -2575,7 +2579,7 @@ function renderJobsListView() {
     const idDisplay = job.id.padEnd(8);
     const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
     
-    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${runtime}`;
+    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(cmdWidth)} ${runtime}`;
     
     rows.push(
       Text({
@@ -2594,7 +2598,7 @@ function renderJobsListView() {
   );
 
   return Box(
-    { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
     header,
     Text({ content: "" }),
     ...rows
@@ -2640,6 +2644,8 @@ function renderJobDetailView() {
   const job = jobDetailView;
   const statusInfo = getJobStatusIcon(job.status);
   const liveness = gpuLivenessCache.get(job.id) || {};
+  const termWidth = process.stdout.columns || 80;
+  const contentWidth = Math.max(termWidth - 6, 30);  // padding=2 each side + some margin
   
   // Build list of sessions for navigation
   const sessionEntries: Array<{ label: string; session: string | null; color: string }> = [];
@@ -2672,7 +2678,7 @@ function renderJobDetailView() {
       } else {
         color = alive === true ? C.green : alive === false ? C.red : C.yellow;
       }
-      const cmdPreview = job.commands[i]?.slice(0, 40) || "";
+      const cmdPreview = job.commands[i]?.slice(0, Math.max(contentWidth - 30, 20)) || "";
       sessionEntries.push({ label: `${node}:GPU${gpu} → ${cmdPreview}`, session, color });
     }
   }
@@ -2684,7 +2690,7 @@ function renderJobDetailView() {
   
   const rows: any[] = [];
   rows.push(
-    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, 50)}` })
+    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, contentWidth - 16)}` })
   );
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
@@ -2744,7 +2750,7 @@ function renderJobDetailView() {
   );
 
   return Box(
-    { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
     ...rows
   );
 }
@@ -2755,7 +2761,7 @@ function renderMyGpuView() {
   
   if (bundles.length === 0) {
     return Box(
-      { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
       Text({ content: t`${bold(fg(C.blue)("My GPUs"))} · Operator: ${fg(C.cyan)(OPERATOR)}`, fg: C.text }),
       Text({ content: "" }),
       Text({ content: "No GPUs found", fg: C.yellow }),
