@@ -8,7 +8,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from opensmi.jobs import (
     Job,
@@ -157,10 +157,12 @@ class TestPhase4JobLifecycle(unittest.TestCase):
 
         import asyncio
 
-        async def mock_ssh_run(*args, **kwargs):
-            return (0, "", "")
+        async def mock_subprocess(*args, **kwargs):
+            proc = MagicMock()
+            proc.wait = AsyncMock(return_value=0)
+            return proc
 
-        with patch("opensmi.jobs.ssh_run", new=mock_ssh_run):
+        with patch("asyncio.create_subprocess_exec", new=mock_subprocess):
             success = asyncio.run(cancel_job(job, cfg))
 
         self.assertTrue(success)

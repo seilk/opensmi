@@ -20,7 +20,7 @@ from .models import (
     PreflightResult,
     RemoteExecutionContext,
 )
-from .sshutil import RemoteExecResult, ssh_exec_remote, ssh_run
+from .sshutil import RemoteExecResult, _ssh_base_cmd, ssh_exec_remote, ssh_run
 
 
 async def validate_gpu_availability(
@@ -212,24 +212,37 @@ async def route_command_to_target(
             timeout_s=context.timeout_s,
         )
 
-    # For tmux execution mode, wrap the command in tmux session creation
+    # For tmux execution mode, create a LOCAL tmux session that SSHes into
+    # the remote node and runs the command there.  This lets the operator
+    # attach with a simple `tmux attach -t <session>` on the opensmi machine
+    # instead of having to SSH first and then attach on the remote side.
     elif context.execution_mode == "tmux":
         if not context.tmux_session:
             raise ValueError("tmux_session name required for tmux execution mode")
 
-        # Build the command with environment variable injection
-        # Use shlex.quote() to prevent shell injection via env var values
+        node = context.target.node_config
+
+        # Build the remote command with env var injection
         if context.env_vars:
             env_prefix = " ".join(
                 f"{k}={shlex.quote(v)}" for k, v in context.env_vars.items()
             )
-            wrapped_command = f"{env_prefix} {context.command}"
+            remote_command = f"{env_prefix} {context.command}"
         else:
-            wrapped_command = context.command
-        # Encode the wrapped command to avoid nested quote breakage inside tmux/bash layers.
-        payload_b64 = base64.b64encode(wrapped_command.encode("utf-8")).decode("ascii")
-        bootstrap = f"echo {shlex.quote(payload_b64)} | base64 --decode | bash"
+            remote_command = context.command
 
+        # Build SSH command that will run inside the local tmux session
+        ssh_target = f"{node.user}@{node.address}"
+        ssh_argv = _ssh_base_cmd(node) + [
+            "-t",  # force PTY allocation for interactive tmux use
+            ssh_target,
+            "bash",
+            "-lc",
+            shlex.quote(remote_command),
+        ]
+        ssh_cmd_str = " ".join(shlex.quote(a) for a in ssh_argv)
+
+        # Create local tmux session running the SSH command
         tmux_argv = [
             "tmux",
             "new-session",
@@ -238,14 +251,35 @@ async def route_command_to_target(
             context.tmux_session,
             "bash",
             "-lc",
-            bootstrap,
+            ssh_cmd_str,
         ]
-        tmux_cmd = " ".join(shlex.quote(a) for a in tmux_argv)
 
-        return await ssh_exec_remote(
-            node=context.target.node_config,
-            command=tmux_cmd,
-            timeout_s=context.timeout_s,
+        proc = await asyncio.create_subprocess_exec(
+            *tmux_argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=context.timeout_s,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            return RemoteExecResult(
+                exit_code=1,
+                stdout="",
+                stderr=f"Local tmux creation timed out after {context.timeout_s}s",
+                node_alias=node.alias,
+                command=context.command,
+            )
+
+        rc = int(proc.returncode or 0)
+        return RemoteExecResult(
+            exit_code=rc,
+            stdout=stdout_b.decode("utf-8", errors="replace"),
+            stderr=stderr_b.decode("utf-8", errors="replace"),
+            node_alias=node.alias,
+            command=context.command,
         )
 
     else:
@@ -345,32 +379,26 @@ async def _run_single_preflight_check(check: PreflightCheck) -> PreflightResult:
 async def _check_tmux_availability(
     check: PreflightCheck, timestamp: str
 ) -> PreflightResult:
-    """Check if tmux is available on the target node.
+    """Check if tmux is available on the LOCAL opensmi machine.
 
-    Executes 'which tmux' on the remote node to verify tmux is installed
-    and accessible in PATH.
+    Tmux sessions are now created locally (not on the remote node), so we
+    only need to verify that tmux is installed on this machine.
 
     Returns:
         PreflightResult with passed=True if tmux is available, False otherwise.
         On success, metadata['tmux_path'] contains the path to tmux binary.
     """
-    if not check.node_config:
-        return PreflightResult(
-            check=check,
-            passed=False,
-            error_message=f"Node configuration missing for {check.node_alias}",
-            timestamp=timestamp,
-        )
-
     try:
-        rc, stdout, stderr = await ssh_run(
-            node=check.node_config,
-            remote_args=["which", "tmux"],
-            timeout_s=10,
+        proc = await asyncio.create_subprocess_exec(
+            "which", "tmux",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        stdout_b, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        rc = int(proc.returncode or 1)
 
-        if rc == 0 and stdout.strip():
-            tmux_path = stdout.strip()
+        if rc == 0 and stdout_b.strip():
+            tmux_path = stdout_b.decode("utf-8", errors="replace").strip()
             return PreflightResult(
                 check=check,
                 passed=True,
@@ -378,14 +406,10 @@ async def _check_tmux_availability(
                 timestamp=timestamp,
             )
         else:
-            error_msg = (
-                f"tmux not found on {check.node_alias}. "
-                f"Install with: sudo apt-get install tmux (Ubuntu/Debian) or sudo yum install tmux (RHEL/CentOS)"
-            )
             return PreflightResult(
                 check=check,
                 passed=False,
-                error_message=error_msg,
+                error_message="tmux not found on this machine. Install with: brew install tmux / apt install tmux",
                 timestamp=timestamp,
             )
 

@@ -1073,7 +1073,7 @@ def _cmd_job_submit(args: argparse.Namespace) -> int:
     else:
         print(f"Job {job.id} submitted: {job.status}")
         if job.tmux_sessions:
-            print(f"Attach: ssh {args.node} -t tmux attach -t {job.tmux_sessions[0]}")
+            print(f"Attach: tmux attach -t {job.tmux_sessions[0]}")
 
     return 0
 
@@ -1214,28 +1214,23 @@ def _cmd_job_log(args: argparse.Namespace) -> int:
         return 1
 
     session = job.tmux_sessions[0]
-    node_alias = job.gpus[0][0] if job.gpus else None
 
-    if not node_alias:
-        print(f"Job {job.id} has no node information", file=sys.stderr)
-        return 1
-
-    node = _find_node(cfg, node_alias)
-
+    # Tmux sessions are local (on the opensmi machine), so capture directly.
     try:
-        rc, stdout, stderr = asyncio.run(
-            ssh_run(
-                node,
-                ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{args.lines}"],
-                timeout_s=10,
-            )
+        import subprocess as _sp
+
+        result = _sp.run(
+            ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{args.lines}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
-        if rc == 0:
-            print(stdout)
+        if result.returncode == 0:
+            print(result.stdout)
             return 0
         else:
-            print(f"Failed to capture tmux pane: {stderr}", file=sys.stderr)
+            print(f"Failed to capture tmux pane: {result.stderr}", file=sys.stderr)
             return 2
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

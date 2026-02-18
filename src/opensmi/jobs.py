@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import json
 import os
@@ -13,7 +14,6 @@ from typing import Iterator, List, Optional, Tuple
 
 from .config import load_config
 from .models import ClusterConfig, NodeConfig
-from .sshutil import ssh_run
 from .state import ensure_state_dir
 
 JOBS_FILENAME = "jobs.json"
@@ -176,12 +176,12 @@ def get_job(jobs: List[Job], job_id: str) -> Optional[Job]:
 async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
     """Check if a job is still running by verifying its tmux sessions.
 
-    For tmux jobs, this checks if any of the job's tmux sessions still exist
-    on their respective nodes via SSH.
+    Tmux sessions are created locally on the opensmi machine (not on the
+    remote node), so we check with a local ``tmux has-session`` call.
 
     Args:
         job: Job to check
-        cfg: Cluster configuration for node access
+        cfg: Cluster configuration (unused but kept for API compat)
 
     Returns:
         True if at least one tmux session is alive, False otherwise
@@ -190,24 +190,13 @@ async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
         return False
 
     for session_name in job.tmux_sessions:
-        node_alias = _extract_node_from_session(session_name, job)
-        if not node_alias:
-            continue
-
-        # Find node config
-        node = None
-        for n in cfg.nodes:
-            if n.alias == node_alias:
-                node = n
-                break
-        if not node:
-            continue
-
-        # Check if tmux session exists
         try:
-            rc, _, _ = await ssh_run(
-                node, ["tmux", "has-session", "-t", session_name], timeout_s=5
+            proc = await asyncio.create_subprocess_exec(
+                "tmux", "has-session", "-t", session_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
+            rc = await asyncio.wait_for(proc.wait(), timeout=5)
             if rc == 0:
                 return True
         except Exception:
@@ -266,24 +255,15 @@ async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
         job.finished_at = datetime.now(timezone.utc).isoformat()
         return True
 
-    # Running jobs: kill their tmux sessions on the correct nodes
+    # Running jobs: kill their local tmux sessions
     for session in job.tmux_sessions:
-        node_alias = _extract_node_from_session(session, job)
-        if not node_alias:
-            continue
-
-        # Find node config
-        node = None
-        for n in cfg.nodes:
-            if n.alias == node_alias:
-                node = n
-                break
-        if not node:
-            continue
-
-        # Kill tmux session
         try:
-            await ssh_run(node, ["tmux", "kill-session", "-t", session], timeout_s=5)
+            proc = await asyncio.create_subprocess_exec(
+                "tmux", "kill-session", "-t", session,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=5)
         except Exception:
             pass
 

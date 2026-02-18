@@ -4303,15 +4303,15 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
 
   if (!payload.ok) {
     launchOutput = preflightLines ? `Preflight:\n${preflightLines}` : payload.rawStdout.slice(0, 500);
-    setLaunchError(payload.rawStderr.trim() || "Remote tmux launch failed (see Output)");
+    setLaunchError(payload.rawStderr.trim() || "Tmux launch failed (see Output)");
     runnerState = "failed";
     return;
   }
 
-  const attachHint = `ssh <node> -t tmux attach -t ${sessionName}`;
+  const attachHint = `tmux attach -t ${sessionName}`;
   launchOutput = [
     preflightLines ? `Preflight:\n${preflightLines}` : "",
-    `Created remote tmux session on ${node}: ${sessionName}`,
+    `Local tmux session: ${sessionName} → SSH to ${node}`,
     "",
     "Attach with:",
     `  ${attachHint}`,
@@ -4321,7 +4321,7 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
 
   runnerAttachCmd = attachHint;
   runnerTmuxSession = sessionName;
-  setStatus(`Launched (remote tmux): ${node} / ${sessionName}`);
+  setStatus(`Launched (tmux → ${node}): ${sessionName}`);
 }
 
 
