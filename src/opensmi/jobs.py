@@ -293,6 +293,53 @@ async def check_gpu_liveness(
         except Exception:
             continue
 
+    # Fallback: if PID check says all dead, verify with nvidia-smi on each node.
+    # This catches DataParallel/multiprocessing cases where the parent PID exits
+    # but child processes keep running on GPUs.
+    if not any(result.values()) and job.gpus:
+        log.info("watchdog: PID check says all dead for job %s, verifying with nvidia-smi", job.id)
+        # Group GPUs by node
+        node_gpus: dict[str, list[int]] = {}
+        for node_alias, gpu_idx in job.gpus:
+            node_gpus.setdefault(node_alias, []).append(gpu_idx)
+
+        for node_alias, gpu_indices in node_gpus.items():
+            node_cfg = None
+            for n in cfg.nodes:
+                if n.alias == node_alias:
+                    node_cfg = n
+                    break
+            if not node_cfg:
+                continue
+
+            # Query nvidia-smi for compute processes on specific GPUs
+            gpu_ids = ",".join(str(g) for g in gpu_indices)
+            nvsmi_script = (
+                f'nvidia-smi --id={gpu_ids} '
+                f'--query-compute-apps=gpu_uuid,pid '
+                f'--format=csv,noheader,nounits 2>/dev/null && echo "__OK__"'
+            )
+            try:
+                rc, stdout, _stderr = await ssh_run(
+                    node_cfg,
+                    ["bash"],
+                    stdin_bytes=nvsmi_script.encode("utf-8"),
+                    timeout_s=10,
+                )
+                if rc == 0 and "__OK__" in stdout:
+                    lines = [l.strip() for l in stdout.strip().splitlines()
+                             if l.strip() and l.strip() != "__OK__"]
+                    if lines:
+                        # There are active compute processes on our GPUs
+                        log.info("watchdog: nvidia-smi found %d active process(es) on job %s GPUs — overriding PID death", len(lines), job.id)
+                        for gpu_idx in gpu_indices:
+                            key = f"{node_alias}:{gpu_idx}"
+                            if key in result:
+                                result[key] = True
+            except Exception:
+                # nvidia-smi check failed — don't override PID result
+                log.warning("watchdog: nvidia-smi fallback failed for node %s", node_alias)
+
     return result
 
 
