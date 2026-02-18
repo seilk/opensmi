@@ -2083,13 +2083,6 @@ function renderDashboard() {
     .map(([u, count]) => `${u}:${count}`)
     .join("  ");
 
-  const selectedNode = snapshot.nodes[selectedNodeIdx];
-  const suggested = selectedNode && !selectedNode.error ? suggestGpu(selectedNode) : null;
-  const suggestedLoad = suggested ? gpuUtilPct(suggested) : null;
-  const suggestedText = suggested
-    ? `${selectedNode!.node_alias} GPU${suggested.index} (${suggestedLoad !== null ? `load ${suggestedLoad}%` : "load ?"}, free ${gpuMemStr(suggested.memory_free_mib)})`
-    : "-";
-
   const footer = Box(
     {
       width: "100%",
@@ -2099,9 +2092,6 @@ function renderDashboard() {
     },
     Text({
       content: t`${fg(C.textDim)("Users:")} ${userSummary}`,
-    }),
-    Text({
-      content: t`${fg(C.textDim)("Suggested GPU:")} ${fg(C.cyan)(suggestedText)}`,
     }),
     Text({
       content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
