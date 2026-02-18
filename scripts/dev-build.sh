@@ -107,13 +107,13 @@ if [[ $DO_UNLINK -eq 1 ]]; then
   # Uninstall editable pip install
   if "$PYTHON" -m pip show opensmi >/dev/null 2>&1; then
     info "Removing editable pip install"
-    "$PYTHON" -m pip uninstall -y opensmi 2>/dev/null || true
+    "$PYTHON" -m pip uninstall -y opensmi --break-system-packages 2>/dev/null || true
   fi
 
   # Reinstall from wheel if backup exists
   if [[ -f "$BACKUP_DIR/pip_was_installed" ]]; then
     info "Reinstalling opensmi from PyPI/wheel"
-    "$PYTHON" -m pip install opensmi 2>/dev/null || warn "Could not reinstall from PyPI; manual reinstall may be needed"
+    "$PYTHON" -m pip install opensmi --break-system-packages 2>/dev/null || warn "Could not reinstall from PyPI; manual reinstall may be needed"
   fi
 
   ok "Unlink complete"
@@ -167,31 +167,43 @@ if [[ $BUILD_CLI -eq 1 ]]; then
   info "Building CLI (editable pip install)"
 
   cd "$ROOT_DIR"
-  "$PYTHON" -m pip install -e . --quiet 2>&1 | tail -3
+  if ! "$PYTHON" -m pip install -e . --break-system-packages --quiet 2>&1 | tail -5; then
+    die "pip install -e . failed"
+  fi
 
   # Verify
   cli_version="$("$PYTHON" -c "import opensmi; print(opensmi.__version__)" 2>/dev/null || echo "unknown")"
 
-  # Find where pip put the entrypoint
-  pip_cli="$("$PYTHON" -c "
-import sysconfig
-print(sysconfig.get_path('scripts', scheme='posix_user'))
-" 2>/dev/null)/opensmi"
+  # Resolve the exact Python interpreter path (for the shebang)
+  PYTHON_REAL="$("$PYTHON" -c "import sys; print(sys.executable)")"
 
-  # Also check common locations
-  for candidate in "$pip_cli" "$(dirname "$("$PYTHON" -c "import sys; print(sys.executable)")")/opensmi"; do
-    if [[ -x "$candidate" ]]; then
-      pip_cli="$candidate"
-      break
-    fi
-  done
+  # Write a proper entrypoint script (avoids broken symlink issues with
+  # pip user-scheme vs system-scheme path mismatches on macOS/Homebrew)
+  _write_cli_entrypoint() {
+    local dest="$1"
+    cat > "$dest" <<ENTRY
+#!${PYTHON_REAL}
+import sys
+from opensmi.cli import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    main()
+ENTRY
+    chmod +x "$dest"
+  }
 
-  # Symlink to where the original CLI was
-  if [[ -n "$CLI_BIN" && "$pip_cli" != "$CLI_BIN" ]]; then
-    ln -sf "$pip_cli" "$CLI_BIN"
-    ok "CLI linked: $CLI_BIN → $pip_cli (v${cli_version})"
-  else
-    ok "CLI installed: ${pip_cli:-$CLI_BIN} (v${cli_version})"
+  # Write to the original CLI location
+  if [[ -n "$CLI_BIN" ]]; then
+    rm -f "$CLI_BIN"
+    _write_cli_entrypoint "$CLI_BIN"
+    ok "CLI entrypoint: $CLI_BIN (v${cli_version})"
+  fi
+
+  # Also write to ~/.local/bin if it exists and differs from CLI_BIN
+  LOCAL_CLI="$HOME/.local/bin/opensmi"
+  if [[ -d "$HOME/.local/bin" && "$LOCAL_CLI" != "$CLI_BIN" ]]; then
+    _write_cli_entrypoint "$LOCAL_CLI"
+    ok "CLI entrypoint: $LOCAL_CLI (v${cli_version})"
   fi
 
   echo ""
