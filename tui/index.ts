@@ -4681,6 +4681,9 @@ async function main() {
       case "jobs":
         newNode = renderJobsView();
         break;
+      case "setup":
+        newNode = renderSetupView();
+        break;
     }
 
     const toast = renderToast();
