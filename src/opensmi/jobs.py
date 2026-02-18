@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import os
 import re
@@ -74,16 +73,22 @@ def _lock_jobs_file(state_dir: Path) -> Iterator[None]:
 
     Uses fcntl.flock for advisory locking to prevent race conditions when
     both CLI and TUI access jobs.json simultaneously.
+    Falls back to a no-op lock on platforms without fcntl (Windows).
     """
     ensure_state_dir(state_dir)
     lock_path = state_dir / f"{JOBS_FILENAME}.lock"
 
-    with open(lock_path, "w") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    try:
+        import fcntl
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except ImportError:
+        # Windows or other platform without fcntl — no locking (best effort)
+        yield
 
 
 def load_jobs(state_dir: Path) -> List[Job]:
