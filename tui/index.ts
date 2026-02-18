@@ -2394,13 +2394,18 @@ function renderJobsListView() {
       { flexDirection: "column", backgroundColor: C.bg, padding: 2 },
       header,
       Text({ content: "" }),
-      Text({ content: "No jobs submitted yet", fg: C.yellow }),
       Text({ content: "" }),
-      Text({ content: "Submit a job via:", fg: C.textDim }),
-      Text({ content: "  • Command runner (press 'l')", fg: C.textDim }),
-      Text({ content: "  • CLI: opensmi job submit", fg: C.textDim }),
+      Text({ content: "  No jobs yet.", fg: C.textDim }),
       Text({ content: "" }),
-      Text({ content: t`${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back`, fg: C.textDim })
+      Text({ content: "  How to submit:", fg: C.cyan }),
+      Text({ content: "    l             Open launch modal, type command, Enter", fg: C.textDim }),
+      Text({ content: "    ctrl+x ↓      Focus runner pane, Enter to edit, Enter to run", fg: C.textDim }),
+      Text({ content: "    CLI           opensmi job submit <node> --gpus 0 --command \"...\"", fg: C.textDim }),
+      Text({ content: "    CLI (queue)   opensmi job submit --auto-gpus 2 --command \"...\" --queue", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "  Jobs submitted from any source appear here with live status tracking.", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: t`  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back to dashboard`, fg: C.textDim })
     );
   }
 
@@ -4425,6 +4430,9 @@ async function main() {
         break;
       case "launch":
         newNode = renderLaunch();
+        break;
+      case "jobs":
+        newNode = renderJobsView();
         break;
     }
 
