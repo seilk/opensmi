@@ -2114,8 +2114,8 @@ function renderDashboard() {
           : (runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
               : (runnerPaneFolded
-                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Unfold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
-                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[ctrl+x f]")} Fold  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
+                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
+                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[l]")} Launch  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
       })
     )
   );
@@ -2302,14 +2302,15 @@ function renderHelp() {
     Text({ text: "  Shift+K       Kill violator processes" }),
     Text({ text: "  r             Refresh cluster data" }),
     Text({ text: "" }),
-    Text({ text: "Command Runner (l or Ctrl+R):" }),
-    Text({ text: "  Ctrl+R        Toggle runner open/close" }),
-    Text({ text: "  Ctrl+J / K    Decrease/increase pane height" }),
-    Text({ text: "  Ctrl+L        Maximize runner toggle" }),
+    Text({ text: "Command Runner:" }),
+    Text({ text: "  l             Open full-screen launch (type command directly)" }),
+    Text({ text: "  Ctrl+X ↓      Focus runner pane (bottom dock)" }),
+    Text({ text: "  Ctrl+X F      Fold/unfold runner pane" }),
     Text({ text: "  Tab           Toggle execution mode (direct/tmux)" }),
     Text({ text: "  Shift+Tab     Toggle distribution mode (single/one-to-one)" }),
     Text({ text: "  Q             Toggle queue mode (immediate/queued)" }),
     Text({ text: "  +/-           Adjust GPU count" }),
+    Text({ text: "  G             Toggle GPU mode (auto/manual)" }),
     Text({ text: "  Enter         Execute command" }),
     Text({ text: "" }),
     Text({ text: "Quit:" }),
@@ -3639,7 +3640,7 @@ function renderLaunch() {
     : Text({ content: " ", fg: C.textDim });
   
   const footer = Text({
-    content: "[g] GPU Mode    [Tab] Exec    [Shift+Tab] Dist    [+/-] GPU    [Enter] Launch    [Esc] Cancel",
+    content: "[g] GPU Mode    [Tab] Exec    [Shift+Tab] Dist    [Q] Queue    [+/-] GPU    [Enter] Launch    [Esc] Cancel",
     fg: C.textDim,
   });
   
@@ -5095,21 +5096,20 @@ async function main() {
         await navigateToTab("help");
         render();
       }
-      // [l] Launch modal disabled — pane replaces full-screen modal
-      // else if (key.name === "l") {
-      //   screen = "launch";
-      //   launchCommand = "";
-      //   launchNumGpus = 1;
-      //   launchErrorMsg = "";
-      //   launchOutput = "";
-      //   launchMode = "direct";
-      //   launchTmuxSession = "";
-      //   launchDistMode = "single";
-      //   launchCommands = [];
-      //   launchGpuMode = "auto";
-      //   await refreshLaunchGpuSelection();
-      //   render();
-      // }
+      else if (key.name === "l") {
+        screen = "launch";
+        launchCommand = "";
+        launchNumGpus = 1;
+        launchErrorMsg = "";
+        launchOutput = "";
+        launchMode = "direct";
+        launchTmuxSession = "";
+        launchDistMode = "single";
+        launchCommands = [];
+        launchGpuMode = "auto";
+        await refreshLaunchGpuSelection();
+        render();
+      }
       
       if (screen === "my-gpu-view") {
         if (key.name === "escape" || key.name === "backspace") {
@@ -5522,6 +5522,9 @@ async function main() {
           launchCommands = [];
         }
         
+        render();
+      } else if (key.name === "q" && key.shift) {
+        launchQueueMode = launchQueueMode === "immediate" ? "queued" : "immediate";
         render();
       } else if (key.name === "+" || key.name === "=") {
         launchNumGpus = Math.min(launchNumGpus + 1, 16);
