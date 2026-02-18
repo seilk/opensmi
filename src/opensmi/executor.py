@@ -24,6 +24,38 @@ from .models import (
 from .sshutil import RemoteExecResult, _ssh_base_cmd, ssh_exec_remote, ssh_run
 
 
+def _build_env_setup(node: "NodeConfig") -> str:
+    """Build shell commands to activate the virtual env and cd to work_dir.
+
+    Returns a string like 'source activate ml && cd ~/proj && ' or '' if
+    no env config is set on the node.
+    """
+    parts: list[str] = []
+
+    if node.env_manager and node.env_name:
+        mgr = node.env_manager.lower().strip()
+        name = node.env_name.strip()
+        if mgr == "conda":
+            parts.append(f"source \"$(conda info --base)/etc/profile.d/conda.sh\" && conda activate {shlex.quote(name)}")
+        elif mgr == "micromamba":
+            parts.append(f"eval \"$(micromamba shell hook --shell bash)\" && micromamba activate {shlex.quote(name)}")
+        elif mgr == "venv":
+            # Assume venv is at ~/envs/<name> or ~/.venvs/<name>
+            parts.append(f"source ~/{shlex.quote(name)}/bin/activate 2>/dev/null || source ~/.venvs/{shlex.quote(name)}/bin/activate")
+
+    if node.work_dir:
+        wd = node.work_dir.strip()
+        # Don't quote paths starting with ~ so tilde expansion works
+        if wd.startswith("~"):
+            parts.append(f"cd {wd}")
+        else:
+            parts.append(f"cd {shlex.quote(wd)}")
+
+    if not parts:
+        return ""
+    return " && ".join(parts) + " && "
+
+
 async def validate_gpu_availability(
     target: NodeTarget,
 ) -> List[int]:
@@ -206,9 +238,11 @@ async def route_command_to_target(
 
     # For direct execution mode, simply execute the command with env vars
     if context.execution_mode == "direct":
+        env_setup = _build_env_setup(context.target.node_config)
+        command = f"{env_setup}{context.command}" if env_setup else context.command
         return await ssh_exec_remote(
             node=context.target.node_config,
-            command=context.command,
+            command=command,
             env_vars=context.env_vars,
             timeout_s=context.timeout_s,
         )
@@ -226,14 +260,15 @@ async def route_command_to_target(
 
         node = context.target.node_config
 
-        # Build the remote command with env var injection
+        # Build the remote command: env_setup prefix + env vars + user command
+        env_setup = _build_env_setup(node)
         if context.env_vars:
             env_prefix = " ".join(
                 f"{k}={shlex.quote(v)}" for k, v in context.env_vars.items()
             )
-            remote_command = f"{env_prefix} {context.command}"
+            remote_command = f"{env_setup}{env_prefix} {context.command}"
         else:
-            remote_command = context.command
+            remote_command = f"{env_setup}{context.command}"
 
         # Base64 encode the remote command to avoid nested quoting issues
         payload_b64 = base64.b64encode(

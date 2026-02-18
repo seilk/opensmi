@@ -125,7 +125,7 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" | "jobs" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "launch" | "my-gpu-view" | "jobs" | "setup" = "dashboard";
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -2327,6 +2327,7 @@ function renderHelp() {
     Text({ text: "  n             Node detail (in Dashboard)" }),
     Text({ text: "  g             My GPU View" }),
     Text({ text: "  j             Jobs" }),
+    Text({ text: "  s             Setup (node env config)" }),
     Text({ text: "  h             Help" }),
     Text({ text: "" }),
     Text({ text: "Dashboard Actions:" }),
@@ -3232,6 +3233,119 @@ function renderGpuAssignmentPanel() {
     summaryText,
     helpText
   );
+}
+
+// ── Setup Tab ──────────────────────────────────────────────────────
+
+interface NodeEnvConfig {
+  alias: string;
+  env_manager: string;
+  env_name: string;
+  work_dir: string;
+}
+
+let setupNodes: NodeEnvConfig[] = [];
+let setupSelectedIdx = 0;
+let setupEditingField: "env_manager" | "env_name" | "work_dir" | null = null;
+let setupEditBuffer = "";
+let setupMessage = "";
+let setupMessageTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function setSetupMessage(msg: string, ms = 2000) {
+  setupMessage = msg;
+  if (setupMessageTimeout) clearTimeout(setupMessageTimeout);
+  setupMessageTimeout = setTimeout(() => { setupMessage = ""; requestRender?.(); }, ms);
+}
+
+async function loadSetupNodes(): Promise<void> {
+  // Read env config for all nodes from the cluster snapshot
+  setupNodes = [];
+  for (const ns of Object.values(clusterSnapshot)) {
+    const alias = ns.node_alias;
+    try {
+      const { stdout } = await runOpensmi(["node-env", alias, "--json"]);
+      const data = JSON.parse(stdout.trim());
+      setupNodes.push({
+        alias: data.alias || alias,
+        env_manager: data.env_manager || "",
+        env_name: data.env_name || "",
+        work_dir: data.work_dir || "",
+      });
+    } catch {
+      setupNodes.push({ alias, env_manager: "", env_name: "", work_dir: "" });
+    }
+  }
+  // Sort by alias
+  setupNodes.sort((a, b) => a.alias.localeCompare(b.alias));
+}
+
+async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
+  const args = ["node-env", node.alias, "--json"];
+  args.push("--env-manager", node.env_manager || "");
+  args.push("--env-name", node.env_name || "");
+  args.push("--work-dir", node.work_dir || "");
+  const { code } = await runOpensmi(args);
+  return code === 0;
+}
+
+function renderSetupView() {
+  const rows: any[] = [];
+
+  rows.push(Text({ content: t`${bold("Setup")} — Per-Node Environment Configuration`, fg: C.text }));
+  rows.push(Text({ content: t`${fg(C.textDim)("Configure conda/micromamba/venv and work directory per node. Saved to opensmi.json.")}` }));
+  rows.push(Text({ content: " " }));
+
+  if (setupNodes.length === 0) {
+    rows.push(Text({ content: "  (no nodes found — poll cluster first)", fg: C.textDim }));
+  }
+
+  for (let i = 0; i < setupNodes.length; i++) {
+    const n = setupNodes[i];
+    const selected = i === setupSelectedIdx;
+    const prefix = selected ? "▸ " : "  ";
+    const color = selected ? C.green : C.text;
+
+    const envStr = n.env_manager && n.env_name
+      ? `${n.env_manager}:${n.env_name}`
+      : "(none)";
+    const dirStr = n.work_dir || "(none)";
+
+    rows.push(Text({
+      content: t`${fg(color)(`${prefix}${n.alias.padEnd(14)} env: ${envStr.padEnd(25)} dir: ${dirStr}`)}`,
+    }));
+
+    // Show edit fields for selected node
+    if (selected && setupEditingField) {
+      const fields: Array<{ label: string; key: "env_manager" | "env_name" | "work_dir"; hint: string }> = [
+        { label: "Env Manager", key: "env_manager", hint: "conda / micromamba / venv" },
+        { label: "Env Name   ", key: "env_name", hint: "e.g. ml, torch2" },
+        { label: "Work Dir   ", key: "work_dir", hint: "e.g. ~/projects" },
+      ];
+      for (const f of fields) {
+        const editing = setupEditingField === f.key;
+        const val = editing ? setupEditBuffer : n[f.key] || "";
+        const lineColor = editing ? "#9b59d6" : C.textDim;
+        const cursor = editing ? "█" : "";
+        rows.push(Text({
+          content: t`    ${fg(lineColor)(`${f.label}: ${val}${cursor}`)}${editing ? "" : ` ${fg(C.textDim)(`(${f.hint})`)}`}`,
+        }));
+      }
+    }
+  }
+
+  rows.push(Text({ content: " " }));
+  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  S save")}` }));
+  if (setupMessage) {
+    rows.push(Text({ content: t`${fg(C.green)(setupMessage)}` }));
+  }
+
+  return Box({
+    id: "setup-view",
+    flexDirection: "column",
+    width: "100%",
+    padding: 1,
+    children: rows,
+  });
 }
 
 function renderRunnerPane() {
@@ -4597,6 +4711,16 @@ async function main() {
     },
   });
 
+  tabRegistry.register({
+    id: "setup",
+    label: "Setup",
+    shortcut: "s",
+    render: renderSetupView,
+    onEnter: async () => {
+      await loadSetupNodes();
+    },
+  });
+
   render();
 
   // Initial load
@@ -5572,6 +5696,70 @@ async function main() {
             await deleteJobAction(jobList[selectedJobIdx]);
             render();
           }
+        }
+      }
+    } else if (screen === "setup") {
+      if (setupEditingField) {
+        // Editing mode
+        if (key.name === "escape") {
+          setupEditingField = null;
+          setupEditBuffer = "";
+          render();
+        } else if (key.name === "return" || key.name === "tab") {
+          // Save current field value
+          const node = setupNodes[setupSelectedIdx];
+          if (node) {
+            node[setupEditingField] = setupEditBuffer.trim();
+          }
+          // Tab → next field, Enter → exit editing
+          if (key.name === "tab") {
+            const order: Array<"env_manager" | "env_name" | "work_dir"> = ["env_manager", "env_name", "work_dir"];
+            const idx = order.indexOf(setupEditingField);
+            if (idx < order.length - 1) {
+              setupEditingField = order[idx + 1];
+              setupEditBuffer = node?.[setupEditingField] || "";
+            } else {
+              setupEditingField = null;
+              setupEditBuffer = "";
+            }
+          } else {
+            setupEditingField = null;
+            setupEditBuffer = "";
+          }
+          render();
+        } else if (key.name === "backspace") {
+          setupEditBuffer = setupEditBuffer.slice(0, -1);
+          render();
+        } else if (key.sequence && key.sequence.length === 1 && key.sequence.charCodeAt(0) >= 32) {
+          setupEditBuffer += key.sequence;
+          render();
+        }
+      } else {
+        // Navigation mode
+        if (key.name === "up") {
+          setupSelectedIdx = Math.max(0, setupSelectedIdx - 1);
+          render();
+        } else if (key.name === "down") {
+          setupSelectedIdx = Math.min(setupNodes.length - 1, setupSelectedIdx + 1);
+          render();
+        } else if (key.name === "return") {
+          // Start editing env_manager
+          setupEditingField = "env_manager";
+          setupEditBuffer = setupNodes[setupSelectedIdx]?.env_manager || "";
+          render();
+        } else if (key.sequence === "s" || key.sequence === "S") {
+          // Save current node
+          const node = setupNodes[setupSelectedIdx];
+          if (node) {
+            const ok = await saveSetupNode(node);
+            if (ok) {
+              setSetupMessage(`✓ Saved ${node.alias}: ${node.env_manager || "(none)"}:${node.env_name || "(none)"} dir=${node.work_dir || "(none)"}`);
+              tuiLog("INFO", `setup: saved node=${node.alias} env=${node.env_manager}:${node.env_name} dir=${node.work_dir}`);
+            } else {
+              setSetupMessage(`✗ Failed to save ${node.alias}`);
+            }
+          }
+          render();
         }
       }
     } else if (screen === "launch") {

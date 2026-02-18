@@ -1265,6 +1265,59 @@ def _cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_node_env(args: argparse.Namespace) -> int:
+    """Get or set per-node environment configuration."""
+    from .config import update_node_env
+
+    state_dir = get_state_dir(args.state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    cfg = load_config(cfg_path)
+
+    node = None
+    for n in cfg.nodes:
+        if n.alias == args.node:
+            node = n
+            break
+    if not node:
+        print(f"Node '{args.node}' not found", file=sys.stderr)
+        return 1
+
+    # If any setter flags provided, update
+    if args.env_manager is not None or args.env_name is not None or args.work_dir is not None:
+        ok = update_node_env(
+            cfg_path,
+            alias=args.node,
+            env_manager=args.env_manager if args.env_manager is not None else node.env_manager,
+            env_name=args.env_name if args.env_name is not None else node.env_name,
+            work_dir=args.work_dir if args.work_dir is not None else node.work_dir,
+        )
+        if not ok:
+            print(f"Failed to update node '{args.node}'", file=sys.stderr)
+            return 1
+        # Reload to show updated values
+        cfg = load_config(cfg_path)
+        for n in cfg.nodes:
+            if n.alias == args.node:
+                node = n
+                break
+
+    # Output
+    info = {
+        "alias": node.alias,
+        "env_manager": node.env_manager,
+        "env_name": node.env_name,
+        "work_dir": node.work_dir,
+    }
+    if args.json:
+        print(json.dumps(info))
+    else:
+        print(f"Node:        {node.alias}")
+        print(f"Env Manager: {node.env_manager or '(none)'}")
+        print(f"Env Name:    {node.env_name or '(none)'}")
+        print(f"Work Dir:    {node.work_dir or '(none)'}")
+    return 0
+
+
 def _cmd_uninstall(args: argparse.Namespace) -> int:
     try:
         out = run_uninstall(
@@ -1881,6 +1934,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Print what would be removed"
     )
     sp_un.set_defaults(func=_cmd_uninstall)
+
+    # ── node-env: get/set per-node environment config ─────────────
+    sp_ne = sub.add_parser("node-env", help="Get or set per-node env config (env_manager, env_name, work_dir)")
+    sp_ne.add_argument("node", help="Node alias")
+    sp_ne.add_argument("--env-manager", default=None, help="conda | micromamba | venv | (empty to clear)")
+    sp_ne.add_argument("--env-name", default=None, help="Virtual env name")
+    sp_ne.add_argument("--work-dir", default=None, help="Remote working directory")
+    sp_ne.add_argument("--json", dest="json", action="store_true", default=False)
+    sp_ne.set_defaults(func=_cmd_node_env)
 
     return p
 

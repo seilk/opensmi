@@ -53,6 +53,9 @@ def load_config(path: Path) -> ClusterConfig:
                 user=str(raw.get("user") or data.get("default_user") or "ubuntu"),
                 port=int(raw.get("port", 22)),
                 connect_timeout_s=int(raw.get("connect_timeout_s", 6)),
+                env_manager=str(raw.get("env_manager", "")),
+                env_name=str(raw.get("env_name", "")),
+                work_dir=str(raw.get("work_dir", "")),
             )
         )
 
@@ -66,6 +69,34 @@ def load_config(path: Path) -> ClusterConfig:
         users=list(data.get("users", [])),
         policy=dict(data.get("policy", {})),
     )
+
+
+def update_node_env(path: Path, alias: str, env_manager: str, env_name: str, work_dir: str) -> bool:
+    """Update a node's env_manager, env_name, and work_dir in the config file.
+
+    Preserves all other fields in the JSON. Returns True on success.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for raw_node in data.get("nodes", []):
+        if raw_node.get("alias") == alias:
+            if env_manager:
+                raw_node["env_manager"] = env_manager
+            elif "env_manager" in raw_node:
+                del raw_node["env_manager"]
+            if env_name:
+                raw_node["env_name"] = env_name
+            elif "env_name" in raw_node:
+                del raw_node["env_name"]
+            if work_dir:
+                raw_node["work_dir"] = work_dir
+            elif "work_dir" in raw_node:
+                del raw_node["work_dir"]
+            path.write_text(
+                json.dumps(data, indent=2, sort_keys=False) + "\n",
+                encoding="utf-8",
+            )
+            return True
+    return False
 
 
 def save_default_config(path: Path, *, force: bool = False) -> None:

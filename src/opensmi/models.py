@@ -12,6 +12,9 @@ class NodeConfig:
     user: str
     port: int = 22
     connect_timeout_s: int = 6
+    env_manager: str = ""       # "conda" | "micromamba" | "venv" | ""
+    env_name: str = ""          # virtual env name (e.g. "ml", "torch2")
+    work_dir: str = ""          # remote working directory (e.g. "~/projects")
 
 
 @dataclass
