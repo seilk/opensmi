@@ -28,7 +28,8 @@ try { mkdirSync(LOG_DIR, { recursive: true }); } catch {}
 
 function tuiLog(level: "DEBUG" | "INFO" | "WARNING" | "ERROR", msg: string) {
   if ((LOG_LEVELS[level] ?? 1) < LOG_THRESHOLD) return;
-  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const now = new Date();
+  const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}.${String(now.getMilliseconds()).padStart(3,"0")}`;
   const line = `${ts} [${level}] tui: ${msg}\n`;
   try {
     // Simple rotation: truncate if over max size
@@ -5369,7 +5370,16 @@ async function main() {
         await navigateToTab("help");
         render();
       }
-      else if (key.name === "l") {
+      else if (key.name === "j") {
+        await navigateToTab("jobs");
+        render();
+      } else if (key.name === "s") {
+        await navigateToTab("setup");
+        render();
+      } else if (key.name === "g" && !runnerFocused) {
+        await navigateToTab("my-gpu-view");
+        render();
+      } else if (key.name === "l") {
         screen = "launch";
         launchCommand = "";
         launchNumGpus = 1;
