@@ -3335,6 +3335,7 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
 }
 
 function renderSetupView() {
+  tuiLog("DEBUG", `renderSetupView: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
   const rows: any[] = [];
 
   rows.push(Text({ content: t`${bold("Setup")} — Per-Node Environment Configuration`, fg: C.text }));
@@ -4682,7 +4683,16 @@ async function main() {
         newNode = renderJobsView();
         break;
       case "setup":
-        newNode = renderSetupView();
+        try {
+          newNode = renderSetupView();
+        } catch (e: any) {
+          tuiLog("ERROR", `renderSetupView failed: ${e?.message || String(e)}\n${e?.stack || ""}`);
+          newNode = Box({ padding: 1, children: [
+            Text({ content: `ERROR rendering Setup: ${e?.message || String(e)}`, fg: "red" }),
+            Text({ content: `setupNodes: ${setupNodes.length}`, fg: "gray" }),
+            Text({ content: `setupSelectedIdx: ${setupSelectedIdx}`, fg: "gray" }),
+          ]});
+        }
         break;
     }
 
