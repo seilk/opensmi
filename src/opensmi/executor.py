@@ -297,9 +297,20 @@ async def route_command_to_target(
         else:
             remote_command = f"{env_setup}{context.command}"
 
+        # Wrap remote command with PID tracking:
+        # 1. Write bash PID to a known file on the remote node
+        # 2. Run the actual command
+        # 3. Clean up PID file on exit (normal or error)
+        pid_file = f"/tmp/opensmi-{context.tmux_session}.pid"
+        wrapped_command = (
+            f'echo $$ > {pid_file}; '
+            f'trap "rm -f {pid_file}" EXIT; '
+            f'{remote_command}'
+        )
+
         # Base64 encode the remote command to avoid nested quoting issues
         payload_b64 = base64.b64encode(
-            remote_command.encode("utf-8")
+            wrapped_command.encode("utf-8")
         ).decode("ascii")
 
         # Build the SSH base command string
@@ -330,6 +341,7 @@ async def route_command_to_target(
             "ssh_args": _ssh_base_cmd(node),
             "payload_b64": payload_b64,
             "command_preview": context.command[:120],
+            "remote_pid_file": pid_file,
         }
         config_path = os.path.join(
             wrapper_dir, f"tmux-{context.tmux_session}.json"

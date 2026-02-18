@@ -192,27 +192,55 @@ def _find_tmux_binary() -> str:
 async def check_gpu_liveness(
     job: Job, cfg: ClusterConfig
 ) -> dict[str, bool]:
-    """Check which of the job's assigned GPUs have active compute processes
-    owned by the SSH user.
+    """Check which of the job's tmux sessions have live remote processes.
 
-    SSH to each unique node and run nvidia-smi per-GPU. Then filter
-    by process ownership (ps -o user=) to avoid false positives from
-    other users' processes on shared GPUs.
+    Each tmux session writes a PID file on the remote node at
+    /tmp/opensmi-<session>.pid. We SSH to each node and check
+    `kill -0 <pid>` which is near-zero overhead (no nvidia-smi).
+
+    Falls back to nvidia-smi if PID files don't exist (legacy jobs).
 
     Returns a dict mapping "node:gpu_idx" → alive (bool).
-    Example: {"MICV#13:2": True, "MICV#13:3": False}
     """
     from .sshutil import ssh_run
+    import os, json as _json
 
     result: dict[str, bool] = {}
+    # Map session → (node_alias, gpu_idx) for PID file lookup
+    session_gpu: dict[str, tuple[str, int]] = {}
 
-    # Group GPU indices by node
-    node_gpus: dict[str, list[int]] = {}
     for node_alias, gpu_idx in job.gpus:
-        node_gpus.setdefault(node_alias, []).append(gpu_idx)
-        result[f"{node_alias}:{gpu_idx}"] = False  # default dead
+        result[f"{node_alias}:{gpu_idx}"] = False
 
-    for node_alias, gpu_indices in node_gpus.items():
+    # Build session → GPU mapping from tmux_sessions
+    # Session names: opensmi-<id>-<node>-gpu<idx> or opensmi-<id>-<node>
+    for session_name in job.tmux_sessions:
+        # Try to find matching GPU assignment
+        for node_alias, gpu_idx in job.gpus:
+            safe_node = node_alias.replace("#", "-").replace(":", "-").replace(".", "-")
+            expected_single = f"opensmi-{job.id}-{safe_node}"
+            expected_multi = f"opensmi-{job.id}-{safe_node}-gpu{gpu_idx}"
+            # Also check user-prefix patterns like "tt-MICV-13-gpu2"
+            if session_name == expected_multi or session_name == expected_single:
+                session_gpu[session_name] = (node_alias, gpu_idx)
+                break
+            # Fallback: if session contains the safe_node and gpu idx
+            if safe_node in session_name and f"gpu{gpu_idx}" in session_name:
+                session_gpu[session_name] = (node_alias, gpu_idx)
+                break
+
+    # If no sessions mapped, try positional mapping
+    if not session_gpu and len(job.tmux_sessions) == len(job.gpus):
+        for i, session_name in enumerate(job.tmux_sessions):
+            node_alias, gpu_idx = job.gpus[i]
+            session_gpu[session_name] = (node_alias, gpu_idx)
+
+    # Group by node for batch SSH
+    node_sessions: dict[str, list[tuple[str, int]]] = {}  # node_alias → [(session, gpu_idx)]
+    for session_name, (node_alias, gpu_idx) in session_gpu.items():
+        node_sessions.setdefault(node_alias, []).append((session_name, gpu_idx))
+
+    for node_alias, sessions in node_sessions.items():
         node_cfg = None
         for n in cfg.nodes:
             if n.alias == node_alias:
@@ -221,27 +249,26 @@ async def check_gpu_liveness(
         if not node_cfg:
             continue
 
-        # Single SSH call: check all GPUs, filter by user ownership
-        # Script outputs "GPU_IDX:ALIVE" for each GPU that has a process
-        # owned by the current SSH user
-        check_script = " && ".join(
-            f'for pid in $(nvidia-smi -i {idx} --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do '
-            f'owner=$(ps -o user= -p $pid 2>/dev/null); '
-            f'if [ "$owner" = "$(whoami)" ]; then echo "ALIVE:{idx}"; break; fi; '
-            f'done'
-            for idx in gpu_indices
-        )
+        # Build a single SSH script that checks all PID files for this node
+        # Output: "ALIVE:<gpu_idx>" for each live process
+        checks = []
+        for session_name, gpu_idx in sessions:
+            pid_file = f"/tmp/opensmi-{session_name}.pid"
+            checks.append(
+                f'if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null; '
+                f'then echo "ALIVE:{gpu_idx}"; fi'
+            )
+        check_script = "; ".join(checks)
 
         try:
             rc, stdout, _stderr = await ssh_run(
                 node_cfg,
                 ["bash", "-c", check_script],
-                timeout_s=12,
+                timeout_s=8,
             )
             if rc != 0:
                 continue
 
-            # Parse output: lines like "ALIVE:2", "ALIVE:3"
             for line in stdout.strip().splitlines():
                 line = line.strip()
                 if line.startswith("ALIVE:"):
