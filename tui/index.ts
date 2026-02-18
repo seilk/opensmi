@@ -386,6 +386,9 @@ async function refreshLaunchGpuSelection(): Promise<void> {
     const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
+    const operatorFile = `/tmp/opensmi-op-${crypto.randomUUID()}.json`;
+    await Bun.write(operatorFile, JSON.stringify({ operator: OPERATOR }));
+    
     const rankScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -441,7 +444,8 @@ history = load_history(state_dir)
 with open("${allocFile}", "r") as f:
     alloc_data = json.loads(f.read())
 
-current_user = "${OPERATOR}"
+with open("${operatorFile}", "r") as f:
+    current_user = json.loads(f.read())["operator"]
 gpus = select_top_gpus(snap, ${launchNumGpus}, history, alloc_data, current_user)
 print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
 `;
@@ -463,7 +467,7 @@ print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
     }
     
     try {
-      await Bun.$`rm -f ${tmpFile} ${allocFile}`;
+      await Bun.$`rm -f ${tmpFile} ${allocFile} ${operatorFile}`;
     } catch {}
   } catch {
     launchSelectedGpus = [];
@@ -660,6 +664,9 @@ async function findAvailableGpus(count: number): Promise<Array<{ node: string; g
     const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
     
+    const operatorFile2 = `/tmp/opensmi-op-${crypto.randomUUID()}.json`;
+    await Bun.write(operatorFile2, JSON.stringify({ operator: OPERATOR }));
+    
     // Build set of GPUs already assigned to queued jobs (to avoid double-booking)
     const queuedJobs = jobList.filter(j => j.status === "queued");
     const reservedGpuKeys = new Set<string>();
@@ -725,7 +732,8 @@ history = load_history(state_dir)
 with open("${allocFile}", "r") as f:
     alloc_data = json.loads(f.read())
 
-current_user = "${OPERATOR}"
+with open("${operatorFile2}", "r") as f:
+    current_user = json.loads(f.read())["operator"]
 reserved = set(${reservedGpusJson})
 
 # Rank all GPUs
@@ -768,7 +776,7 @@ print(json.dumps(available))
     
     // Cleanup temp files
     try {
-      await Bun.$`rm -f ${tmpFile} ${allocFile}`;
+      await Bun.$`rm -f ${tmpFile} ${allocFile} ${operatorFile2}`;
     } catch {}
     
     if (exitCode !== 0) {
