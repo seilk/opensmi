@@ -808,6 +808,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
   // Process each queued job in order (FIFO)
   for (let i = 0; i < queuedJobs.length; i++) {
     const job = queuedJobs[i];
+    const hasExplicitGpus = job.gpus.length > 0;
     const needed = job.requested_gpu_count || job.gpus.length;
     
     if (needed === 0) {
@@ -815,23 +816,26 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
     }
     
     try {
-      const available = await findAvailableGpus(needed);
-      
-      if (available.length < needed) {
-        // Job is still waiting for GPUs - show status for first job only
-        if (i === 0) {
-          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-          setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
+      if (!hasExplicitGpus) {
+        // No GPUs specified — auto-assign from available pool
+        const available = await findAvailableGpus(needed);
+        
+        if (available.length < needed) {
+          if (i === 0) {
+            const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+            setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
+          }
+          continue;
         }
-        continue;
+        
+        job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
       }
       
-      // GPUs found - show allocation details
-      const gpuList = available.slice(0, needed)
-        .map(g => `${g.node}:${g.gpu}`)
+      // GPUs are set (explicit or just assigned)
+      const gpuList = job.gpus
+        .map(([n, g]) => `${n}:${g}`)
         .join(", ");
       
-      job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
       job.status = "running";
       job.started_at = new Date().toISOString();
       
