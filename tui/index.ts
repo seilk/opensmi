@@ -4853,12 +4853,13 @@ async function main() {
   bootLoading = false;
   render();
 
-  // Auto-refresh every 15s (disabled while editing allocations or runner typing)
+  // Auto-refresh every 10s
+  // Dispatch + watchdog run on ALL tabs (jobs shouldn't stall because user is on setup)
+  // UI refresh is skipped on non-data tabs to avoid unnecessary redraws
   const refreshInterval = setInterval(async () => {
-    if (screen !== "dashboard" && screen !== "detail" && screen !== "jobs") return;
     if (runnerFocused || runnerInputTyping) return;
     
-    // Always poll cluster to ensure dispatcher has fresh GPU availability data
+    // Always poll cluster + allocations (needed for dispatch decisions)
     await Promise.all([pollCluster(), loadAllocations()]);
     
     // Load jobs if on jobs tab
@@ -4866,12 +4867,16 @@ async function main() {
       await loadJobsFromCLI();
     }
     
-    // Dispatch queued jobs after snapshot update
+    // Dispatch queued jobs after snapshot update — runs regardless of active tab
     await dispatchQueuedJobs();
     
-    // Watch running jobs for health and auto-restart
+    // Watch running jobs for health and auto-restart — runs regardless of active tab
     await watchRunningJobs();
-    render();
+    
+    // Only re-render if on a data-display tab
+    if (screen === "dashboard" || screen === "detail" || screen === "jobs") {
+      render();
+    }
   }, 10_000);
 
   // Cleanup old jobs every hour
