@@ -446,8 +446,11 @@ def _render_dashboard(cluster_snap) -> str:
 
 
 def _cmd_poll(args: argparse.Namespace) -> int:
+    from .logging import get_logger
+    log = get_logger("cli.poll")
     state_dir = get_state_dir(args.state_dir)
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+    log.info("poll start — config=%s", cfg_path)
 
     if not cfg_path.exists():
         print(
@@ -990,8 +993,11 @@ def _cmd_job_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_job_submit(args: argparse.Namespace) -> int:
+    from .logging import get_logger
+    log = get_logger("cli.job")
     state_dir = get_state_dir(args.state_dir)
     ensure_state_dir(state_dir)
+    log.info("job submit — command=%s node=%s gpus=%s queue=%s", args.command, getattr(args, 'node', None), getattr(args, 'gpus', None), getattr(args, 'queue', False))
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
     cfg = load_config(cfg_path)
 
@@ -1401,7 +1407,58 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if all(r.passed for r in results) else 3
 
 
+def _cmd_log(args: argparse.Namespace) -> int:
+    from .logging import log_dir
+
+    ld = log_dir()
+
+    if args.path:
+        print(str(ld))
+        return 0
+
+    targets = []
+    if args.target in ("cli", "all"):
+        targets.append(ld / "cli.log")
+    if args.target in ("tui", "all"):
+        targets.append(ld / "tui.log")
+
+    if args.follow:
+        # Use tail -f
+        import subprocess
+
+        files = [str(f) for f in targets if f.exists()]
+        if not files:
+            print(f"No log files found in {ld}", file=sys.stderr)
+            return 1
+        try:
+            subprocess.run(["tail", "-f"] + files)
+        except KeyboardInterrupt:
+            pass
+        return 0
+
+    # Print last N lines
+    for log_file in targets:
+        if not log_file.exists():
+            print(f"# {log_file.name}: (no log yet)")
+            continue
+
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        tail = lines[-args.tail :] if len(lines) > args.tail else lines
+
+        if len(targets) > 1:
+            print(f"# ── {log_file.name} ({len(lines)} total lines) ──")
+        for line in tail:
+            print(line)
+        if len(targets) > 1:
+            print()
+
+    return 0
+
+
 def _cmd_exec(args: argparse.Namespace) -> int:
+    from .logging import get_logger
+    log = get_logger("cli.exec")
+    log.info("exec — node=%s command=%s mode=%s", getattr(args, 'node', None), getattr(args, 'command', None), getattr(args, 'mode', None))
     state_dir = get_state_dir(args.state_dir)
     ensure_state_dir(state_dir)
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
@@ -1745,6 +1802,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_jlog.set_defaults(func=_cmd_job_log)
 
+    # ── opensmi log ──────────────────────────────────────────────
+    sp_log = sub.add_parser("log", help="View opensmi debug logs")
+    sp_log.add_argument(
+        "target",
+        nargs="?",
+        default="all",
+        choices=["cli", "tui", "all"],
+        help="Which log to show (default: all)",
+    )
+    sp_log.add_argument(
+        "--tail", "-n", type=int, default=50, help="Number of lines (default: 50)"
+    )
+    sp_log.add_argument(
+        "--follow", "-f", action="store_true", help="Follow log output (like tail -f)"
+    )
+    sp_log.add_argument(
+        "--path", action="store_true", help="Print log directory path and exit"
+    )
+    sp_log.set_defaults(func=_cmd_log)
+
     sp_up = sub.add_parser(
         "update", help="Update opensmi (CLI and/or TUI) from GitHub Releases"
     )
@@ -1865,6 +1942,10 @@ def main(argv: Optional[list] = None) -> None:
     # If the user runs just `opensmi`, launch the TUI.
     if len(argv) == 0:
         _launch_tui()
+
+    from .logging import get_logger
+    log = get_logger("cli")
+    log.info("opensmi %s — argv=%s", __version__, argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)

@@ -11,9 +11,37 @@ import {
   type KeyEvent,
 } from "@opentui/core";
 import { spawn } from "bun";
-import { existsSync } from "node:fs";
+import { existsSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tabRegistry, type Tab } from "./tabRegistry";
+
+// ── TUI Logger ─────────────────────────────────────────────────────
+
+const LOG_DIR = path.join(process.env.OPENSMI_LOG_DIR || path.join(process.env.HOME || "~", ".opensmi", "logs"));
+const LOG_FILE = path.join(LOG_DIR, "tui.log");
+const LOG_LEVEL = (process.env.OPENSMI_LOG_LEVEL || "INFO").toUpperCase();
+const LOG_LEVELS: Record<string, number> = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3 };
+const LOG_THRESHOLD = LOG_LEVELS[LOG_LEVEL] ?? 1;
+const LOG_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+
+try { mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+
+function tuiLog(level: "DEBUG" | "INFO" | "WARNING" | "ERROR", msg: string) {
+  if ((LOG_LEVELS[level] ?? 1) < LOG_THRESHOLD) return;
+  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const line = `${ts} [${level}] tui: ${msg}\n`;
+  try {
+    // Simple rotation: truncate if over max size
+    const stat = Bun.file(LOG_FILE);
+    if (stat.size > LOG_MAX_SIZE) {
+      Bun.write(LOG_FILE, line);
+    } else {
+      appendFileSync(LOG_FILE, line);
+    }
+  } catch {
+    try { appendFileSync(LOG_FILE, line); } catch {}
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -315,6 +343,7 @@ async function runOpensmi(
 }
 
 function setLaunchError(msg: string): void {
+  tuiLog("ERROR", `launch error: ${msg}`);
   launchErrorMsg = msg;
   if (launchErrorTimeout) clearTimeout(launchErrorTimeout);
   launchErrorTimeout = setTimeout(() => {
@@ -480,6 +509,7 @@ async function pollCluster(): Promise<void> {
   if (isPolling) return;
   isPolling = true;
   pollError = "";
+  tuiLog("DEBUG", "pollCluster start");
 
   try {
     const proc = spawn([...OPENSMI, "poll", "--json"], {
@@ -743,7 +773,7 @@ print(json.dumps(available))
     
     return JSON.parse(stdout.trim());
   } catch (e) {
-    console.error("findAvailableGpus error:", e);
+    tuiLog("ERROR", `findAvailableGpus error: ${e}`);
     return [];
   }
 }
@@ -815,7 +845,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
       requestRender?.();
       
     } catch (e: any) {
-      console.error(`Failed to dispatch job ${job.id}:`, e);
+      tuiLog("ERROR", `dispatch failed job=${job.id}: ${e?.message || String(e)}`);
       
       job.status = "failed";
       job.finished_at = new Date().toISOString();
@@ -829,7 +859,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
         await updateJobInStore(job);
         await loadJobsFromCLI();
       } catch (updateErr) {
-        console.error(`Failed to update job ${job.id} status:`, updateErr);
+        tuiLog("ERROR", `job store update failed job=${job.id}: ${updateErr}`);
       }
       
       requestRender?.();
@@ -910,7 +940,7 @@ asyncio.run(main())
     
     return stdout.trim() === "true";
   } catch (e) {
-    console.error(`Failed to check job ${job.id} alive status:`, e);
+    tuiLog("ERROR", `checkJobAlive failed job=${job.id}: ${e?.message || String(e)}`);
     return false;
   }
 }
@@ -964,7 +994,7 @@ async function watchRunningJobs(): Promise<void> {
         requestRender?.();
       }
     } catch (e: any) {
-      console.error(`Failed to watch job ${job.id}:`, e);
+      tuiLog("ERROR", `watchdog failed job=${job.id}: ${e?.message || String(e)}`);
     }
   }
 }
@@ -996,7 +1026,7 @@ else:
     
     await proc.exited;
   } catch (e: any) {
-    console.error("Failed to cleanup old jobs:", e);
+    tuiLog("ERROR", `cleanup failed: ${e}`);
   }
 }
 
@@ -3933,6 +3963,7 @@ else:
 }
 
 async function executeLaunch(): Promise<void> {
+  tuiLog("INFO", `executeLaunch — mode=${launchMode} dist=${launchDistMode} queue=${launchQueueMode} gpus=${launchSelectedGpus.length} cmd="${launchCommand.slice(0, 80)}"`);
   runnerState = "queued";
   runnerStderr = [];
   runnerAttachCmd = "";
