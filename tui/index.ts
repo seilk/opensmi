@@ -957,6 +957,14 @@ async function watchRunningJobs(): Promise<void> {
   // Check each running job's tmux session health
   for (const job of runningJobs) {
     try {
+      // Grace period: skip health check for first 30s after job started.
+      // tmux session creation involves SSH connection which takes time.
+      if (job.started_at) {
+        const elapsed = Date.now() - new Date(job.started_at).getTime();
+        if (elapsed < 30_000) {
+          continue;
+        }
+      }
       const alive = await checkJobAlive(job);
       
       if (!alive) {
@@ -4280,8 +4288,8 @@ print("OK")
           const gpu = launchSelectedGpus[i];
           if (!gpu) continue;
           const sessionName = launchTmuxSession.trim()
-            ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
-                        : `opensmi-${currentJobId}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
+            ? `${launchTmuxSession}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`
+            : `opensmi-${currentJobId}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
           tmuxSessions.push(sessionName);
         }
       }
@@ -4434,8 +4442,8 @@ async function executeLaunchOneToOne(): Promise<void> {
 
     if (launchMode === "tmux") {
       const sessionName = launchTmuxSession.trim()
-        ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
-                    : `opensmi-${Date.now()}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
+        ? `${launchTmuxSession}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`
+        : `opensmi-${Date.now()}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
 
       const payload = await executeRemoteExec({
         node: gpu.node,
