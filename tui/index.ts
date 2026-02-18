@@ -1635,8 +1635,10 @@ function renderTabSwitcher() {
   const tabs = tabRegistry.getAllVisible();
   if (tabs.length === 0) return null;
 
-  const maxWidth = 50;
-  const boxHeight = tabs.length + 4;
+  const maxWidth = 55;
+  // rows: title + blank + N tabs + blank + help = N + 4
+  // plus border (2) + padding (2) = N + 8
+  const boxHeight = tabs.length + 8;
 
   const rows: any[] = [];
   rows.push(Text({ content: t`${bold(fg(C.blue)("Select Tab"))}` }));
@@ -2433,11 +2435,11 @@ function renderJobsListView() {
     const idDisplay = job.id.padEnd(8);
     const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
     
-    const line = t`${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${timeDisplay}`;
+    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${timeDisplay}`;
     
     rows.push(
       Text({
-        content: selected ? t`${fg(C.yellow)(line)}` : line,
+        content: line,
         fg: selected ? C.yellow : statusInfo.color,
       })
     );
@@ -2484,6 +2486,18 @@ function renderJobDetailView() {
   
   rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}` }));
   rows.push(Text({ content: t`Queue:     ${job.queue_mode}` }));
+  
+  rows.push(Text({ content: "" }));
+  if (job.dist_mode === "single" && job.command) {
+    rows.push(Text({ content: t`${fg(C.cyan)("Command:")}` }));
+    rows.push(Text({ content: `  ${job.command}`, fg: C.textDim }));
+  } else if (job.commands.length > 0) {
+    rows.push(Text({ content: t`${fg(C.cyan)("Commands:")}` }));
+    for (let i = 0; i < job.commands.length; i++) {
+      const gpu = job.gpus[i] ? `${job.gpus[i][0]}:GPU${job.gpus[i][1]}` : `GPU ${i}`;
+      rows.push(Text({ content: `  ${gpu} → ${job.commands[i]}`, fg: C.textDim }));
+    }
+  }
   rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries} retries)` : ""}` }));
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
