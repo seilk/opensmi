@@ -290,9 +290,12 @@ async def route_command_to_target(
             wrapper_dir, f"tmux-{context.tmux_session}.sh"
         )
 
+        # Sanitize command preview for shell echo (avoid quoting nightmares)
+        safe_preview = context.command[:120].replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+
         wrapper_script = f"""#!/bin/bash
-echo "opensmi: connecting to {shlex.quote(node.alias)} ({ssh_target})..."
-echo "opensmi: command → {shlex.quote(context.command[:120])}"
+echo "opensmi: connecting to {node.alias} ({ssh_target})..."
+echo "opensmi: command → {safe_preview}"
 echo ""
 {ssh_base_str} -tt {shlex.quote(ssh_target)} "echo {payload_b64} | base64 --decode | bash"
 rc=$?
