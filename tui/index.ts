@@ -3269,16 +3269,24 @@ async function loadSetupNodes(): Promise<void> {
   ].filter(Boolean) as string[];
 
   let nodes: Array<{ alias: string; env_manager?: string; env_name?: string; work_dir?: string }> = [];
+  let loadedFrom = "(none)";
 
   for (const cp of configPaths) {
     try {
+      const exists = existsSync(cp!);
+      tuiLog("DEBUG", `loadSetupNodes: trying ${cp} exists=${exists}`);
+      if (!exists) continue;
       const raw = await Bun.file(cp!).text();
       const cfg = JSON.parse(raw);
       if (Array.isArray(cfg.nodes) && cfg.nodes.length > 0) {
         nodes = cfg.nodes;
+        loadedFrom = cp!;
         break;
       }
-    } catch { continue; }
+    } catch (e: any) {
+      tuiLog("ERROR", `loadSetupNodes: failed reading ${cp}: ${e?.message || e}`);
+      continue;
+    }
   }
 
   for (const n of nodes) {
@@ -3291,7 +3299,7 @@ async function loadSetupNodes(): Promise<void> {
   }
 
   setupNodes.sort((a, b) => a.alias.localeCompare(b.alias));
-  tuiLog("DEBUG", `loadSetupNodes: ${setupNodes.length} nodes loaded`);
+  tuiLog("INFO", `loadSetupNodes: ${setupNodes.length} nodes from ${loadedFrom} (candidates: ${configPaths.join(", ")})`);
 }
 
 async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
@@ -3334,7 +3342,19 @@ function renderSetupView() {
   rows.push(Text({ content: " " }));
 
   if (setupNodes.length === 0) {
-    rows.push(Text({ content: "  (no nodes found — poll cluster first)", fg: C.textDim }));
+    rows.push(Text({ content: "  No nodes found in opensmi.json.", fg: C.textDim }));
+    rows.push(Text({ content: `  Config search paths:`, fg: C.textDim }));
+    const paths = [
+      process.env.OPENSMI_CONFIG,
+      BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
+      `${getStateDir()}/opensmi.json`,
+    ].filter(Boolean) as string[];
+    for (const p of paths) {
+      const exists = existsSync(p);
+      rows.push(Text({ content: `    ${exists ? "✓" : "✗"} ${p}`, fg: exists ? C.green : C.textDim }));
+    }
+    rows.push(Text({ content: " " }));
+    rows.push(Text({ content: "  Run 'opensmi init' to create a config, or set OPENSMI_CONFIG.", fg: C.textDim }));
   }
 
   for (let i = 0; i < setupNodes.length; i++) {
