@@ -879,14 +879,22 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
 
 // Per-GPU liveness cache: jobId → { "node:gpu": alive }
 const gpuLivenessCache: Map<string, Record<string, boolean>> = new Map();
+// Consecutive "all dead" counter per job — only act after threshold
+const watchdogDeadCount: Map<string, number> = new Map();
+const WATCHDOG_DEAD_THRESHOLD = 3;  // Must see "all dead" 3 times in a row before acting
+const WATCHDOG_GRACE_MS = 30_000;   // 30s grace after job start
 
-async function checkGpuLiveness(job: Job): Promise<Record<string, boolean>> {
+async function checkGpuLiveness(job: Job): Promise<Record<string, boolean> | null> {
   const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
   await Bun.write(tmpFile, JSON.stringify(job));
   
   const checkScript = `
-import sys, json
-sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+import sys, json, os
+# Try multiple paths for opensmi module
+for p in [os.path.join("${BASE_DIR}", "src") if "${BASE_DIR}" else "", os.path.expanduser("~/opensmi-dev/src")]:
+    if p and os.path.isdir(p):
+        sys.path.insert(0, p)
+        break
 from opensmi.jobs import Job, check_gpu_liveness
 from opensmi.config import load_config
 from opensmi.state import resolve_config_path
@@ -937,6 +945,7 @@ asyncio.run(main())
     });
     
     const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
     const code = await proc.exited;
     
     try {
@@ -944,15 +953,22 @@ asyncio.run(main())
     } catch {}
     
     if (code !== 0) {
-      return {};
+      tuiLog("WARNING", `checkGpuLiveness: python exited ${code} for job=${job.id}: ${stderr.slice(0, 200)}`);
+      return null;  // null = unknown, don't act on it
     }
     
-    const parsed = JSON.parse(stdout.trim());
+    const trimmed = stdout.trim();
+    if (!trimmed) {
+      tuiLog("WARNING", `checkGpuLiveness: empty stdout for job=${job.id}`);
+      return null;
+    }
+    
+    const parsed = JSON.parse(trimmed);
     gpuLivenessCache.set(job.id, parsed);
-        return parsed;
+    return parsed;
   } catch (e) {
     tuiLog("ERROR", `checkGpuLiveness failed job=${job.id}: ${e?.message || String(e)}`);
-    return {};
+    return null;  // null = unknown
   }
 }
 
@@ -965,32 +981,61 @@ async function watchRunningJobs(): Promise<void> {
   
   for (const job of runningJobs) {
     try {
-      // Grace period: skip health check for first 15s after job started.
+      // Grace period: skip health check for first 30s after job started.
       if (job.started_at) {
         const elapsed = Date.now() - new Date(job.started_at).getTime();
-        if (elapsed < 15_000) {
+        if (elapsed < WATCHDOG_GRACE_MS) {
           continue;
         }
       }
 
-      // Remote GPU liveness check (ground truth via nvidia-smi)
+      // Remote liveness check via PID file
       const liveness = await checkGpuLiveness(job);
+      
+      // null = check failed (SSH error, Python error, timeout)
+      // Don't act on failures — reset dead counter
+      if (liveness === null) {
+        tuiLog("DEBUG", `watchdog: job=${job.id} liveness check returned null (error/timeout), skipping`);
+        // Don't increment dead count on errors — could be transient
+        continue;
+      }
+      
+      // Empty result = no GPUs mapped (misconfiguration)
+      if (Object.keys(liveness).length === 0) {
+        tuiLog("DEBUG", `watchdog: job=${job.id} empty liveness result, skipping`);
+        continue;
+      }
+
       const anyAlive = Object.values(liveness).some(v => v);
       const aliveCount = Object.values(liveness).filter(v => v).length;
       const totalCount = Object.keys(liveness).length;
       
       if (anyAlive) {
-        // Log partial failures but keep job running
+        // Reset dead counter on any sign of life
+        watchdogDeadCount.delete(job.id);
+        
         if (aliveCount < totalCount) {
           tuiLog("WARNING", `watchdog: job=${job.id} partial: ${aliveCount}/${totalCount} GPUs alive`);
         }
         continue;
       }
 
-      // ALL GPUs dead
-      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      // ALL GPUs reported dead — increment consecutive counter
+      const deadCount = (watchdogDeadCount.get(job.id) || 0) + 1;
+      watchdogDeadCount.set(job.id, deadCount);
+      
       const gpuSummary = Object.entries(liveness).map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
-      tuiLog("WARNING", `watchdog: job=${job.id} all GPUs dead [${gpuSummary}] cmd=${cmdPreview.slice(0, 80)}`);
+      tuiLog("WARNING", `watchdog: job=${job.id} all dead (${deadCount}/${WATCHDOG_DEAD_THRESHOLD}) [${gpuSummary}]`);
+      
+      // Only act after consecutive threshold
+      if (deadCount < WATCHDOG_DEAD_THRESHOLD) {
+        continue;
+      }
+      
+      // Confirmed dead — take action
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      tuiLog("ERROR", `watchdog: job=${job.id} CONFIRMED dead after ${deadCount} checks. cmd=${cmdPreview.slice(0, 80)}`);
+      watchdogDeadCount.delete(job.id);
 
       const shouldRestart = 
         (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
@@ -1011,13 +1056,13 @@ async function watchRunningJobs(): Promise<void> {
       } else {
         job.status = "failed";
         job.finished_at = new Date().toISOString();
-        job.error = `All GPU processes terminated (${totalCount} GPUs checked)`;
+        job.error = `All GPU processes terminated after ${WATCHDOG_DEAD_THRESHOLD} consecutive checks`;
         
-        tuiLog("ERROR", `watchdog: job=${job.id} failed — no GPU processes (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
+        tuiLog("ERROR", `watchdog: job=${job.id} failed — confirmed dead (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
         setStatus(`Job ${job.id} failed: GPU processes terminated`, 3000);
       }
       
-      // Clear liveness cache for dead job
+      // Clear caches
       gpuLivenessCache.delete(job.id);
       
       await updateJobInStore(job);
