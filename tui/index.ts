@@ -2110,7 +2110,7 @@ function renderDashboard() {
       { flexDirection: "row", paddingTop: 1 },
       Text({
         content: runnerInputTyping
-          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
+          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
           : (runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
               : (runnerPaneFolded
@@ -2246,7 +2246,7 @@ function renderDetail() {
   children.push(
     Text({
       content: runnerInputTyping
-        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
         : (runnerFocused
             ? (isAdmin
                 ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
@@ -2311,7 +2311,7 @@ function renderHelp() {
     Text({ text: "  Q             Toggle queue mode (immediate/queued)" }),
     Text({ text: "  +/-           Adjust GPU count" }),
     Text({ text: "  G             Toggle GPU mode (auto/manual)" }),
-    Text({ text: "  Enter         Execute command" }),
+    Text({ text: "  Enter         Edit (focused) / Execute (typing)" }),
     Text({ text: "" }),
     Text({ text: "Quit:" }),
     Text({ text: "  q             Quit TUI" }),
@@ -2662,7 +2662,7 @@ function renderMyGpuView() {
     },
     Text({
       content: runnerInputTyping
-        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Esc]")} Stop  ${fg(C.textDim)("[ctrl+x Enter]")} Execute`
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
         : (runnerFocused
             ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`
             : t`[↑↓] Navigate Bundles  [ctrl+x r] Run Command  [ctrl+x ↓] Runner  [ctrl+x t] Switch Tab  [Esc] Dashboard`),
@@ -3198,9 +3198,9 @@ function renderRunnerPane() {
   
   const helpText = Text({ 
     content: runnerInputTyping
-      ? "[Esc] Stop  [ctrl+x Enter] Execute"
+      ? "[Enter] Execute  [Esc] Cancel"
       : (runnerFocused
-          ? "[Esc] Unfocus  [Enter] Edit  [ctrl+x Enter] Execute  [Tab/+/-/Q] Options"
+          ? "[Enter] Edit  [ctrl+x Enter] Execute  [Esc] Unfocus  [Tab/+/-/Q] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
     fg: C.textDim 
   });
@@ -4721,18 +4721,22 @@ async function main() {
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         
-        // Capture all input values
+        // Capture input values from Input components (if in typing mode)
+        // or fall back to stored values (if in focused-but-not-typing mode)
         if (launchDistMode === "single") {
           const inputAny: any = container.findDescendantById("runner-cmd-input");
           if (inputAny) {
-            runnerInputBuffer = String(inputAny?.value ?? "");
+            launchCommand = String(inputAny.value ?? "");
+          }
+          // Fallback: use runnerInputBuffer if Input wasn't rendered
+          if (!launchCommand.trim() && runnerInputBuffer.trim()) {
             launchCommand = runnerInputBuffer;
           }
         } else {
           for (let i = 0; i < launchNumGpus; i++) {
             const inputAny: any = container.findDescendantById(`runner-cmd-input-${i}`);
             if (inputAny) {
-              launchCommands[i] = String(inputAny?.value ?? "");
+              launchCommands[i] = String(inputAny.value ?? "");
             }
           }
         }
@@ -4740,7 +4744,7 @@ async function main() {
         if (launchMode === "tmux") {
           const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
           if (tmuxInputAny) {
-            launchTmuxSession = String(tmuxInputAny?.value ?? "");
+            launchTmuxSession = String(tmuxInputAny.value ?? "");
           }
         }
         
@@ -4787,7 +4791,7 @@ async function main() {
           runnerInputTyping = false;
           render();
         } else if (key.name === "return") {
-          // Capture input values and exit typing mode (don't execute)
+          // Enter in typing mode: capture values and execute
           if (launchDistMode === "single") {
             const inputAny: any = container.findDescendantById("runner-cmd-input");
             runnerInputBuffer = String(inputAny?.value ?? "");
@@ -4809,8 +4813,8 @@ async function main() {
           }
           
           runnerInputTyping = false;
-          // Stay focused after exiting typing mode
-          render();
+          runnerFocused = false;
+          await executeLaunch();
           render();
         } else if (key.name === "down" && launchDistMode === "one-to-one") {
           // Navigate to next input line (commands + tmux if applicable)
