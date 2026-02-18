@@ -882,7 +882,7 @@ const gpuLivenessCache: Map<string, Record<string, boolean>> = new Map();
 // Consecutive "all dead" counter per job — only act after threshold
 const watchdogDeadCount: Map<string, number> = new Map();
 const WATCHDOG_DEAD_THRESHOLD = 3;  // Must see "all dead" 3 times in a row before acting
-const WATCHDOG_GRACE_MS = 30_000;   // 30s grace after job start
+const WATCHDOG_GRACE_MS = 20_000;   // 20s grace after job start
 
 async function checkGpuLiveness(job: Job): Promise<Record<string, boolean> | null> {
   const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
@@ -897,7 +897,7 @@ for p in [os.path.join("${BASE_DIR}", "src") if "${BASE_DIR}" else "", os.path.e
         break
 from opensmi.jobs import Job, check_gpu_liveness
 from opensmi.config import load_config
-from opensmi.state import resolve_config_path
+from opensmi.state import resolve_config_path, get_state_dir
 import asyncio
 
 with open("${tmpFile}", "r") as f:
@@ -926,7 +926,7 @@ job = Job(
     queue_mode=job_data["queue_mode"],
 )
 
-cfg_path = resolve_config_path()
+cfg_path = resolve_config_path(state_dir=get_state_dir())
 cfg = load_config(cfg_path)
 
 async def main():
@@ -953,7 +953,7 @@ asyncio.run(main())
     } catch {}
     
     if (code !== 0) {
-      tuiLog("WARNING", `checkGpuLiveness: python exited ${code} for job=${job.id}: ${stderr.slice(0, 200)}`);
+      tuiLog("WARNING", `checkGpuLiveness: python exited ${code} for job=${job.id}: ${stderr.slice(0, 500)}`);
       return null;  // null = unknown, don't act on it
     }
     
@@ -4858,20 +4858,20 @@ async function main() {
     // Watch running jobs for health and auto-restart
     await watchRunningJobs();
     render();
-  }, 15_000);
+  }, 10_000);
 
   // Cleanup old jobs every hour
   let cleanupCounter = 0;
   const cleanupInterval = setInterval(async () => {
     cleanupCounter++;
-    // Run cleanup every hour (240 cycles of 15s)
-    if (cleanupCounter % 240 === 0) {
+    // Run cleanup every hour (360 cycles of 10s)
+    if (cleanupCounter % 360 === 0) {
       await cleanupOldJobs();
       // Reload jobs to reflect cleanup
       await loadJobsFromCLI();
       requestRender?.();
     }
-  }, 15_000);
+  }, 10_000);
 
   // Key handling
   renderer.keyInput.on("keypress", async (key: KeyEvent) => {
