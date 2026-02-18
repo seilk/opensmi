@@ -21,7 +21,7 @@ Security requirements from backend-task.md:
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, mock_open, patch
 
 from opensmi.executor import route_command_to_target, route_commands_one_to_one
 from opensmi.models import NodeConfig, NodeTarget, RemoteExecutionContext
@@ -413,8 +413,7 @@ class TestShellInjectionSafety(unittest.TestCase):
             mock_ssh.assert_called_once()
 
     def test_tmux_session_name_injection_with_semicolon(self):
-        """Test that tmux session names with semicolons are safely handled."""
-        # Attempt to inject commands via tmux session name
+        """Test that tmux session names with semicolons are sanitized."""
         malicious_session_name = "session; rm -rf /"
 
         target = NodeTarget(
@@ -431,31 +430,27 @@ class TestShellInjectionSafety(unittest.TestCase):
             tmux_session=malicious_session_name,
         )
 
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock(return_value=0)
+
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_ssh:
-            mock_ssh.return_value = AsyncMock(
-                exit_code=0,
-                stdout="",
-                stderr="",
-                node_alias="test-node",
-                command=f"tmux new-session -d -s {malicious_session_name} 'CUDA_VISIBLE_DEVICES=0 python train.py'",
-                success=True,
-            )
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
-            async def run():
-                result = await route_command_to_target(context)
-                return result
+            result = asyncio.run(route_command_to_target(context))
 
-            result = asyncio.run(run())
-
-            # The tmux session name should be in the constructed command
-            # Verify that the session name is passed through but the overall
-            # command structure is maintained
-            mock_ssh.assert_called_once()
+            self.assertTrue(result.success)
+            # Verify the session name was sanitized (no semicolons)
+            call_args = mock_subproc.call_args[0]
+            session_arg = call_args[call_args.index("-s") + 1]
+            self.assertNotIn(";", session_arg)
+            self.assertNotIn(" ", session_arg)
 
     def test_tmux_session_name_injection_with_backticks(self):
-        """Test that tmux session names with backticks are safely handled."""
+        """Test that tmux session names with backticks are sanitized."""
         malicious_session_name = "`whoami`"
 
         target = NodeTarget(
@@ -472,25 +467,23 @@ class TestShellInjectionSafety(unittest.TestCase):
             tmux_session=malicious_session_name,
         )
 
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+        mock_proc.wait = AsyncMock(return_value=0)
+
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_ssh:
-            mock_ssh.return_value = AsyncMock(
-                exit_code=0,
-                stdout="",
-                stderr="",
-                node_alias="test-node",
-                command=f"tmux new-session -d -s {malicious_session_name} 'python train.py'",
-                success=True,
-            )
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
-            async def run():
-                result = await route_command_to_target(context)
-                return result
+            result = asyncio.run(route_command_to_target(context))
 
-            result = asyncio.run(run())
-
-            mock_ssh.assert_called_once()
+            self.assertTrue(result.success)
+            # Verify backticks were sanitized
+            call_args = mock_subproc.call_args[0]
+            session_arg = call_args[call_args.index("-s") + 1]
+            self.assertNotIn("`", session_arg)
 
     def test_complex_multi_stage_injection_attempt(self):
         """Test complex injection with multiple metacharacters."""

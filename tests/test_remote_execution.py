@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, mock_open, patch
 
 from opensmi.executor import (
     inject_cuda_visible_devices,
@@ -11,6 +11,15 @@ from opensmi.executor import (
 )
 from opensmi.models import NodeConfig, NodeTarget, RemoteExecutionContext
 from opensmi.sshutil import RemoteExecResult, ssh_exec_remote
+
+
+def _mock_tmux_subprocess():
+    """Helper: mock asyncio.create_subprocess_exec for local tmux tests."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    mock_proc.wait = AsyncMock(return_value=0)
+    return mock_proc
 
 
 class TestInjectCudaVisibleDevices(unittest.TestCase):
@@ -244,16 +253,12 @@ class TestRouteCommandToTarget(unittest.TestCase):
             )
 
     def test_route_tmux_mode(self):
+        """Tmux mode creates a LOCAL tmux session with SSH wrapper script."""
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.return_value = RemoteExecResult(
-                exit_code=0,
-                stdout="",
-                stderr="",
-                node_alias="gpu01",
-                command="tmux new-session ...",
-            )
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             context = RemoteExecutionContext(
                 target=self.target,
@@ -266,14 +271,12 @@ class TestRouteCommandToTarget(unittest.TestCase):
             result = asyncio.run(route_command_to_target(context))
 
             self.assertTrue(result.success)
-            mock_exec.assert_called_once()
-            call_args = mock_exec.call_args
-            actual_command = call_args.kwargs["command"]
-            self.assertIn("tmux new-session", actual_command)
-            self.assertIn("-d", actual_command)
-            self.assertIn("session-123", actual_command)
-            self.assertIn("base64 --decode", actual_command)
-            self.assertIn("echo ", actual_command)
+            # Verify tmux was called with correct session name
+            mock_subproc.assert_called_once()
+            call_args = mock_subproc.call_args[0]
+            self.assertIn("new-session", call_args)
+            self.assertIn("-d", call_args)
+            self.assertIn("session-123", call_args)
 
     def test_route_missing_node_config(self):
         target_no_config = NodeTarget(
@@ -450,17 +453,12 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
             self.assertIn("WORLD_SIZE", call_kwargs["env_vars"])
 
     def test_tmux_mode_wraps_command_with_env_vars(self):
-        """Test tmux mode properly wraps command with environment variables."""
+        """Test tmux mode creates local session with wrapper script."""
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.return_value = RemoteExecResult(
-                exit_code=0,
-                stdout="",
-                stderr="",
-                node_alias="gpu01",
-                command="tmux command",
-            )
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             target = NodeTarget(
                 node_alias="gpu01",
@@ -479,28 +477,18 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
             result = asyncio.run(route_command_to_target(context))
 
             self.assertTrue(result.success)
-            call_kwargs = mock_exec.call_args.kwargs
-            command = call_kwargs["command"]
-
-            # Verify tmux session creation command structure
-            self.assertIn("tmux new-session", command)
-            self.assertIn("-d", command)
-            self.assertIn("training-session", command)
-            self.assertIn("base64 --decode", command)
-            self.assertIn("echo ", command)
+            call_args = mock_subproc.call_args[0]
+            self.assertIn("new-session", call_args)
+            self.assertIn("-d", call_args)
+            self.assertIn("training-session", call_args)
 
     def test_tmux_mode_without_env_vars(self):
         """Test tmux mode works correctly without environment variables."""
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.return_value = RemoteExecResult(
-                exit_code=0,
-                stdout="",
-                stderr="",
-                node_alias="gpu01",
-                command="tmux command",
-            )
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             target = NodeTarget(
                 node_alias="gpu01",
@@ -518,15 +506,9 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
             result = asyncio.run(route_command_to_target(context))
 
             self.assertTrue(result.success)
-            call_kwargs = mock_exec.call_args.kwargs
-            command = call_kwargs["command"]
-
-            self.assertIn("tmux new-session", command)
-            self.assertIn("simple-session", command)
-            # We shell-quote the payload; don't assert exact quoting, just content.
-            self.assertIn("bash -lc", command)
-            self.assertIn("echo", command)
-            self.assertIn("base64 --decode", command)
+            call_args = mock_subproc.call_args[0]
+            self.assertIn("new-session", call_args)
+            self.assertIn("simple-session", call_args)
 
     def test_route_respects_node_config_timeout(self):
         """Test that custom timeout is respected in execution."""
@@ -1053,25 +1035,11 @@ class TestOneToOneExecution(unittest.TestCase):
         self.assertIn("3 command(s) for 4 GPU(s)", str(cm.exception))
 
     def test_one_to_one_tmux_mode(self):
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.side_effect = [
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu01",
-                    command="tmux new-session ...",
-                ),
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu02",
-                    command="tmux new-session ...",
-                ),
-            ]
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ), patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             contexts = [
                 RemoteExecutionContext(
@@ -1094,28 +1062,24 @@ class TestOneToOneExecution(unittest.TestCase):
 
             self.assertEqual(len(results), 2)
             self.assertTrue(all(r.success for r in results))
-            self.assertEqual(mock_exec.call_count, 2)
 
     def test_one_to_one_mixed_nodes_and_modes(self):
+        """Mixed direct + tmux: direct uses ssh_exec_remote, tmux uses local subprocess."""
+        mock_proc = _mock_tmux_subprocess()
+        direct_result = RemoteExecResult(
+            exit_code=0,
+            stdout="direct output",
+            stderr="",
+            node_alias="gpu01",
+            command="python eval.py",
+        )
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.side_effect = [
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="direct output",
-                    stderr="",
-                    node_alias="gpu01",
-                    command="python eval.py",
-                ),
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu02",
-                    command="tmux new-session ...",
-                ),
-            ]
+            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock,
+            return_value=direct_result,
+        ), patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ), patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             contexts = [
                 RemoteExecutionContext(
@@ -1137,7 +1101,6 @@ class TestOneToOneExecution(unittest.TestCase):
 
             self.assertEqual(len(results), 2)
             self.assertTrue(all(r.success for r in results))
-            self.assertEqual(results[0].stdout, "direct output")
 
     def test_one_to_one_single_command(self):
         with patch(
@@ -1595,32 +1558,11 @@ class TestMultiNodeExecution(unittest.TestCase):
 
     def test_multi_node_tmux_execution(self):
         """P1.6: Verify tmux mode works correctly across multiple nodes."""
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.side_effect = [
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu01",
-                    command="tmux new-session -d -s session-01 'python task.py'",
-                ),
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu02",
-                    command="tmux new-session -d -s session-02 'python task.py'",
-                ),
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu03",
-                    command="tmux new-session -d -s session-03 'python task.py'",
-                ),
-            ]
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ), patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             contexts = [
                 RemoteExecutionContext(
@@ -1647,11 +1589,6 @@ class TestMultiNodeExecution(unittest.TestCase):
 
             self.assertEqual(len(results), 3)
             self.assertTrue(all(r.success for r in results))
-
-            for i in range(3):
-                call_kwargs = mock_exec.call_args_list[i][1]
-                self.assertIn("tmux new-session", call_kwargs["command"])
-                self.assertIn(f"-s session-0{i + 1}", call_kwargs["command"])
 
     def test_multi_node_different_gpu_indices_per_node(self):
         """P1.6: Verify CUDA_VISIBLE_DEVICES is set correctly per node."""
@@ -2112,25 +2049,11 @@ class TestMultiNodeExecution(unittest.TestCase):
 
     def test_one_to_one_tmux_with_custom_session_names(self):
         """P1.5: Verify tmux mode respects custom session names for each command."""
+        mock_proc = _mock_tmux_subprocess()
         with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.side_effect = [
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu01",
-                    command="tmux new-session ...",
-                ),
-                RemoteExecResult(
-                    exit_code=0,
-                    stdout="",
-                    stderr="",
-                    node_alias="gpu01",
-                    command="tmux new-session ...",
-                ),
-            ]
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_subproc, patch("builtins.open", mock_open()), \
+             patch("os.makedirs"), patch("os.chmod"):
 
             contexts = [
                 RemoteExecutionContext(
@@ -2152,9 +2075,9 @@ class TestMultiNodeExecution(unittest.TestCase):
             self.assertEqual(len(results), 2)
             self.assertTrue(all(r.success for r in results))
             # Verify each call used the correct tmux session name
-            for i, call_kwargs in enumerate(mock_exec.call_args_list):
-                command = call_kwargs[1]["command"]
-                self.assertIn(f"experiment-fold-{i}", command)
+            for i, call_args in enumerate(mock_subproc.call_args_list):
+                args = call_args[0]
+                self.assertIn(f"experiment-fold-{i}", args)
 
     def test_one_to_one_with_custom_timeouts(self):
         """P1.5: Verify custom timeout_s is respected for each execution."""

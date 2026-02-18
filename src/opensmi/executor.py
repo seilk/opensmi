@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import shlex
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -301,8 +302,8 @@ async def route_command_to_target(
         # 1. Write bash PID to a known file on the remote node
         # 2. Run the actual command
         # 3. Clean up PID file on exit (normal or error)
-        # Sanitize session name for safe use as file path in remote shell
-        safe_session = context.tmux_session.replace("#", "-").replace(":", "-").replace(".", "-")
+        # Sanitize session name for safe use in file paths, tmux, and remote shell
+        safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', context.tmux_session)
         pid_file = f"/tmp/opensmi-{safe_session}.pid"
         wrapped_command = (
             f'echo $$ > {pid_file}; '
@@ -332,7 +333,7 @@ async def route_command_to_target(
         )
         os.makedirs(wrapper_dir, exist_ok=True)
         wrapper_path = os.path.join(
-            wrapper_dir, f"tmux-{context.tmux_session}.sh"
+            wrapper_dir, f"tmux-{safe_session}.sh"
         )
 
         # 1) Write job config as JSON (no shell escaping needed)
@@ -346,7 +347,7 @@ async def route_command_to_target(
             "remote_pid_file": pid_file,
         }
         config_path = os.path.join(
-            wrapper_dir, f"tmux-{context.tmux_session}.json"
+            wrapper_dir, f"tmux-{safe_session}.json"
         )
         with open(config_path, "w") as f:
             _json.dump(job_config, f)
@@ -389,7 +390,7 @@ sys.exit(rc)
             "new-session",
             "-d",
             "-s",
-            context.tmux_session,
+            safe_session,
             wrapper_path,
         ]
 

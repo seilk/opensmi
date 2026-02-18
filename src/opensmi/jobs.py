@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import json
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -260,7 +261,7 @@ async def check_gpu_liveness(
         checks = []
         for session_name, gpu_idx in checks_list:
             # Sanitize session name for safe use in SSH remote commands
-            safe_session = session_name.replace("#", "-").replace(":", "-").replace(".", "-")
+            safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', session_name)
             pid_file = f"/tmp/opensmi-{safe_session}.pid"
             checks.append(
                 f'if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null; '
