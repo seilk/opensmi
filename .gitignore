@@ -37,3 +37,4 @@ CLAUDE.md
 *.log
 .dev-build-backup/
 logs/
+doc-should-fix/
