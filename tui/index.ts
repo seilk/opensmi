@@ -3401,13 +3401,16 @@ function renderSetupView() {
     rows.push(Text({ content: t`${fg(C.green)(setupMessage)}` }));
   }
 
-  return Box({
-    id: "setup-view",
-    flexDirection: "column",
-    width: "100%",
-    padding: 1,
-    children: rows,
-  });
+  return Box(
+    {
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      padding: 1,
+      backgroundColor: C.bg,
+    },
+    ...rows
+  );
 }
 
 function renderRunnerPane() {
