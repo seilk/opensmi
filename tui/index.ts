@@ -3258,64 +3258,72 @@ function setSetupMessage(msg: string, ms = 2000) {
 }
 
 async function loadSetupNodes(): Promise<void> {
-  // Read env config for all nodes — try each node from cluster snapshot,
-  // falling back to reading config directly if snapshot is empty.
+  // Always read opensmi.json directly — this is config, not runtime state.
+  // Never depend on cluster snapshot (which requires SSH poll).
   setupNodes = [];
-  
-  // Gather node aliases from snapshot or from a config query
-  let aliases: string[] = snapshot?.nodes?.map(ns => ns.node_alias) ?? [];
-  
-  if (aliases.length === 0) {
-    // No snapshot yet — read config JSON directly
+
+  const configPaths = [
+    process.env.OPENSMI_CONFIG,
+    BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
+    `${getStateDir()}/opensmi.json`,
+  ].filter(Boolean) as string[];
+
+  let nodes: Array<{ alias: string; env_manager?: string; env_name?: string; work_dir?: string }> = [];
+
+  for (const cp of configPaths) {
     try {
-      const configPaths = [
-        process.env.OPENSMI_CONFIG,
-        BASE_DIR ? `${BASE_DIR}/opensmi.json` : null,
-        `${process.env.HOME}/.opensmi/opensmi.json`,
-      ].filter(Boolean) as string[];
-      
-      for (const cp of configPaths) {
-        try {
-          const raw = await Bun.file(cp).text();
-          const cfg = JSON.parse(raw);
-          aliases = (cfg.nodes || []).map((n: any) => n.alias as string);
-          if (aliases.length > 0) break;
-        } catch { continue; }
+      const raw = await Bun.file(cp!).text();
+      const cfg = JSON.parse(raw);
+      if (Array.isArray(cfg.nodes) && cfg.nodes.length > 0) {
+        nodes = cfg.nodes;
+        break;
       }
-    } catch {
-      // ignore
-    }
+    } catch { continue; }
   }
-  
-  for (const alias of aliases) {
-    try {
-      const { code, stdout } = await runOpensmi(["node-env", alias, "--json"]);
-      if (code === 0 && stdout.trim()) {
-        const data = JSON.parse(stdout.trim());
-        setupNodes.push({
-          alias: data.alias || alias,
-          env_manager: data.env_manager || "",
-          env_name: data.env_name || "",
-          work_dir: data.work_dir || "",
-        });
-      } else {
-        setupNodes.push({ alias, env_manager: "", env_name: "", work_dir: "" });
-      }
-    } catch {
-      setupNodes.push({ alias, env_manager: "", env_name: "", work_dir: "" });
-    }
+
+  for (const n of nodes) {
+    setupNodes.push({
+      alias: String(n.alias || ""),
+      env_manager: String(n.env_manager || ""),
+      env_name: String(n.env_name || ""),
+      work_dir: String(n.work_dir || ""),
+    });
   }
-  // Sort by alias
+
   setupNodes.sort((a, b) => a.alias.localeCompare(b.alias));
+  tuiLog("DEBUG", `loadSetupNodes: ${setupNodes.length} nodes loaded`);
 }
 
 async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
-  const args = ["node-env", node.alias, "--json"];
-  args.push("--env-manager", node.env_manager || "");
-  args.push("--env-name", node.env_name || "");
-  args.push("--work-dir", node.work_dir || "");
-  const { code } = await runOpensmi(args);
-  return code === 0;
+  // Write directly to opensmi.json — no CLI dependency.
+  const configPaths = [
+    process.env.OPENSMI_CONFIG,
+    BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
+    `${getStateDir()}/opensmi.json`,
+  ].filter(Boolean) as string[];
+
+  for (const cp of configPaths) {
+    try {
+      const raw = await Bun.file(cp!).text();
+      const cfg = JSON.parse(raw);
+      if (!Array.isArray(cfg.nodes)) continue;
+
+      const target = cfg.nodes.find((n: any) => n.alias === node.alias);
+      if (!target) continue;
+
+      // Set or remove fields (keep config clean)
+      if (node.env_manager) target.env_manager = node.env_manager;
+      else delete target.env_manager;
+      if (node.env_name) target.env_name = node.env_name;
+      else delete target.env_name;
+      if (node.work_dir) target.work_dir = node.work_dir;
+      else delete target.work_dir;
+
+      await Bun.write(cp!, JSON.stringify(cfg, null, 2) + "\n");
+      return true;
+    } catch { continue; }
+  }
+  return false;
 }
 
 function renderSetupView() {
