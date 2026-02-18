@@ -216,6 +216,9 @@ async def route_command_to_target(
     # the remote node and runs the command there.  This lets the operator
     # attach with a simple `tmux attach -t <session>` on the opensmi machine
     # instead of having to SSH first and then attach on the remote side.
+    #
+    # To avoid shell quoting nightmares (tmux → bash → ssh → bash), we
+    # write a small wrapper script and have tmux execute that directly.
     elif context.execution_mode == "tmux":
         if not context.tmux_session:
             raise ValueError("tmux_session name required for tmux execution mode")
@@ -231,27 +234,52 @@ async def route_command_to_target(
         else:
             remote_command = context.command
 
-        # Build SSH command that will run inside the local tmux session
-        ssh_target = f"{node.user}@{node.address}"
-        ssh_argv = _ssh_base_cmd(node) + [
-            "-t",  # force PTY allocation for interactive tmux use
-            ssh_target,
-            "bash",
-            "-lc",
-            shlex.quote(remote_command),
-        ]
-        ssh_cmd_str = " ".join(shlex.quote(a) for a in ssh_argv)
+        # Base64 encode the remote command to avoid nested quoting issues
+        payload_b64 = base64.b64encode(
+            remote_command.encode("utf-8")
+        ).decode("ascii")
 
-        # Create local tmux session running the SSH command
+        # Build the SSH base command string
+        ssh_target = f"{node.user}@{node.address}"
+        ssh_base_str = " ".join(shlex.quote(a) for a in _ssh_base_cmd(node))
+
+        # Write a wrapper script that tmux will execute.
+        # The script: SSH into the node, decode + run the command, then
+        # wait so the user can inspect output before the session closes.
+        import os
+        import tempfile
+
+        wrapper_dir = os.path.join(
+            os.path.expanduser("~"), ".opensmi", "tmp"
+        )
+        os.makedirs(wrapper_dir, exist_ok=True)
+        wrapper_path = os.path.join(
+            wrapper_dir, f"tmux-{context.tmux_session}.sh"
+        )
+
+        wrapper_script = f"""#!/bin/bash
+echo "opensmi: connecting to {shlex.quote(node.alias)} ({ssh_target})..."
+echo "opensmi: command → {shlex.quote(context.command[:120])}"
+echo ""
+{ssh_base_str} -t {shlex.quote(ssh_target)} "echo {payload_b64} | base64 --decode | bash -l"
+rc=$?
+echo ""
+echo "--- Job exited with code $rc (press Enter to close tmux session) ---"
+read
+"""
+
+        with open(wrapper_path, "w") as f:
+            f.write(wrapper_script)
+        os.chmod(wrapper_path, 0o755)
+
+        # Create local tmux session running the wrapper script
         tmux_argv = [
             "tmux",
             "new-session",
             "-d",
             "-s",
             context.tmux_session,
-            "bash",
-            "-lc",
-            ssh_cmd_str,
+            wrapper_path,
         ]
 
         proc = await asyncio.create_subprocess_exec(

@@ -767,7 +767,7 @@ print(json.dumps(available))
     } catch {}
     
     if (exitCode !== 0) {
-      console.error(`findAvailableGpus failed: ${stderr}`);
+      tuiLog("ERROR", `findAvailableGpus failed: ${stderr}`);
       return [];
     }
     
@@ -1616,7 +1616,7 @@ async function saveMyGpuViewState(): Promise<void> {
   try {
     await Bun.write(stateFile, JSON.stringify(data, null, 2));
   } catch (e) {
-    console.error("Failed to save My GPU View state:", e);
+    tuiLog("ERROR", `Failed to save My GPU View state: ${e}`);
   }
 }
 
@@ -3883,13 +3883,14 @@ print(job.id)
     } catch {}
     
     if (proc.exitCode !== 0) {
-      console.error(`Failed to create job: ${await new Response(proc.stderr).text()}`);
+      const errMsg = await new Response(proc.stderr).text();
+      tuiLog("ERROR", `Failed to create job: ${errMsg}`);
       return null;
     }
     
     return stdout.trim() || null;
   } catch (e: any) {
-    console.error(`Failed to create immediate job: ${e?.message || String(e)}`);
+    tuiLog("ERROR", `Failed to create immediate job: ${e?.message || String(e)}`);
     return null;
   }
 }
@@ -3955,10 +3956,10 @@ else:
     } catch {}
     
     if (proc.exitCode !== 0) {
-      console.error(`Failed to update job ${jobId}`);
+      tuiLog("ERROR", `Failed to update job ${jobId}`);
     }
   } catch (e: any) {
-    console.error(`Failed to update job ${jobId}: ${e?.message || String(e)}`);
+    tuiLog("ERROR", `Failed to update job ${jobId}: ${e?.message || String(e)}`);
   }
 }
 
@@ -4302,8 +4303,10 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
     .join("\n");
 
   if (!payload.ok) {
+    const errDetail = payload.rawStderr.trim() || "Tmux launch failed (see Output)";
     launchOutput = preflightLines ? `Preflight:\n${preflightLines}` : payload.rawStdout.slice(0, 500);
-    setLaunchError(payload.rawStderr.trim() || "Tmux launch failed (see Output)");
+    setLaunchError(errDetail);
+    tuiLog("ERROR", `executeLaunchTmux failed: node=${node} session=${sessionName} err=${errDetail}`);
     runnerState = "failed";
     return;
   }
@@ -4321,6 +4324,7 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
 
   runnerAttachCmd = attachHint;
   runnerTmuxSession = sessionName;
+  tuiLog("INFO", `executeLaunchTmux ok: node=${node} session=${sessionName}`);
   setStatus(`Launched (tmux → ${node}): ${sessionName}`);
 }
 
@@ -5657,6 +5661,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  tuiLog("ERROR", `fatal: ${e?.message || String(e)}\n${e?.stack || ""}`);
+  console.error(e);  // also print to stderr for immediate visibility
   process.exit(1);
 });
