@@ -43,10 +43,11 @@ def _build_env_setup(node: "NodeConfig") -> str:
         mgr = node.env_manager.lower().strip()
         name = node.env_name.strip()
 
-        if mgr == "conda":
-            # Search common conda locations; first existing dir wins
+        if mgr in ("conda", "miniconda"):
+            # Search common conda/miniconda locations; first existing dir wins
             candidates = [
                 f"$HOME/miniconda3/envs/{name}/bin",
+                f"$HOME/miniconda/envs/{name}/bin",
                 f"$HOME/anaconda3/envs/{name}/bin",
                 f"$HOME/conda/envs/{name}/bin",
                 f"$HOME/miniforge3/envs/{name}/bin",

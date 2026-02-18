@@ -1938,7 +1938,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── node-env: get/set per-node environment config ─────────────
     sp_ne = sub.add_parser("node-env", help="Get or set per-node env config (env_manager, env_name, work_dir)")
     sp_ne.add_argument("node", help="Node alias")
-    sp_ne.add_argument("--env-manager", default=None, help="conda | micromamba | venv | (empty to clear)")
+    sp_ne.add_argument("--env-manager", default=None, help="conda | miniconda | micromamba | venv | (empty to clear)")
     sp_ne.add_argument("--env-name", default=None, help="Virtual env name")
     sp_ne.add_argument("--work-dir", default=None, help="Remote working directory")
     sp_ne.add_argument("--json", dest="json", action="store_true", default=False)

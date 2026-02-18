@@ -3457,7 +3457,7 @@ function renderSetupView() {
     // Show edit fields for selected node
     if (selected && setupEditingField) {
       const fields: Array<{ label: string; key: "env_manager" | "env_name" | "work_dir"; hint: string }> = [
-        { label: "Env Manager", key: "env_manager", hint: "conda / micromamba / venv" },
+        { label: "Env Manager", key: "env_manager", hint: "conda / miniconda / micromamba / venv" },
         { label: "Env Name   ", key: "env_name", hint: "e.g. ml, torch2" },
         { label: "Work Dir   ", key: "work_dir", hint: "e.g. ~/projects" },
       ];
