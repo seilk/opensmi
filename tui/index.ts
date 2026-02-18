@@ -4123,6 +4123,7 @@ async function executeRemoteExec(params: {
     params.mode,
     "--command",
     params.command,
+    "--skip-preflight",
     "--json",
   ];
   if (params.mode === "tmux") {
