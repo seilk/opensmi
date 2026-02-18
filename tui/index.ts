@@ -173,7 +173,7 @@ let launchErrorMsg = "";
 let launchErrorTimeout: any = null;
 let launchOutput = "";
 let launchSelectedGpus: Array<{ node: string; gpu: number }> = [];
-let launchMode: "direct" | "tmux" = "direct";
+let launchMode: "direct" | "tmux" = "tmux";
 let launchTmuxSession = "";
 let launchDistMode: "single" | "one-to-one" = "one-to-one";
 let launchCommands: string[] = []; // Empty initially, populated when GPUs added
@@ -4864,7 +4864,8 @@ async function main() {
           runnerInputTyping = false;
           render();
         } else if (key.name === "return") {
-          // Enter in typing mode: capture values and execute
+          // Enter in typing mode: capture values and exit typing mode
+          // (execution requires ctrl+x Enter from focused mode)
           if (launchDistMode === "single") {
             const inputAny: any = container.findDescendantById("runner-cmd-input");
             runnerInputBuffer = String(inputAny?.value ?? "");
@@ -4886,8 +4887,7 @@ async function main() {
           }
           
           runnerInputTyping = false;
-          runnerFocused = false;
-          await executeLaunch();
+          // Stay in focused mode — user can ctrl+x Enter to execute
           render();
         } else if (key.name === "down" && launchDistMode === "one-to-one") {
           // Navigate to next input line (commands + tmux if applicable)
