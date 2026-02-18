@@ -2311,46 +2311,48 @@ function renderDetail() {
 function renderHelp() {
   return Box(
     {
-      direction: "vertical",
+      flexDirection: "column",
       width: "100%",
       height: "100%",
-      padding: { left: 2, top: 1, right: 2, bottom: 1 },
+      padding: 1,
+      backgroundColor: C.bg,
     },
-    Text({ text: bold("Help - Keyboard Shortcuts"), fg: "cyan" }),
-    Text({ text: "" }),
-    Text({ text: "Navigation:" }),
-    Text({ text: "  ↑/↓ or j/k    Move selection" }),
-    Text({ text: "  Enter         Open detail / action" }),
-    Text({ text: "  Esc           Back to dashboard" }),
-    Text({ text: "" }),
-    Text({ text: "Tabs (Switcher: Ctrl+X, T):" }),
-    Text({ text: "  d             Dashboard" }),
-    Text({ text: "  n             Node detail (in Dashboard)" }),
-    Text({ text: "  g             My GPU View" }),
-    Text({ text: "  j             Jobs" }),
-    Text({ text: "  s             Setup (node env config)" }),
-    Text({ text: "  h             Help" }),
-    Text({ text: "" }),
-    Text({ text: "Dashboard Actions:" }),
-    Text({ text: "  l             Open command runner" }),
-    Text({ text: "  a             Allocate GPU to user" }),
-    Text({ text: "  x             Clear GPU allocation" }),
-    Text({ text: "  Shift+K       Kill violator processes" }),
-    Text({ text: "  r             Refresh cluster data" }),
-    Text({ text: "" }),
-    Text({ text: "Command Runner:" }),
-    Text({ text: "  l             Open full-screen launch (type command directly)" }),
-    Text({ text: "  Ctrl+X ↓      Focus runner pane (bottom dock)" }),
-    Text({ text: "  Ctrl+X F      Fold/unfold runner pane" }),
-    Text({ text: "  Tab           Toggle execution mode (direct/tmux)" }),
-    Text({ text: "  Shift+Tab     Toggle distribution mode (single/one-to-one)" }),
-    Text({ text: "  Q             Toggle queue mode (immediate/queued)" }),
-    Text({ text: "  +/-           Adjust GPU count" }),
-    Text({ text: "  G             Toggle GPU mode (auto/manual)" }),
-    Text({ text: "  Enter         Edit (focused) / Execute (typing)" }),
-    Text({ text: "" }),
-    Text({ text: "Quit:" }),
-    Text({ text: "  q             Quit TUI" }),
+    Text({ content: t`${bold("Help — Keyboard Shortcuts")}`, fg: C.text }),
+    Text({ content: " " }),
+    Text({ content: "Navigation:", fg: C.text }),
+    Text({ content: "  ↑/↓ or j/k    Move selection", fg: C.textDim }),
+    Text({ content: "  Enter         Open detail / action", fg: C.textDim }),
+    Text({ content: "  Esc           Back to dashboard", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Tabs (Switcher: Ctrl+X, T):", fg: C.text }),
+    Text({ content: "  d             Dashboard", fg: C.textDim }),
+    Text({ content: "  n             Node detail (in Dashboard)", fg: C.textDim }),
+    Text({ content: "  g             My GPU View", fg: C.textDim }),
+    Text({ content: "  j             Jobs", fg: C.textDim }),
+    Text({ content: "  h             Help", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Dashboard Actions:", fg: C.text }),
+    Text({ content: "  l             Open command runner", fg: C.textDim }),
+    Text({ content: "  a             Allocate GPU to user", fg: C.textDim }),
+    Text({ content: "  x             Clear GPU allocation", fg: C.textDim }),
+    Text({ content: "  Shift+K       Kill violator processes", fg: C.textDim }),
+    Text({ content: "  r             Refresh cluster data", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Command Runner:", fg: C.text }),
+    Text({ content: "  l             Open full-screen launch", fg: C.textDim }),
+    Text({ content: "  Ctrl+X ↓      Focus runner pane", fg: C.textDim }),
+    Text({ content: "  Ctrl+X F      Fold/unfold runner pane", fg: C.textDim }),
+    Text({ content: "  Ctrl+X Enter  Execute command", fg: C.textDim }),
+    Text({ content: "  Tab/Shift+Tab Toggle mode/distribution", fg: C.textDim }),
+    Text({ content: "  Q             Toggle queue mode", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Setup (Ctrl+X T → Setup):", fg: C.text }),
+    Text({ content: "  ↑/↓           Select node", fg: C.textDim }),
+    Text({ content: "  Enter         Edit node env config", fg: C.textDim }),
+    Text({ content: "  Tab           Next field", fg: C.textDim }),
+    Text({ content: "  S             Save to opensmi.json", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Quit:  q", fg: C.text }),
   );
 }
 
@@ -4901,16 +4903,38 @@ async function main() {
       return;
     }
     
+    // ctrl+x prefix key — works from ALL tabs
+    if (key.name === "x" && key.ctrl) {
+      prefixKeyPressed = true;
+      if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+      prefixKeyTimeout = setTimeout(() => {
+        prefixKeyPressed = false;
+      }, 2000);
+      render();
+      return;
+    }
+
+    // ctrl+x t — tab switcher from ANY screen
+    if (prefixKeyPressed && key.name === "t") {
+      prefixKeyPressed = false;
+      if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+      tabSwitcherOpen = true;
+      tabSwitcherIdx = tabRegistry.getAllVisible().findIndex(t => t.id === tabRegistry.activeTabId);
+      if (tabSwitcherIdx < 0) tabSwitcherIdx = 0;
+      render();
+      return;
+    }
+
+    // ctrl+x q — quit from ANY screen
+    if (prefixKeyPressed && key.name === "q") {
+      prefixKeyPressed = false;
+      if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
+      clearInterval(refreshInterval);
+      renderer.destroy();
+      process.exit(0);
+    }
+
     if (screen === "dashboard" || screen === "my-gpu-view") {
-      if (key.name === "x" && key.ctrl) {
-        prefixKeyPressed = true;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        prefixKeyTimeout = setTimeout(() => {
-          prefixKeyPressed = false;
-        }, 2000);
-        render();
-        return;
-      }
       
       if (prefixKeyPressed && key.name === "down") {
         // ctrl+x down: focus runner
@@ -4939,18 +4963,6 @@ async function main() {
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
         runnerPaneFolded = !runnerPaneFolded;
-        render();
-        return;
-      }
-      
-      if (prefixKeyPressed && key.name === "t") {
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        
-        tabSwitcherOpen = true;
-        tabSwitcherIdx = tabRegistry.getAllVisible().findIndex(t => t.id === tabRegistry.activeTabId);
-        if (tabSwitcherIdx < 0) tabSwitcherIdx = 0;
-        
         render();
         return;
       }
@@ -5027,15 +5039,6 @@ async function main() {
         await executeLaunch();
         render();
         return;
-      }
-      
-      if (prefixKeyPressed && key.name === "q") {
-        // ctrl+x q: quit
-        prefixKeyPressed = false;
-        if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        clearInterval(refreshInterval);
-        renderer.destroy();
-        process.exit(0);
       }
       
       // === TYPING MODE ===
@@ -5829,6 +5832,9 @@ async function main() {
           // Start editing env_manager
           setupEditingField = "env_manager";
           setupEditBuffer = setupNodes[setupSelectedIdx]?.env_manager || "";
+          render();
+        } else if (key.name === "escape") {
+          await navigateToTab("dashboard");
           render();
         } else if (key.sequence === "s" || key.sequence === "S") {
           // Save current node
