@@ -239,6 +239,10 @@ let requestRender: (() => void) | null = null;
 let jobList: Job[] = [];
 let selectedJobIdx = 0;
 let jobDetailView: Job | null = null;
+let jobDetailSelectedCmd = 0;        // Which GPU/command line is selected in detail view
+let jobDetailLogView: string | null = null;  // Captured pane output, null = not viewing
+let jobDetailLogSession: string = "";        // Which tmux session we're viewing
+let jobDetailLogScroll = 0;           // Scroll offset in log view
 let jobsLastLoadTime = 0;
 
 function getStateDir(): string {
@@ -2386,6 +2390,23 @@ function tmuxSafeName(s: string): string {
   return s.replace(/#/g, "-").replace(/[.:]/g, "-");
 }
 
+async function captureTmuxPane(sessionName: string, lines = 500): Promise<string> {
+  try {
+    const tmuxBin = existsSync("/opt/homebrew/bin/tmux") ? "/opt/homebrew/bin/tmux"
+      : existsSync("/usr/local/bin/tmux") ? "/usr/local/bin/tmux" : "tmux";
+    const proc = Bun.spawn([tmuxBin, "capture-pane", "-t", sessionName, "-p", "-S", `-${lines}`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const code = await proc.exited;
+    if (code !== 0) return `(tmux session '${sessionName}' not accessible)`;
+    return stdout;
+  } catch (e: any) {
+    return `(error: ${e?.message || String(e)})`;
+  }
+}
+
 function getJobStatusIcon(status: string): { icon: string; color: string } {
   switch (status) {
     case "queued":
@@ -2540,120 +2561,140 @@ function renderJobsListView() {
 function renderJobDetailView() {
   if (!jobDetailView) return renderJobsListView();
   
+  // Log view mode: show captured tmux pane output
+  if (jobDetailLogView !== null) {
+    const logLines = jobDetailLogView.split("\n");
+    const termHeight = process.stdout.rows || 40;
+    const visibleLines = termHeight - 4;
+    const maxScroll = Math.max(0, logLines.length - visibleLines);
+    jobDetailLogScroll = Math.min(jobDetailLogScroll, maxScroll);
+    
+    const displayLines = logLines.slice(jobDetailLogScroll, jobDetailLogScroll + visibleLines);
+    
+    const rows: any[] = [];
+    rows.push(Text({
+      content: t`${bold(fg(C.blue)("Log"))} — ${jobDetailLogSession}  ${fg(C.textDim)(`(${jobDetailLogScroll + 1}-${jobDetailLogScroll + displayLines.length}/${logLines.length} lines)`)}`,
+    }));
+    rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(60))}` }));
+    
+    for (const line of displayLines) {
+      rows.push(Text({ content: line, fg: C.text }));
+    }
+    
+    rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(60))}` }));
+    rows.push(Text({
+      content: t`${fg(C.textDim)("[↑↓]")} Scroll  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back to detail`,
+      fg: C.textDim,
+    }));
+    
+    return Box(
+      { flexDirection: "column", backgroundColor: C.bg, paddingLeft: 1, paddingRight: 1 },
+      ...rows
+    );
+  }
+  
   const job = jobDetailView;
   const statusInfo = getJobStatusIcon(job.status);
   const liveness = gpuLivenessCache.get(job.id) || {};
   
+  // Build list of sessions for navigation
+  const sessionEntries: Array<{ label: string; session: string | null; color: string }> = [];
+  
+  if (job.dist_mode === "single") {
+    // Single command → one or more sessions
+    for (let i = 0; i < job.gpus.length; i++) {
+      const [node, gpu] = job.gpus[i];
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      const session = job.tmux_sessions[i] || null;
+      let color: string;
+      if (job.status !== "running") {
+        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
+      } else {
+        color = alive === true ? C.green : alive === false ? C.red : C.yellow;
+      }
+      sessionEntries.push({ label: `${node}:GPU${gpu}`, session, color });
+    }
+  } else {
+    // One-to-one: each command has its own session
+    for (let i = 0; i < job.commands.length; i++) {
+      const [node, gpu] = job.gpus[i] || ["?", i];
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      const session = job.tmux_sessions[i] || null;
+      let color: string;
+      if (job.status !== "running") {
+        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
+      } else {
+        color = alive === true ? C.green : alive === false ? C.red : C.yellow;
+      }
+      const cmdPreview = job.commands[i]?.slice(0, 40) || "";
+      sessionEntries.push({ label: `${node}:GPU${gpu} → ${cmdPreview}`, session, color });
+    }
+  }
+  
+  // Clamp selection
+  if (sessionEntries.length > 0) {
+    jobDetailSelectedCmd = Math.min(jobDetailSelectedCmd, sessionEntries.length - 1);
+  }
+  
   const rows: any[] = [];
   rows.push(
-    Text({
-      content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, 40)}`,
-    })
+    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, 50)}` })
   );
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
   rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
   
-  // Runtime
   if (job.started_at) {
     const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
     rows.push(Text({ content: t`Runtime:   ${fg(job.status === "running" ? C.green : C.text)(runtime)}` }));
   }
   
-  if (job.gpus.length > 0) {
+  rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}  Queue: ${job.queue_mode}` }));
+  rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries})` : ""}` }));
+  
+  // GPU/Command list with selection cursor
+  if (sessionEntries.length > 0) {
     rows.push(Text({ content: "" }));
-    rows.push(Text({ content: t`${fg(C.cyan)("GPU Status:")}` }));
-    for (const [node, gpu] of job.gpus) {
-      const key = `${node}:${gpu}`;
-      const alive = liveness[key];
-      let statusIcon: string;
-      let color: string;
-      if (job.status !== "running") {
-        // Non-running job: show neutral
-        statusIcon = job.status === "success" ? "✓" : job.status === "failed" ? "✗" : "·";
-        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
-      } else if (alive === undefined) {
-        statusIcon = "?";
-        color = C.yellow;
-      } else if (alive) {
-        statusIcon = "●";
-        color = C.green;
-      } else {
-        statusIcon = "●";
-        color = C.red;
-      }
-      rows.push(Text({ content: t`  ${fg(color)(statusIcon)} ${node}:GPU${gpu}` }));
+    const liveCount = Object.values(liveness).filter(v => v).length;
+    const totalCount = Object.keys(liveness).length;
+    const livenessStr = totalCount > 0 ? ` (${liveCount}/${totalCount} active)` : "";
+    rows.push(Text({ content: t`${fg(C.cyan)("Sessions:")}${livenessStr}` }));
+    
+    for (let i = 0; i < sessionEntries.length; i++) {
+      const entry = sessionEntries[i];
+      const selected = i === jobDetailSelectedCmd;
+      const prefix = selected ? "▸ " : "  ";
+      const statusDot = entry.session ? "●" : "○";
+      const entryColor = selected ? C.yellow : entry.color;
+      const hasLog = entry.session ? "" : fg(C.textDim)(" (no session)");
+      rows.push(Text({ content: t`${fg(entryColor)(`${prefix}${statusDot} ${entry.label}`)}${hasLog}` }));
     }
-  } else if (job.requested_gpu_count > 0) {
-    rows.push(Text({ content: t`GPUs:      ${fg(C.yellow)(`Waiting for ${job.requested_gpu_count} GPUs`)}` }));
   }
   
-  rows.push(Text({ content: "" }));
-  rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}` }));
-  rows.push(Text({ content: t`Queue:     ${job.queue_mode}` }));
-  
-  rows.push(Text({ content: "" }));
+  // Command display
   if (job.dist_mode === "single" && job.command) {
+    rows.push(Text({ content: "" }));
     rows.push(Text({ content: t`${fg(C.cyan)("Command:")}` }));
     rows.push(Text({ content: `  ${job.command}`, fg: C.textDim }));
-  } else if (job.commands.length > 0) {
-    rows.push(Text({ content: t`${fg(C.cyan)("Commands:")}` }));
-    for (let i = 0; i < job.commands.length; i++) {
-      const [node, gpu] = job.gpus[i] || ["?", i];
-      const key = `${node}:${gpu}`;
-      const alive = liveness[key];
-      let cmdColor: string;
-      if (job.status !== "running") {
-        cmdColor = C.textDim;
-      } else if (alive === true) {
-        cmdColor = C.green;
-      } else if (alive === false) {
-        cmdColor = C.red;
-      } else {
-        cmdColor = C.textDim;
-      }
-      const gpuLabel = `${node}:GPU${gpu}`;
-      rows.push(Text({ content: t`  ${fg(cmdColor)(gpuLabel)} → ${job.commands[i]}` }));
-    }
   }
   
-  rows.push(Text({ content: "" }));
-  rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries} retries)` : ""}` }));
+  // Timestamps
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
-  if (job.started_at) {
-    rows.push(Text({ content: t`Started:   ${job.started_at}` }));
-  }
-  if (job.finished_at) {
-    rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
-  }
-  
-  if (job.tmux_sessions.length > 0) {
-    rows.push(Text({ content: "" }));
-    rows.push(Text({ content: t`${fg(C.cyan)("Tmux Sessions:")}` }));
-    for (const session of job.tmux_sessions) {
-      rows.push(Text({ content: `  ${session}`, fg: C.textDim }));
-    }
-  }
+  if (job.started_at) rows.push(Text({ content: t`Started:   ${job.started_at}` }));
+  if (job.finished_at) rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
   
   if (job.error) {
     rows.push(Text({ content: "" }));
     rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
   }
   
-  // Liveness summary for running jobs
-  if (job.status === "running" && Object.keys(liveness).length > 0) {
-    const aliveCount = Object.values(liveness).filter(v => v).length;
-    const total = Object.keys(liveness).length;
-    rows.push(Text({ content: "" }));
-    const summaryColor = aliveCount === total ? C.green : aliveCount > 0 ? C.yellow : C.red;
-    rows.push(Text({ content: t`${fg(C.cyan)("Liveness:")} ${fg(summaryColor)(`${aliveCount}/${total} GPUs active`)}` }));
-  }
-  
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -5834,10 +5875,62 @@ async function main() {
         render();
       }
     } else if (screen === "jobs") {
-      if (jobDetailView) {
+      if (jobDetailView && jobDetailLogView !== null) {
+        // Log view mode
+        if (key.name === "escape") {
+          jobDetailLogView = null;
+          jobDetailLogScroll = 0;
+          render();
+        } else if (key.name === "up" || key.name === "k") {
+          jobDetailLogScroll = Math.max(0, jobDetailLogScroll - 1);
+          render();
+        } else if (key.name === "down" || key.name === "j") {
+          jobDetailLogScroll++;
+          render();
+        } else if (key.name === "pageup") {
+          jobDetailLogScroll = Math.max(0, jobDetailLogScroll - 20);
+          render();
+        } else if (key.name === "pagedown") {
+          jobDetailLogScroll += 20;
+          render();
+        } else if (key.name === "r") {
+          // Refresh log
+          if (jobDetailLogSession) {
+            jobDetailLogView = await captureTmuxPane(jobDetailLogSession);
+            render();
+          }
+        }
+      } else if (jobDetailView) {
+        // Detail view mode
+        const sessionCount = Math.max(jobDetailView.tmux_sessions.length, jobDetailView.gpus.length);
+        
         if (key.name === "escape" || key.name === "backspace") {
           jobDetailView = null;
+          jobDetailSelectedCmd = 0;
           render();
+        } else if (key.name === "up" || key.name === "k") {
+          jobDetailSelectedCmd = Math.max(0, jobDetailSelectedCmd - 1);
+          render();
+        } else if (key.name === "down" || key.name === "j") {
+          jobDetailSelectedCmd = Math.min(sessionCount - 1, jobDetailSelectedCmd + 1);
+          render();
+        } else if (key.name === "return") {
+          // Enter log view for selected session
+          const session = jobDetailView.tmux_sessions[jobDetailSelectedCmd];
+          if (session) {
+            jobDetailLogSession = session;
+            jobDetailLogScroll = 0;
+            setStatus(`Loading log for ${session}...`);
+            jobDetailLogView = await captureTmuxPane(session);
+            // Auto-scroll to bottom
+            const lines = jobDetailLogView.split("\n");
+            const termHeight = process.stdout.rows || 40;
+            jobDetailLogScroll = Math.max(0, lines.length - (termHeight - 4));
+            render();
+          } else {
+            setStatus("No tmux session available for this GPU");
+            render();
+          }
         } else if (key.name === "c") {
           await cancelJobAction(jobDetailView);
           render();
@@ -5858,8 +5951,10 @@ async function main() {
         } else if (key.name === "return") {
           if (jobList.length > 0 && jobList[selectedJobIdx]) {
             jobDetailView = jobList[selectedJobIdx];
+            jobDetailSelectedCmd = 0;
+            jobDetailLogView = null;
+            jobDetailLogScroll = 0;
             render();
-            // Trigger liveness check for running jobs on detail view entry
             if (jobDetailView.status === "running" && jobDetailView.gpus.length > 0) {
               checkGpuLiveness(jobDetailView).then(() => render());
             }
