@@ -3263,7 +3263,7 @@ async function loadSetupNodes(): Promise<void> {
   setupNodes = [];
   
   // Gather node aliases from snapshot or from a config query
-  let aliases: string[] = Object.values(clusterSnapshot).map(ns => ns.node_alias);
+  let aliases: string[] = snapshot?.nodes?.map(ns => ns.node_alias) ?? [];
   
   if (aliases.length === 0) {
     // No snapshot yet — read config JSON directly
