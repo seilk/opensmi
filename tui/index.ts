@@ -3523,6 +3523,18 @@ function renderRunnerPane() {
       paddingLeft: 1,
       paddingRight: 1,
       backgroundColor: C.bgAlt,
+      onMouseDown: () => {
+        if (runnerInputTyping) return; // Don't toggle while typing
+        if (runnerFocused) {
+          runnerFocused = false;
+          runnerInputTyping = false;
+        } else {
+          runnerFocused = true;
+          runnerFocusedInputIdx = 0;
+          runnerInputBuffer = launchCommand;
+        }
+        requestRender?.();
+      },
     },
     headerText,
     helpText
