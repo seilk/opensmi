@@ -3258,19 +3258,49 @@ function setSetupMessage(msg: string, ms = 2000) {
 }
 
 async function loadSetupNodes(): Promise<void> {
-  // Read env config for all nodes from the cluster snapshot
+  // Read env config for all nodes — try each node from cluster snapshot,
+  // falling back to reading config directly if snapshot is empty.
   setupNodes = [];
-  for (const ns of Object.values(clusterSnapshot)) {
-    const alias = ns.node_alias;
+  
+  // Gather node aliases from snapshot or from a config query
+  let aliases: string[] = Object.values(clusterSnapshot).map(ns => ns.node_alias);
+  
+  if (aliases.length === 0) {
+    // No snapshot yet — read config JSON directly
     try {
-      const { stdout } = await runOpensmi(["node-env", alias, "--json"]);
-      const data = JSON.parse(stdout.trim());
-      setupNodes.push({
-        alias: data.alias || alias,
-        env_manager: data.env_manager || "",
-        env_name: data.env_name || "",
-        work_dir: data.work_dir || "",
-      });
+      const configPaths = [
+        process.env.OPENSMI_CONFIG,
+        BASE_DIR ? `${BASE_DIR}/opensmi.json` : null,
+        `${process.env.HOME}/.opensmi/opensmi.json`,
+      ].filter(Boolean) as string[];
+      
+      for (const cp of configPaths) {
+        try {
+          const raw = await Bun.file(cp).text();
+          const cfg = JSON.parse(raw);
+          aliases = (cfg.nodes || []).map((n: any) => n.alias as string);
+          if (aliases.length > 0) break;
+        } catch { continue; }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  
+  for (const alias of aliases) {
+    try {
+      const { code, stdout } = await runOpensmi(["node-env", alias, "--json"]);
+      if (code === 0 && stdout.trim()) {
+        const data = JSON.parse(stdout.trim());
+        setupNodes.push({
+          alias: data.alias || alias,
+          env_manager: data.env_manager || "",
+          env_name: data.env_name || "",
+          work_dir: data.work_dir || "",
+        });
+      } else {
+        setupNodes.push({ alias, env_manager: "", env_name: "", work_dir: "" });
+      }
     } catch {
       setupNodes.push({ alias, env_manager: "", env_name: "", work_dir: "" });
     }
@@ -4717,7 +4747,12 @@ async function main() {
     shortcut: "s",
     render: renderSetupView,
     onEnter: async () => {
-      await loadSetupNodes();
+      try {
+        await loadSetupNodes();
+      } catch (e: any) {
+        tuiLog("ERROR", `setup onEnter failed: ${e?.message || String(e)}`);
+        setSetupMessage(`Error loading nodes: ${(e?.message || String(e)).slice(0, 60)}`);
+      }
     },
   });
 
