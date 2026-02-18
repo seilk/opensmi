@@ -1048,7 +1048,7 @@ async function executeJobRemote(job: Job): Promise<void> {
     for (const [node, gpus] of nodesByGpu.entries()) {
       const gpusCsv = gpus.join(",");
       const sessionName = job.exec_mode === "tmux" 
-        ? `opensmi-${job.id}-${node}`
+        ? `opensmi-${job.id}-${tmuxSafeName(node)}`
         : undefined;
       
       const payload = await executeRemoteExec({
@@ -1078,7 +1078,7 @@ async function executeJobRemote(job: Job): Promise<void> {
       
       const gpuIndex = String(gpu);
       const sessionName = job.exec_mode === "tmux"
-        ? `opensmi-${job.id}-${node}-gpu${gpu}`
+        ? `opensmi-${job.id}-${tmuxSafeName(node)}-gpu${gpu}`
         : undefined;
       
       const payload = await executeRemoteExec({
@@ -2355,6 +2355,12 @@ function renderHelp() {
     Text({ content: " " }),
     Text({ content: "Quit:  q", fg: C.text }),
   );
+}
+
+/** Sanitize a string for use as a tmux session name.
+ *  '#' is a tmux special char (session#window separator) and must be replaced. */
+function tmuxSafeName(s: string): string {
+  return s.replace(/#/g, "-").replace(/[.:]/g, "-");
 }
 
 function getJobStatusIcon(status: string): { icon: string; color: string } {
@@ -4255,7 +4261,7 @@ print("OK")
       const gpuIndices = launchSelectedGpus.map(g => g.gpu).join(",");
       if (launchMode === "tmux") {
         const nodes = Array.from(new Set(launchSelectedGpus.map(g => g.node)));
-        const sessionName = launchTmuxSession.trim() || `opensmi-${currentJobId}-${nodes[0]}`;
+        const sessionName = launchTmuxSession.trim() || `opensmi-${currentJobId}-${tmuxSafeName(nodes[0])}`;
         tmuxSessions.push(sessionName);
         // Set launchTmuxSession so executeLaunchTmux uses it
         if (!launchTmuxSession.trim()) {
@@ -4275,7 +4281,7 @@ print("OK")
           if (!gpu) continue;
           const sessionName = launchTmuxSession.trim()
             ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
-            : `opensmi-${currentJobId}-${gpu.node}-gpu${gpu.gpu}`;
+                        : `opensmi-${currentJobId}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
           tmuxSessions.push(sessionName);
         }
       }
@@ -4429,7 +4435,7 @@ async function executeLaunchOneToOne(): Promise<void> {
     if (launchMode === "tmux") {
       const sessionName = launchTmuxSession.trim()
         ? `${launchTmuxSession}-${gpu.node}-gpu${gpu.gpu}`
-        : `opensmi-${Date.now()}-${gpu.node}-gpu${gpu.gpu}`;
+                    : `opensmi-${Date.now()}-${tmuxSafeName(gpu.node)}-gpu${gpu.gpu}`;
 
       const payload = await executeRemoteExec({
         node: gpu.node,
@@ -4494,7 +4500,7 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
   }
   const node = nodes[0]!;
 
-  const sessionName = launchTmuxSession.trim() || `opensmi-${Date.now()}-${node}`;
+  const sessionName = launchTmuxSession.trim() || `opensmi-${Date.now()}-${tmuxSafeName(node)}`;
 
   const payload = await executeRemoteExec({
     node,
