@@ -873,18 +873,17 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
   }
 }
 
-async function checkJobAlive(job: Job): Promise<boolean> {
-  if (job.exec_mode !== "tmux" || job.tmux_sessions.length === 0) {
-    return false;
-  }
-  
+// Per-GPU liveness cache: jobId → { "node:gpu": alive }
+const gpuLivenessCache: Map<string, Record<string, boolean>> = new Map();
+
+async function checkGpuLiveness(job: Job): Promise<Record<string, boolean>> {
   const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
   await Bun.write(tmpFile, JSON.stringify(job));
   
   const checkScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
-from opensmi.jobs import Job, check_job_alive
+from opensmi.jobs import Job, check_gpu_liveness
 from opensmi.config import load_config
 from opensmi.state import resolve_config_path
 import asyncio
@@ -919,8 +918,8 @@ cfg_path = resolve_config_path()
 cfg = load_config(cfg_path)
 
 async def main():
-    alive = await check_job_alive(job, cfg)
-    print("true" if alive else "false")
+    result = await check_gpu_liveness(job, cfg)
+    print(json.dumps(result))
 
 asyncio.run(main())
 `;
@@ -941,72 +940,85 @@ asyncio.run(main())
     } catch {}
     
     if (code !== 0) {
-      return false;
+      return {};
     }
     
-    return stdout.trim() === "true";
+    const parsed = JSON.parse(stdout.trim());
+    gpuLivenessCache.set(job.id, parsed);
+        return parsed;
   } catch (e) {
-    tuiLog("ERROR", `checkJobAlive failed job=${job.id}: ${e?.message || String(e)}`);
-    return false;
+    tuiLog("ERROR", `checkGpuLiveness failed job=${job.id}: ${e?.message || String(e)}`);
+    return {};
   }
 }
 
 async function watchRunningJobs(): Promise<void> {
-  const runningJobs = jobList.filter(j => j.status === "running" && j.exec_mode === "tmux");
+  const runningJobs = jobList.filter(j => j.status === "running");
   
   if (runningJobs.length === 0) {
     return;
   }
   
-  // Check each running job's tmux session health
   for (const job of runningJobs) {
     try {
-      // Grace period: skip health check for first 30s after job started.
-      // tmux session creation involves SSH connection which takes time.
+      // Grace period: skip health check for first 15s after job started.
       if (job.started_at) {
         const elapsed = Date.now() - new Date(job.started_at).getTime();
-        if (elapsed < 30_000) {
+        if (elapsed < 15_000) {
           continue;
         }
       }
-      const alive = await checkJobAlive(job);
-      
-      if (!alive) {
-        // Tmux session terminated - determine restart behavior based on policy
-        const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-        tuiLog("WARNING", `watchdog: job=${job.id} tmux sessions dead: [${job.tmux_sessions.join(", ")}] cmd=${cmdPreview.slice(0, 80)}`);
 
-        const shouldRestart = 
-          (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
-          (job.restart_policy === "always");
-        
-        if (shouldRestart) {
-          // Re-queue for auto-dispatch
-          job.status = "queued";
-          job.retry_count++;
-          job.started_at = null;
-          job.tmux_sessions = [];
-          
-          const retryInfo = job.restart_policy === "always" 
-            ? `(retry ${job.retry_count})`
-            : `(retry ${job.retry_count}/${job.max_retries})`;
-          
-          tuiLog("INFO", `watchdog: re-queuing job=${job.id} ${retryInfo}`);
-          setStatus(`Job ${job.id} died, re-queuing ${retryInfo} - ${cmdPreview.slice(0, 30)}...`, 3000);
-        } else {
-          // Mark as failed (max retries exceeded or restart_policy="never")
-          job.status = "failed";
-          job.finished_at = new Date().toISOString();
-          job.error = job.error || "tmux session terminated unexpectedly";
-          
-          tuiLog("ERROR", `watchdog: job=${job.id} failed — session terminated, no restart (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
-          setStatus(`Job ${job.id} failed: session terminated - ${cmdPreview.slice(0, 30)}...`, 3000);
+      // Remote GPU liveness check (ground truth via nvidia-smi)
+      const liveness = await checkGpuLiveness(job);
+      const anyAlive = Object.values(liveness).some(v => v);
+      const aliveCount = Object.values(liveness).filter(v => v).length;
+      const totalCount = Object.keys(liveness).length;
+      
+      if (anyAlive) {
+        // Log partial failures but keep job running
+        if (aliveCount < totalCount) {
+          tuiLog("WARNING", `watchdog: job=${job.id} partial: ${aliveCount}/${totalCount} GPUs alive`);
         }
-        
-        await updateJobInStore(job);
-        await loadJobsFromCLI();
-        requestRender?.();
+        continue;
       }
+
+      // ALL GPUs dead
+      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+      const gpuSummary = Object.entries(liveness).map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
+      tuiLog("WARNING", `watchdog: job=${job.id} all GPUs dead [${gpuSummary}] cmd=${cmdPreview.slice(0, 80)}`);
+
+      const shouldRestart = 
+        (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
+        (job.restart_policy === "always");
+      
+      if (shouldRestart) {
+        job.status = "queued";
+        job.retry_count++;
+        job.started_at = null;
+        job.tmux_sessions = [];
+        
+        const retryInfo = job.restart_policy === "always" 
+          ? `(retry ${job.retry_count})`
+          : `(retry ${job.retry_count}/${job.max_retries})`;
+        
+        tuiLog("INFO", `watchdog: re-queuing job=${job.id} ${retryInfo}`);
+        setStatus(`Job ${job.id} died, re-queuing ${retryInfo}`, 3000);
+      } else {
+        job.status = "failed";
+        job.finished_at = new Date().toISOString();
+        job.error = `All GPU processes terminated (${totalCount} GPUs checked)`;
+        
+        tuiLog("ERROR", `watchdog: job=${job.id} failed — no GPU processes (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
+        setStatus(`Job ${job.id} failed: GPU processes terminated`, 3000);
+      }
+      
+      // Clear liveness cache for dead job
+      gpuLivenessCache.delete(job.id);
+      
+      await updateJobInStore(job);
+      await loadJobsFromCLI();
+      requestRender?.();
     } catch (e: any) {
       tuiLog("ERROR", `watchdog failed job=${job.id}: ${e?.message || String(e)}`);
     }
@@ -2479,7 +2491,7 @@ function renderJobsListView() {
   const rows: any[] = [];
   rows.push(
     Text({
-      content: t`${fg(C.cyan)("  ID        Status      GPUs              Command           Time")}`,
+      content: t`${fg(C.cyan)("  ID        Status      GPUs              Command           Runtime")}`,
       fg: C.cyan,
     })
   );
@@ -2494,13 +2506,13 @@ function renderJobsListView() {
       : `[${job.commands.length} cmds]`;
     
     const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
-    const timeDisplay = formatJobTimestamp(job.submitted_at);
+    const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
     
     const prefix = selected ? "▶ " : "  ";
     const idDisplay = job.id.padEnd(8);
     const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
     
-    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${timeDisplay}`;
+    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(17)} ${runtime}`;
     
     rows.push(
       Text({
@@ -2531,6 +2543,7 @@ function renderJobDetailView() {
   
   const job = jobDetailView;
   const statusInfo = getJobStatusIcon(job.status);
+  const liveness = gpuLivenessCache.get(job.id) || {};
   
   const rows: any[] = [];
   rows.push(
@@ -2542,13 +2555,41 @@ function renderJobDetailView() {
   rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
   rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
   
+  // Runtime
+  if (job.started_at) {
+    const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
+    rows.push(Text({ content: t`Runtime:   ${fg(job.status === "running" ? C.green : C.text)(runtime)}` }));
+  }
+  
   if (job.gpus.length > 0) {
-    const gpuList = job.gpus.map(([node, gpu]) => `${node}:GPU${gpu}`).join(", ");
-    rows.push(Text({ content: t`GPUs:      ${gpuList}` }));
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.cyan)("GPU Status:")}` }));
+    for (const [node, gpu] of job.gpus) {
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      let statusIcon: string;
+      let color: string;
+      if (job.status !== "running") {
+        // Non-running job: show neutral
+        statusIcon = job.status === "success" ? "✓" : job.status === "failed" ? "✗" : "·";
+        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
+      } else if (alive === undefined) {
+        statusIcon = "?";
+        color = C.yellow;
+      } else if (alive) {
+        statusIcon = "●";
+        color = C.green;
+      } else {
+        statusIcon = "●";
+        color = C.red;
+      }
+      rows.push(Text({ content: t`  ${fg(color)(statusIcon)} ${node}:GPU${gpu}` }));
+    }
   } else if (job.requested_gpu_count > 0) {
     rows.push(Text({ content: t`GPUs:      ${fg(C.yellow)(`Waiting for ${job.requested_gpu_count} GPUs`)}` }));
   }
   
+  rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}` }));
   rows.push(Text({ content: t`Queue:     ${job.queue_mode}` }));
   
@@ -2559,10 +2600,25 @@ function renderJobDetailView() {
   } else if (job.commands.length > 0) {
     rows.push(Text({ content: t`${fg(C.cyan)("Commands:")}` }));
     for (let i = 0; i < job.commands.length; i++) {
-      const gpu = job.gpus[i] ? `${job.gpus[i][0]}:GPU${job.gpus[i][1]}` : `GPU ${i}`;
-      rows.push(Text({ content: `  ${gpu} → ${job.commands[i]}`, fg: C.textDim }));
+      const [node, gpu] = job.gpus[i] || ["?", i];
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      let cmdColor: string;
+      if (job.status !== "running") {
+        cmdColor = C.textDim;
+      } else if (alive === true) {
+        cmdColor = C.green;
+      } else if (alive === false) {
+        cmdColor = C.red;
+      } else {
+        cmdColor = C.textDim;
+      }
+      const gpuLabel = `${node}:GPU${gpu}`;
+      rows.push(Text({ content: t`  ${fg(cmdColor)(gpuLabel)} → ${job.commands[i]}` }));
     }
   }
+  
+  rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries} retries)` : ""}` }));
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
@@ -2571,10 +2627,6 @@ function renderJobDetailView() {
   }
   if (job.finished_at) {
     rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
-  }
-  if (job.started_at) {
-    const duration = formatJobDuration(job.started_at, job.finished_at);
-    rows.push(Text({ content: t`Duration:  ${duration}` }));
   }
   
   if (job.tmux_sessions.length > 0) {
@@ -2588,6 +2640,15 @@ function renderJobDetailView() {
   if (job.error) {
     rows.push(Text({ content: "" }));
     rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
+  }
+  
+  // Liveness summary for running jobs
+  if (job.status === "running" && Object.keys(liveness).length > 0) {
+    const aliveCount = Object.values(liveness).filter(v => v).length;
+    const total = Object.keys(liveness).length;
+    rows.push(Text({ content: "" }));
+    const summaryColor = aliveCount === total ? C.green : aliveCount > 0 ? C.yellow : C.red;
+    rows.push(Text({ content: t`${fg(C.cyan)("Liveness:")} ${fg(summaryColor)(`${aliveCount}/${total} GPUs active`)}` }));
   }
   
   rows.push(Text({ content: "" }));
@@ -5786,6 +5847,10 @@ async function main() {
           if (jobList.length > 0 && jobList[selectedJobIdx]) {
             jobDetailView = jobList[selectedJobIdx];
             render();
+            // Trigger liveness check for running jobs on detail view entry
+            if (jobDetailView.status === "running" && jobDetailView.gpus.length > 0) {
+              checkGpuLiveness(jobDetailView).then(() => render());
+            }
           }
         } else if (key.name === "c") {
           if (jobList.length > 0 && jobList[selectedJobIdx]) {

@@ -189,25 +189,28 @@ def _find_tmux_binary() -> str:
     return "tmux"  # fallback, let OS raise if truly missing
 
 
-async def _check_remote_gpu_active(job: Job, cfg: ClusterConfig) -> bool:
-    """Check if the job's assigned GPUs have active compute processes.
+async def check_gpu_liveness(
+    job: Job, cfg: ClusterConfig
+) -> dict[str, bool]:
+    """Check which of the job's assigned GPUs have active compute processes.
 
-    SSH to each unique node and run nvidia-smi to check for compute
-    processes on the assigned GPU indices. Returns True if ANY assigned
-    GPU has an active process.
+    SSH to each unique node and run nvidia-smi per-GPU to determine
+    individual GPU liveness. This is the ground-truth check.
 
-    This is the ground-truth check — if a GPU process is running on
-    the remote node, the job is alive regardless of local tmux state.
+    Returns a dict mapping "node:gpu_idx" → alive (bool).
+    Example: {"MICV#13:2": True, "MICV#13:3": False}
     """
     from .sshutil import ssh_run
+
+    result: dict[str, bool] = {}
 
     # Group GPU indices by node
     node_gpus: dict[str, list[int]] = {}
     for node_alias, gpu_idx in job.gpus:
         node_gpus.setdefault(node_alias, []).append(gpu_idx)
+        result[f"{node_alias}:{gpu_idx}"] = False  # default dead
 
     for node_alias, gpu_indices in node_gpus.items():
-        # Find node config
         node_cfg = None
         for n in cfg.nodes:
             if n.alias == node_alias:
@@ -216,66 +219,63 @@ async def _check_remote_gpu_active(job: Job, cfg: ClusterConfig) -> bool:
         if not node_cfg:
             continue
 
+        # Query all GPUs on this node in one SSH call
         indices_csv = ",".join(str(i) for i in gpu_indices)
         try:
             rc, stdout, _stderr = await ssh_run(
                 node_cfg,
                 ["nvidia-smi", "-i", indices_csv,
-                 "--query-compute-apps=pid",
+                 "--query-compute-apps=gpu_bus_id,pid",
                  "--format=csv,noheader"],
                 timeout_s=10,
             )
-            if rc == 0 and stdout.strip():
-                # At least one GPU has a compute process → alive
-                return True
+            if rc != 0:
+                continue
+
+            # Parse which GPU indices have processes
+            # nvidia-smi returns lines like "00000000:3B:00.0, 12345"
+            # We need to map bus_id back to index. Simpler: query per-GPU.
         except Exception:
             continue
 
-    return False
+        # Per-GPU individual check for precise mapping
+        for gpu_idx in gpu_indices:
+            key = f"{node_alias}:{gpu_idx}"
+            try:
+                rc2, stdout2, _ = await ssh_run(
+                    node_cfg,
+                    ["nvidia-smi", "-i", str(gpu_idx),
+                     "--query-compute-apps=pid",
+                     "--format=csv,noheader"],
+                    timeout_s=10,
+                )
+                if rc2 == 0 and stdout2.strip():
+                    result[key] = True
+            except Exception:
+                pass
+
+    return result
 
 
 async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
-    """Check if a job is still running.
+    """Check if a job is still running via remote GPU process check.
 
-    Two-tier check:
-      1. Local tmux session alive → definitely running
-      2. If tmux dead/unknown → SSH to remote node, check nvidia-smi
-         for active GPU compute processes on assigned GPUs
-
-    The remote check is the ground truth. Local tmux can die (name
-    parsing issues, macOS sleep, etc.) while the remote process
-    continues.
+    Uses nvidia-smi on remote nodes to check for active compute
+    processes on assigned GPUs. This is the ground truth — no
+    dependency on local tmux session state.
 
     Args:
         job: Job to check
         cfg: Cluster configuration for SSH access
 
     Returns:
-        True if job is still running, False otherwise
+        True if ANY assigned GPU has an active process, False otherwise
     """
-    if job.exec_mode != "tmux" or not job.tmux_sessions:
+    if not job.gpus:
         return False
 
-    # Tier 1: local tmux session check (fast, no network)
-    tmux_bin = _find_tmux_binary()
-    for session_name in job.tmux_sessions:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                tmux_bin, "has-session", "-t", session_name,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            rc = await asyncio.wait_for(proc.wait(), timeout=5)
-            if rc == 0:
-                return True
-        except Exception:
-            continue
-
-    # Tier 2: tmux says dead → check remote GPU processes as ground truth
-    if job.gpus:
-        return await _check_remote_gpu_active(job, cfg)
-
-    return False
+    liveness = await check_gpu_liveness(job, cfg)
+    return any(liveness.values())
 
 
 # ============================================================================
