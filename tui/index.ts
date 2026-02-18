@@ -2329,7 +2329,6 @@ function renderDetail() {
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
       ...children
     ),
-    renderRunnerPane()
   );
 }
 
@@ -2817,7 +2816,6 @@ function renderMyGpuView() {
       ...gpuDetails,
       footer
     ),
-    renderRunnerPane()
   );
 }
 
@@ -3465,11 +3463,13 @@ function renderSetupView() {
       ];
       for (const f of fields) {
         const editing = setupEditingField === f.key;
-        const val = editing ? setupEditBuffer : n[f.key] || "";
+        const val = String(editing ? setupEditBuffer : (n[f.key] ?? ""));
         const lineColor = editing ? "#9b59d6" : C.textDim;
         const cursor = editing ? "█" : "";
+        const hint = editing ? "" : ` (${f.hint})`;
         rows.push(Text({
-          content: t`    ${fg(lineColor)(`${f.label}: ${val}${cursor}`)}${editing ? "" : ` ${fg(C.textDim)(`(${f.hint})`)}`}`,
+          content: `    ${f.label}: ${val}${cursor}${hint}`,
+          fg: lineColor,
         }));
       }
     }
@@ -5877,27 +5877,46 @@ async function main() {
     } else if (screen === "setup") {
       if (setupEditingField) {
         // Editing mode
+        const fieldOrder: Array<"env_manager" | "env_name" | "work_dir"> = ["env_manager", "env_name", "work_dir"];
+        const currentFieldIdx = fieldOrder.indexOf(setupEditingField);
+
         if (key.name === "escape") {
           setupEditingField = null;
           setupEditBuffer = "";
           render();
-        } else if (key.name === "return" || key.name === "tab") {
-          // Save current field value
+        } else if (key.name === "return") {
+          // Save current field and exit editing
           const node = setupNodes[setupSelectedIdx];
           if (node) {
             node[setupEditingField] = setupEditBuffer.trim();
           }
-          // Tab → next field, Enter → exit editing
-          if (key.name === "tab") {
-            const order: Array<"env_manager" | "env_name" | "work_dir"> = ["env_manager", "env_name", "work_dir"];
-            const idx = order.indexOf(setupEditingField);
-            if (idx < order.length - 1) {
-              setupEditingField = order[idx + 1];
-              setupEditBuffer = node?.[setupEditingField] || "";
-            } else {
-              setupEditingField = null;
-              setupEditBuffer = "";
-            }
+          setupEditingField = null;
+          setupEditBuffer = "";
+          render();
+        } else if (key.name === "tab" || key.name === "down") {
+          // Save current field, move to next
+          const node = setupNodes[setupSelectedIdx];
+          if (node) {
+            node[setupEditingField] = setupEditBuffer.trim();
+          }
+          if (currentFieldIdx < fieldOrder.length - 1) {
+            setupEditingField = fieldOrder[currentFieldIdx + 1];
+            setupEditBuffer = node?.[setupEditingField] || "";
+          } else {
+            // Wrap or exit
+            setupEditingField = null;
+            setupEditBuffer = "";
+          }
+          render();
+        } else if (key.name === "up") {
+          // Save current field, move to previous
+          const node = setupNodes[setupSelectedIdx];
+          if (node) {
+            node[setupEditingField] = setupEditBuffer.trim();
+          }
+          if (currentFieldIdx > 0) {
+            setupEditingField = fieldOrder[currentFieldIdx - 1];
+            setupEditBuffer = node?.[setupEditingField] || "";
           } else {
             setupEditingField = null;
             setupEditBuffer = "";

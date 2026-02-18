@@ -192,10 +192,12 @@ def _find_tmux_binary() -> str:
 async def check_gpu_liveness(
     job: Job, cfg: ClusterConfig
 ) -> dict[str, bool]:
-    """Check which of the job's assigned GPUs have active compute processes.
+    """Check which of the job's assigned GPUs have active compute processes
+    owned by the SSH user.
 
-    SSH to each unique node and run nvidia-smi per-GPU to determine
-    individual GPU liveness. This is the ground-truth check.
+    SSH to each unique node and run nvidia-smi per-GPU. Then filter
+    by process ownership (ps -o user=) to avoid false positives from
+    other users' processes on shared GPUs.
 
     Returns a dict mapping "node:gpu_idx" → alive (bool).
     Example: {"MICV#13:2": True, "MICV#13:3": False}
@@ -219,40 +221,39 @@ async def check_gpu_liveness(
         if not node_cfg:
             continue
 
-        # Query all GPUs on this node in one SSH call
-        indices_csv = ",".join(str(i) for i in gpu_indices)
+        # Single SSH call: check all GPUs, filter by user ownership
+        # Script outputs "GPU_IDX:ALIVE" for each GPU that has a process
+        # owned by the current SSH user
+        check_script = " && ".join(
+            f'for pid in $(nvidia-smi -i {idx} --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do '
+            f'owner=$(ps -o user= -p $pid 2>/dev/null); '
+            f'if [ "$owner" = "$(whoami)" ]; then echo "ALIVE:{idx}"; break; fi; '
+            f'done'
+            for idx in gpu_indices
+        )
+
         try:
             rc, stdout, _stderr = await ssh_run(
                 node_cfg,
-                ["nvidia-smi", "-i", indices_csv,
-                 "--query-compute-apps=gpu_bus_id,pid",
-                 "--format=csv,noheader"],
-                timeout_s=10,
+                ["bash", "-c", check_script],
+                timeout_s=12,
             )
             if rc != 0:
                 continue
 
-            # Parse which GPU indices have processes
-            # nvidia-smi returns lines like "00000000:3B:00.0, 12345"
-            # We need to map bus_id back to index. Simpler: query per-GPU.
+            # Parse output: lines like "ALIVE:2", "ALIVE:3"
+            for line in stdout.strip().splitlines():
+                line = line.strip()
+                if line.startswith("ALIVE:"):
+                    try:
+                        idx = int(line.split(":")[1])
+                        key = f"{node_alias}:{idx}"
+                        if key in result:
+                            result[key] = True
+                    except (ValueError, IndexError):
+                        pass
         except Exception:
             continue
-
-        # Per-GPU individual check for precise mapping
-        for gpu_idx in gpu_indices:
-            key = f"{node_alias}:{gpu_idx}"
-            try:
-                rc2, stdout2, _ = await ssh_run(
-                    node_cfg,
-                    ["nvidia-smi", "-i", str(gpu_idx),
-                     "--query-compute-apps=pid",
-                     "--format=csv,noheader"],
-                    timeout_s=10,
-                )
-                if rc2 == 0 and stdout2.strip():
-                    result[key] = True
-            except Exception:
-                pass
 
     return result
 
