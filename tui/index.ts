@@ -4840,6 +4840,11 @@ async function main() {
 
   render();
 
+  // Cleanup stale temp files from previous crashes (older than 5 minutes)
+  try {
+    await Bun.$`find /tmp -maxdepth 1 -name 'opensmi-*.json' -mmin +5 -delete 2>/dev/null || true`;
+  } catch {}
+
   // Initial load
   await Promise.all([
     loadAdminStatus(),
