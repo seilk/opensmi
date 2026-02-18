@@ -25,27 +25,53 @@ from .sshutil import RemoteExecResult, _ssh_base_cmd, ssh_exec_remote, ssh_run
 
 
 def _build_env_setup(node: "NodeConfig") -> str:
-    """Build shell commands to activate the virtual env and cd to work_dir.
+    """Build shell commands to set up the virtual env and cd to work_dir.
 
-    Returns a string like 'source activate ml && cd ~/proj && ' or '' if
-    no env config is set on the node.
+    Instead of activating envs (which requires shell hooks / conda init
+    that may not exist in non-login SSH sessions), we prepend the env's
+    bin directory to PATH. Conda and micromamba envs store binaries at
+    predictable paths:
+      - conda:      ~/miniconda3/envs/{name}/bin  (or ~/anaconda3/envs/...)
+      - micromamba:  ~/micromamba/envs/{name}/bin  (or ~/.local/share/micromamba/envs/...)
+
+    Returns a string like 'export PATH=...:$PATH && cd ~/proj && ' or ''
+    if no env config is set.
     """
     parts: list[str] = []
 
     if node.env_manager and node.env_name:
         mgr = node.env_manager.lower().strip()
         name = node.env_name.strip()
+
         if mgr == "conda":
-            parts.append(f"source \"$(conda info --base)/etc/profile.d/conda.sh\" && conda activate {shlex.quote(name)}")
+            # Search common conda locations; first existing dir wins
+            candidates = [
+                f"$HOME/miniconda3/envs/{name}/bin",
+                f"$HOME/anaconda3/envs/{name}/bin",
+                f"$HOME/conda/envs/{name}/bin",
+                f"$HOME/miniforge3/envs/{name}/bin",
+            ]
+            search = " ".join(candidates)
+            parts.append(
+                f'for _d in {search}; do [ -d "$_d" ] && export PATH="$_d:$PATH" && break; done'
+            )
         elif mgr == "micromamba":
-            parts.append(f"eval \"$(micromamba shell hook --shell bash)\" && micromamba activate {shlex.quote(name)}")
+            candidates = [
+                f"$HOME/micromamba/envs/{name}/bin",
+                f"$HOME/.local/share/micromamba/envs/{name}/bin",
+            ]
+            search = " ".join(candidates)
+            parts.append(
+                f'for _d in {search}; do [ -d "$_d" ] && export PATH="$_d:$PATH" && break; done'
+            )
         elif mgr == "venv":
-            # Assume venv is at ~/envs/<name> or ~/.venvs/<name>
-            parts.append(f"source ~/{shlex.quote(name)}/bin/activate 2>/dev/null || source ~/.venvs/{shlex.quote(name)}/bin/activate")
+            parts.append(
+                f"source ~/{shlex.quote(name)}/bin/activate 2>/dev/null "
+                f"|| source ~/.venvs/{shlex.quote(name)}/bin/activate"
+            )
 
     if node.work_dir:
         wd = node.work_dir.strip()
-        # Don't quote paths starting with ~ so tilde expansion works
         if wd.startswith("~"):
             parts.append(f"cd {wd}")
         else:
