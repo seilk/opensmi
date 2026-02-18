@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import shlex
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -273,8 +274,9 @@ read
         os.chmod(wrapper_path, 0o755)
 
         # Create local tmux session running the wrapper script
+        tmux_bin = _find_tmux_binary() or "tmux"
         tmux_argv = [
-            "tmux",
+            tmux_bin,
             "new-session",
             "-d",
             "-s",
@@ -404,6 +406,27 @@ async def _run_single_preflight_check(check: PreflightCheck) -> PreflightResult:
         )
 
 
+def _find_tmux_binary() -> Optional[str]:
+    """Find the tmux binary, checking common paths if not in PATH."""
+    import shutil
+
+    tmux = shutil.which("tmux")
+    if tmux:
+        return tmux
+
+    # Homebrew and common Linux paths (PATH may be stripped in subprocess chains)
+    for candidate in [
+        "/opt/homebrew/bin/tmux",
+        "/usr/local/bin/tmux",
+        "/usr/bin/tmux",
+        "/bin/tmux",
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    return None
+
+
 async def _check_tmux_availability(
     check: PreflightCheck, timestamp: str
 ) -> PreflightResult:
@@ -417,16 +440,8 @@ async def _check_tmux_availability(
         On success, metadata['tmux_path'] contains the path to tmux binary.
     """
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "which", "tmux",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout_b, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        rc = int(proc.returncode or 1)
-
-        if rc == 0 and stdout_b.strip():
-            tmux_path = stdout_b.decode("utf-8", errors="replace").strip()
+        tmux_path = _find_tmux_binary()
+        if tmux_path:
             return PreflightResult(
                 check=check,
                 passed=True,

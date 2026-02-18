@@ -959,9 +959,9 @@ async function watchRunningJobs(): Promise<void> {
       
       if (!alive) {
         // Tmux session terminated - determine restart behavior based on policy
-        // restart_policy="on-failure": restart up to max_retries (default 3)
-        // restart_policy="always": restart indefinitely (no limit)
-        // restart_policy="never": mark as failed immediately
+        const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+        tuiLog("WARNING", `watchdog: job=${job.id} tmux sessions dead: [${job.tmux_sessions.join(", ")}] cmd=${cmdPreview.slice(0, 80)}`);
+
         const shouldRestart = 
           (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
           (job.restart_policy === "always");
@@ -977,7 +977,7 @@ async function watchRunningJobs(): Promise<void> {
             ? `(retry ${job.retry_count})`
             : `(retry ${job.retry_count}/${job.max_retries})`;
           
-          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          tuiLog("INFO", `watchdog: re-queuing job=${job.id} ${retryInfo}`);
           setStatus(`Job ${job.id} died, re-queuing ${retryInfo} - ${cmdPreview.slice(0, 30)}...`, 3000);
         } else {
           // Mark as failed (max retries exceeded or restart_policy="never")
@@ -985,7 +985,7 @@ async function watchRunningJobs(): Promise<void> {
           job.finished_at = new Date().toISOString();
           job.error = job.error || "tmux session terminated unexpectedly";
           
-          const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
+          tuiLog("ERROR", `watchdog: job=${job.id} failed — session terminated, no restart (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
           setStatus(`Job ${job.id} failed: session terminated - ${cmdPreview.slice(0, 30)}...`, 3000);
         }
         
@@ -4131,6 +4131,7 @@ async function executeRemoteExec(params: {
     }
   }
 
+  tuiLog("DEBUG", `executeRemoteExec: opensmi ${args.join(" ")}`);
   const { code, stdout, stderr } = await runOpensmi(args);
 
   let payload: any = null;
@@ -4140,8 +4141,20 @@ async function executeRemoteExec(params: {
     payload = null;
   }
 
+  const ok = !!payload?.ok;
+  if (!ok) {
+    tuiLog("ERROR", `executeRemoteExec failed: code=${code} stderr=${stderr.slice(0, 300)} stdout=${stdout.slice(0, 300)}`);
+    // Log preflight failures individually
+    const preflight = Array.isArray(payload?.preflight) ? payload.preflight : [];
+    for (const pf of preflight) {
+      if (!pf.passed) {
+        tuiLog("ERROR", `  preflight FAIL: ${pf.check_type} on ${pf.node_alias}: ${pf.error_message}`);
+      }
+    }
+  }
+
   return {
-    ok: !!payload?.ok,
+    ok,
     preflight: Array.isArray(payload?.preflight) ? payload.preflight : [],
     result: payload?.result ?? null,
     rawStdout: stdout,

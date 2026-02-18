@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -173,6 +174,21 @@ def get_job(jobs: List[Job], job_id: str) -> Optional[Job]:
 # ============================================================================
 
 
+def _find_tmux_binary() -> str:
+    """Find tmux binary, checking common paths if not in PATH."""
+    tmux = shutil.which("tmux")
+    if tmux:
+        return tmux
+    for candidate in [
+        "/opt/homebrew/bin/tmux",
+        "/usr/local/bin/tmux",
+        "/usr/bin/tmux",
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "tmux"  # fallback, let OS raise if truly missing
+
+
 async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
     """Check if a job is still running by verifying its tmux sessions.
 
@@ -189,10 +205,12 @@ async def check_job_alive(job: Job, cfg: ClusterConfig) -> bool:
     if job.exec_mode != "tmux" or not job.tmux_sessions:
         return False
 
+    tmux_bin = _find_tmux_binary()
+
     for session_name in job.tmux_sessions:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux", "has-session", "-t", session_name,
+                tmux_bin, "has-session", "-t", session_name,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -256,10 +274,11 @@ async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
         return True
 
     # Running jobs: kill their local tmux sessions
+    tmux_bin = _find_tmux_binary()
     for session in job.tmux_sessions:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux", "kill-session", "-t", session,
+                tmux_bin, "kill-session", "-t", session,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )

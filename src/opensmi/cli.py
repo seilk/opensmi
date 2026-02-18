@@ -1217,10 +1217,12 @@ def _cmd_job_log(args: argparse.Namespace) -> int:
 
     # Tmux sessions are local (on the opensmi machine), so capture directly.
     try:
+        import shutil
         import subprocess as _sp
 
+        tmux_bin = shutil.which("tmux") or "/opt/homebrew/bin/tmux"
         result = _sp.run(
-            ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{args.lines}"],
+            [tmux_bin, "capture-pane", "-t", session, "-p", "-S", f"-{args.lines}"],
             capture_output=True,
             text=True,
             timeout=10,
