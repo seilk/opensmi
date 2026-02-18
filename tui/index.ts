@@ -796,8 +796,9 @@ async function dispatchQueuedJobs(): Promise<void> {
 async function _dispatchQueuedJobsInner(): Promise<void> {
   
   // Get queued jobs in FIFO order (sorted by submission time)
+  // Dispatch ALL queued jobs regardless of queue_mode — a queued job needs execution.
   const queuedJobs = jobList
-    .filter(j => j.status === "queued" && j.queue_mode === "queued")
+    .filter(j => j.status === "queued")
     .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
   
   if (queuedJobs.length === 0) {
@@ -1207,7 +1208,7 @@ async function retryJobAction(job: Job): Promise<void> {
     await proc.exited;
     
     if (proc.exitCode === 0) {
-      const match = output.match(/New job ID: ([a-f0-9]+)/);
+      const match = output.match(/retried as ([a-f0-9]+)/) || output.match(/New job ID: ([a-f0-9]+)/);
       const newId = match ? match[1] : "created";
       tuiLog("INFO", `retryJobAction: old=${job.id} new=${newId}`);
       setStatus(`Job retried → ${newId}, dispatching...`, 2000);
