@@ -301,7 +301,9 @@ async def route_command_to_target(
         # 1. Write bash PID to a known file on the remote node
         # 2. Run the actual command
         # 3. Clean up PID file on exit (normal or error)
-        pid_file = f"/tmp/opensmi-{context.tmux_session}.pid"
+        # Sanitize session name for safe use as file path in remote shell
+        safe_session = context.tmux_session.replace("#", "-").replace(":", "-").replace(".", "-")
+        pid_file = f"/tmp/opensmi-{safe_session}.pid"
         wrapped_command = (
             f'echo $$ > {pid_file}; '
             f'trap "rm -f {pid_file}" EXIT; '

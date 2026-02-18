@@ -1041,7 +1041,8 @@ def _cmd_job_submit(args: argparse.Namespace) -> int:
         target = NodeTarget(
             node_alias=args.node, gpu_indices=gpu_indices, node_config=node
         )
-        session = f"opensmi-{job.id}-{args.node}" if args.tmux else None
+        safe_node = args.node.replace("#", "-").replace(":", "-").replace(".", "-")
+        session = f"opensmi-{job.id}-{safe_node}" if args.tmux else None
         env_cfg = inject_cuda_visible_devices(target)
 
         ctx = RemoteExecutionContext(
@@ -1569,9 +1570,12 @@ def _cmd_exec(args: argparse.Namespace) -> int:
 
     session = None
     if args.mode == "tmux":
-        session = (
-            str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
+        raw_session = (
+            str(args.session or "").strip()
+            or f"opensmi-{args.node}-{int(time.time())}"
         )
+        # Sanitize: # and other special chars break SSH remote commands
+        session = raw_session.replace("#", "-").replace(":", "-").replace(".", "-")
 
     env_cfg = inject_cuda_visible_devices(target)
 

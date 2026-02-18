@@ -198,76 +198,86 @@ async def check_gpu_liveness(
     /tmp/opensmi-<session>.pid. We SSH to each node and check
     `kill -0 <pid>` which is near-zero overhead (no nvidia-smi).
 
-    Falls back to nvidia-smi if PID files don't exist (legacy jobs).
-
     Returns a dict mapping "node:gpu_idx" → alive (bool).
     """
     from .sshutil import ssh_run
-    import os, json as _json
+    from .logging import get_logger
+    log = get_logger(__name__)
 
     result: dict[str, bool] = {}
-    # Map session → (node_alias, gpu_idx) for PID file lookup
-    session_gpu: dict[str, tuple[str, int]] = {}
 
     for node_alias, gpu_idx in job.gpus:
         result[f"{node_alias}:{gpu_idx}"] = False
 
-    # Build session → GPU mapping from tmux_sessions
-    # Session names: opensmi-<id>-<node>-gpu<idx> or opensmi-<id>-<node>
-    for session_name in job.tmux_sessions:
-        # Try to find matching GPU assignment
-        for node_alias, gpu_idx in job.gpus:
-            safe_node = node_alias.replace("#", "-").replace(":", "-").replace(".", "-")
-            expected_single = f"opensmi-{job.id}-{safe_node}"
-            expected_multi = f"opensmi-{job.id}-{safe_node}-gpu{gpu_idx}"
-            # Also check user-prefix patterns like "tt-MICV-13-gpu2"
-            if session_name == expected_multi or session_name == expected_single:
-                session_gpu[session_name] = (node_alias, gpu_idx)
-                break
-            # Fallback: if session contains the safe_node and gpu idx
-            if safe_node in session_name and f"gpu{gpu_idx}" in session_name:
-                session_gpu[session_name] = (node_alias, gpu_idx)
-                break
+    if not job.tmux_sessions:
+        log.info("watchdog: job %s has no tmux sessions, skipping", job.id)
+        return result
 
-    # If no sessions mapped, try positional mapping
-    if not session_gpu and len(job.tmux_sessions) == len(job.gpus):
+    # Map sessions → GPUs.
+    # Strategy: positional mapping (session[i] → gpu[i]) as primary,
+    # since that's how both CLI and TUI create them.
+    # For single-session jobs (1 session, N GPUs), that session covers all GPUs.
+    session_gpu: dict[str, list[tuple[str, int]]] = {}
+
+    if len(job.tmux_sessions) == len(job.gpus):
+        # 1:1 mapping
         for i, session_name in enumerate(job.tmux_sessions):
             node_alias, gpu_idx = job.gpus[i]
-            session_gpu[session_name] = (node_alias, gpu_idx)
+            session_gpu.setdefault(session_name, []).append((node_alias, gpu_idx))
+    elif len(job.tmux_sessions) == 1:
+        # Single session covers all GPUs
+        session_name = job.tmux_sessions[0]
+        for node_alias, gpu_idx in job.gpus:
+            session_gpu.setdefault(session_name, []).append((node_alias, gpu_idx))
+    else:
+        # Mismatch — best effort positional
+        log.warning("watchdog: job %s session count (%d) != gpu count (%d), best-effort mapping",
+                     job.id, len(job.tmux_sessions), len(job.gpus))
+        for i, session_name in enumerate(job.tmux_sessions):
+            if i < len(job.gpus):
+                node_alias, gpu_idx = job.gpus[i]
+                session_gpu.setdefault(session_name, []).append((node_alias, gpu_idx))
 
     # Group by node for batch SSH
-    node_sessions: dict[str, list[tuple[str, int]]] = {}  # node_alias → [(session, gpu_idx)]
-    for session_name, (node_alias, gpu_idx) in session_gpu.items():
-        node_sessions.setdefault(node_alias, []).append((session_name, gpu_idx))
+    # node_alias → [(session_name, gpu_idx)]
+    node_checks: dict[str, list[tuple[str, int]]] = {}
+    for session_name, gpu_list in session_gpu.items():
+        for node_alias, gpu_idx in gpu_list:
+            node_checks.setdefault(node_alias, []).append((session_name, gpu_idx))
 
-    for node_alias, sessions in node_sessions.items():
+    for node_alias, checks_list in node_checks.items():
         node_cfg = None
         for n in cfg.nodes:
             if n.alias == node_alias:
                 node_cfg = n
                 break
         if not node_cfg:
+            log.warning("watchdog: node %s not found in config", node_alias)
             continue
 
         # Build a single SSH script that checks all PID files for this node
         # Output: "ALIVE:<gpu_idx>" for each live process
         checks = []
-        for session_name, gpu_idx in sessions:
-            pid_file = f"/tmp/opensmi-{session_name}.pid"
+        for session_name, gpu_idx in checks_list:
+            # Sanitize session name for safe use in SSH remote commands
+            safe_session = session_name.replace("#", "-").replace(":", "-").replace(".", "-")
+            pid_file = f"/tmp/opensmi-{safe_session}.pid"
             checks.append(
                 f'if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null; '
                 f'then echo "ALIVE:{gpu_idx}"; fi'
             )
         check_script = "; ".join(checks)
+        log.debug("watchdog: job %s node %s script: %s", job.id, node_alias, check_script)
 
         try:
+            # Pass script via stdin to avoid remote shell (zsh/etc) parsing issues
             rc, stdout, _stderr = await ssh_run(
                 node_cfg,
-                ["bash", "-c", check_script],
+                ["bash"],
+                stdin_bytes=check_script.encode("utf-8"),
                 timeout_s=8,
             )
-            if rc != 0:
-                continue
+            log.debug("watchdog: job %s node %s rc=%d stdout=%r", job.id, node_alias, rc, stdout.strip())
 
             for line in stdout.strip().splitlines():
                 line = line.strip()
