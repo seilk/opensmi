@@ -160,6 +160,18 @@ export OPENSMI_STATE_DIR=/nfs/shared/.opensmi
 
 ---
 
+## Scope / Supported Environments
+
+opensmi is designed as a **standalone alternative to Slurm**, not a supplement to it.
+Running opensmi alongside an active Slurm installation is **not supported** and will cause resource management conflicts:
+
+- **CUDA_VISIBLE_DEVICES**: Slurm uses 0-based GPU remapping; opensmi uses physical indices. The two will conflict.
+- **Process lifecycle**: opensmi tmux sessions run outside Slurm cgroups, bypassing Slurm's resource accounting and allocation enforcement.
+
+**Supported use case**: self-managed GPU clusters where no workload scheduler (Slurm, PBS, LSF, etc.) is running.
+
+---
+
 ## Security notes
 
 `opensmi` can execute remote commands over SSH (including process signals).

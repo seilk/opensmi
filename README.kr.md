@@ -122,6 +122,18 @@ export OPENSMI_STATE_DIR=/nfs/shared/.opensmi
 
 ---
 
+## 적용 범위 / 지원 환경
+
+opensmi는 Slurm의 **보완재가 아닌 대체제**로 설계되었습니다.
+Slurm이 활성화된 환경에서 opensmi를 함께 실행하는 것은 **지원하지 않으며**, 자원 관리 충돌이 발생합니다:
+
+- **CUDA_VISIBLE_DEVICES**: Slurm은 GPU를 0-based로 remapping합니다. opensmi는 물리 인덱스를 사용하므로 두 설정이 충돌합니다.
+- **프로세스 생명주기**: opensmi의 tmux 세션은 Slurm cgroup 외부에서 실행되어 Slurm의 자원 회계 및 할당 적용을 우회합니다.
+
+**지원 사용 환경**: Slurm·PBS·LSF 등 워크로드 스케줄러가 없는 자체 운영 GPU 클러스터.
+
+---
+
 ## 보안 노트
 
 `opensmi`는 SSH로 원격 명령(프로세스 signal 포함)을 실행할 수 있습니다.
