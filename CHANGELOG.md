@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-20
+
+### Fixed
+- **Security**: Eliminate OPERATOR injection in Python inline scripts — switched to tmpFile JSON pattern (P0-1)
+- **Watchdog**: nvidia-smi fallback when PID check reports all-dead — prevents DataParallel false termination (P1-2)
+- **Dispatch**: dispatch+watchdog now run on all tabs, not just dashboard/jobs — jobs no longer stall on setup/help screen (P1-5)
+- **Cleanup**: Stale tmpFiles older than 5 min auto-removed on TUI startup (P1-1)
+- **Stability**: Kill orphaned tmux sessions on partial execution failure (P1-6)
+- **Portability**: Guard `fcntl` import for Windows compatibility (P1-4)
+
+### Changed
+- Added CHANGELOG entry for v0.2.0 (was missing at release)
+- Added `doc-should-fix/` to `.gitignore`
+
 ## [0.2.0] - 2026-02-19
 
 ### Added
@@ -60,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `watch` (Slack webhook notifications)
 - TUI (Bun + OpenTUI): dashboard, node detail, allocation editor, kill action
 
+[0.2.1]: https://github.com/seilk/opensmi/releases/tag/v0.2.1
 [0.2.0]: https://github.com/seilk/opensmi/releases/tag/v0.2.0
 [0.1.1]: https://github.com/seilk/opensmi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/seilk/opensmi/releases/tag/v0.1.0
