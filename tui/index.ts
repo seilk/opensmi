@@ -1336,6 +1336,107 @@ async function retryJobAction(job: Job): Promise<void> {
   }
 }
 
+async function retrySelectedSessionAction(job: Job, selectedIdx: number): Promise<void> {
+  try {
+    const [node, gpu] = job.gpus[selectedIdx] || [];
+    if (!node || gpu === undefined) {
+      setStatus("Cannot retry: selected session has no GPU mapping", 3000);
+      return;
+    }
+
+    const command = job.dist_mode === "one-to-one"
+      ? (job.commands[selectedIdx] || "")
+      : (job.command || "");
+
+    if (!command.trim()) {
+      setStatus("Cannot retry: selected session command is empty", 3000);
+      return;
+    }
+
+    setStatus(`Retrying selected session ${node}:GPU${gpu}...`, 2000);
+
+    const payload = {
+      node,
+      gpu,
+      command,
+      exec_mode: job.exec_mode,
+      user: OPERATOR,
+      restart_policy: job.restart_policy || "never",
+    };
+
+    const tmpFile = `/tmp/opensmi-retry-session-${crypto.randomUUID()}.json`;
+    await Bun.write(tmpFile, JSON.stringify(payload));
+
+    const submitScript = `
+import sys, json
+sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
+from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.state import get_state_dir
+from datetime import datetime, timezone
+
+with open("${tmpFile}", "r") as f:
+    d = json.load(f)
+
+state_dir = get_state_dir()
+jobs = load_jobs(state_dir)
+
+job = Job(
+    id=Job.new_id(),
+    command=d["command"],
+    commands=[],
+    gpus=[(d["node"], int(d["gpu"]))],
+    requested_gpu_count=0,
+    dist_mode="single",
+    exec_mode=d["exec_mode"],
+    status="queued",
+    submitted_at=datetime.now(timezone.utc).isoformat(),
+    user=d["user"],
+    restart_policy=d["restart_policy"],
+    queue_mode="queued",
+)
+
+jobs = upsert_job(jobs, job)
+save_jobs(state_dir, jobs)
+print(job.id)
+`;
+
+    const proc = Bun.spawn([PYTHON, "-c", submitScript], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: OPENSMI_ENV,
+      cwd: OPENSMI_CWD,
+    });
+
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    await proc.exited;
+
+    try {
+      await Bun.$`rm -f ${tmpFile}`;
+    } catch {}
+
+    if (proc.exitCode !== 0) {
+      throw new Error(stderr.trim() || "Failed to create retry job");
+    }
+
+    const newId = stdout.trim() || "created";
+    tuiLog("INFO", `retrySelectedSessionAction: old=${job.id} idx=${selectedIdx} new=${newId} target=${node}:GPU${gpu}`);
+    setStatus(`Session retried → ${newId}, dispatching...`, 2500);
+
+    await loadJobsFromCLI();
+
+    // Ensure setup edits are persisted before dispatch.
+    await flushSetupChangesToConfig();
+
+    await dispatchQueuedJobs();
+    await loadJobsFromCLI();
+    requestRender?.();
+  } catch (e: any) {
+    tuiLog("ERROR", `retrySelectedSessionAction error: ${e?.message || String(e)}`);
+    setStatus(`Error retrying session: ${e?.message || String(e)}`, 3500);
+  }
+}
+
 async function deleteJobAction(job: Job): Promise<void> {
   try {
     setStatus(`Deleting job ${job.id}...`);
@@ -2777,7 +2878,7 @@ function renderJobDetailView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+R]")} Retry all  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -5904,8 +6005,11 @@ async function main() {
         } else if (key.name === "c") {
           await cancelJobAction(jobDetailView);
           render();
-        } else if (key.name === "r") {
+        } else if (key.name === "r" && key.shift) {
           await retryJobAction(jobDetailView);
+          render();
+        } else if (key.name === "r") {
+          await retrySelectedSessionAction(jobDetailView, jobDetailSelectedCmd);
           render();
         }
       } else {
