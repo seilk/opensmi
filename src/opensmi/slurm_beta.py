@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Mapping, Optional
 
 
 E_NO_SLURM_ALLOC = "E_NO_SLURM_ALLOC"
 E_PARSE_CVD = "E_PARSE_CVD"
+E_GPU_OUT_OF_SCOPE = "E_GPU_OUT_OF_SCOPE"
 
 
 class SlurmBetaError(RuntimeError):
@@ -98,3 +100,36 @@ def beta_resolved_mode_log_line(resolved: ResolvedMode) -> Optional[str]:
     if resolved.mode != "slurm-beta":
         return None
     return f"resolved_mode=slurm-beta (source={resolved.source})"
+
+
+@dataclass(frozen=True)
+class EntitlementSnapshot:
+    """Immutable record of allowed GPUs captured at submit time."""
+    allowed_gpus: tuple[int, ...]
+    slurm_job_id: str
+    captured_at: str  # ISO-8601 UTC
+
+
+def capture_entitlement_snapshot(env: Mapping[str, str]) -> EntitlementSnapshot:
+    """Call require_slurm_beta_context and freeze the result as a snapshot."""
+    allowed = require_slurm_beta_context(env)
+    return EntitlementSnapshot(
+        allowed_gpus=tuple(allowed),
+        slurm_job_id=(env.get("SLURM_JOB_ID") or "").strip(),
+        captured_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def assert_gpu_in_scope(gpu_index: int, snapshot: EntitlementSnapshot) -> None:
+    """Hard block: raise if requested GPU is outside the entitlement snapshot."""
+    if gpu_index not in snapshot.allowed_gpus:
+        raise SlurmBetaError(
+            E_GPU_OUT_OF_SCOPE,
+            f"GPU {gpu_index} is not in your Slurm allocation "
+            f"(allowed: {list(snapshot.allowed_gpus)}).",
+            diagnostics={
+                "requested_gpu": gpu_index,
+                "allowed_gpus": list(snapshot.allowed_gpus),
+                "slurm_job_id": snapshot.slurm_job_id,
+            },
+        )

@@ -1621,6 +1621,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Config path (default: ./opensmi.json in a repo checkout, else <state-dir>/opensmi.json; override with OPENSMI_CONFIG)",
     )
+    p.add_argument(
+        "--experimental-slurm",
+        action="store_true",
+        default=False,
+        help="[BETA] Enable Slurm personal allocation mode (requires SLURM_JOB_ID + CUDA_VISIBLE_DEVICES).",
+    )
 
     sub = p.add_subparsers(dest="cmd", required=False)
 
@@ -2009,11 +2015,39 @@ def main(argv: Optional[list] = None) -> None:
         _launch_tui()
 
     from .logging import get_logger
+    from .slurm_beta import (
+        SlurmBetaError,
+        beta_resolved_mode_log_line,
+        resolve_mode,
+        require_slurm_beta_context,
+    )
+
     log = get_logger("cli")
     log.info("opensmi %s — argv=%s", __version__, argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # --- Slurm beta wire-up (opt-in only) ---
+    experimental_slurm = getattr(args, "experimental_slurm", False)
+    config_mode: str | None = None  # loaded later if needed; precedence check here uses env+cli only
+
+    resolved = resolve_mode(
+        cli_experimental_slurm=bool(experimental_slurm),
+        env=dict(os.environ),
+        config_mode=config_mode,
+    )
+    log_line = beta_resolved_mode_log_line(resolved)
+    if log_line:
+        print(f"[BETA] {log_line}", file=sys.stderr)
+        log.info("slurm-beta: %s", log_line)
+        try:
+            require_slurm_beta_context(dict(os.environ))
+        except SlurmBetaError as exc:
+            print(f"[BETA] {exc.code}: {exc}", file=sys.stderr)
+            if exc.diagnostics:
+                print(f"[BETA] diagnostics: {exc.diagnostics}", file=sys.stderr)
+            raise SystemExit(5) from exc
 
     if not getattr(args, "cmd", None):
         # Still no subcommand (e.g., only global flags were used) → show help.
