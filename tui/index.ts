@@ -799,6 +799,8 @@ async function dispatchQueuedJobs(): Promise<void> {
   }
   isDispatching = true;
   try {
+    // Hotfix: always persist latest setup before dispatching jobs.
+    await flushSetupChangesToConfig();
     await _dispatchQueuedJobsInner();
   } finally {
     isDispatching = false;
@@ -1311,6 +1313,9 @@ async function retryJobAction(job: Job): Promise<void> {
       setStatus(`Job retried → ${newId}, dispatching...`, 2000);
       await loadJobsFromCLI();
       jobDetailView = null;
+
+      // Hotfix: persist setup edits before retry dispatch.
+      await flushSetupChangesToConfig();
       
       // Immediately dispatch the new queued job instead of waiting 15s
       await dispatchQueuedJobs();
@@ -3446,6 +3451,7 @@ let setupEditingField: "env_manager" | "env_name" | "work_dir" | null = null;
 let setupEditBuffer = "";
 let setupMessage = "";
 let setupMessageTimeout: ReturnType<typeof setTimeout> | null = null;
+let setupDirtyAliases = new Set<string>();
 
 function setSetupMessage(msg: string, ms = 2000) {
   setupMessage = msg;
@@ -3530,6 +3536,44 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
     } catch { continue; }
   }
   return false;
+}
+
+function markSetupNodeDirty(node: NodeEnvConfig | undefined): void {
+  if (!node) return;
+  setupDirtyAliases.add(node.alias);
+}
+
+async function flushSetupChangesToConfig(): Promise<void> {
+  // If user is still typing in setup editor, commit the buffer first.
+  if (setupEditingField) {
+    const node = setupNodes[setupSelectedIdx];
+    if (node) {
+      node[setupEditingField] = setupEditBuffer.trim();
+      markSetupNodeDirty(node);
+    }
+    setupEditingField = null;
+    setupEditBuffer = "";
+  }
+
+  if (setupDirtyAliases.size === 0) {
+    return;
+  }
+
+  for (const alias of Array.from(setupDirtyAliases)) {
+    const node = setupNodes.find((n) => n.alias === alias);
+    if (!node) {
+      setupDirtyAliases.delete(alias);
+      continue;
+    }
+
+    const ok = await saveSetupNode(node);
+    if (ok) {
+      setupDirtyAliases.delete(alias);
+      tuiLog("INFO", `setup hotfix: persisted node=${alias}`);
+    } else {
+      tuiLog("ERROR", `setup hotfix: failed persisting node=${alias}`);
+    }
+  }
 }
 
 function renderSetupView() {
@@ -4250,6 +4294,9 @@ async function executeLaunch(): Promise<void> {
   runnerState = "preparing";
   
   try {
+    // Hotfix: ensure latest setup edits are persisted before any submit/execute.
+    await flushSetupChangesToConfig();
+
     // If queue mode is "queued", save to job store instead of executing immediately
     if (launchQueueMode === "queued") {
       await saveJobToStore();
@@ -5908,6 +5955,7 @@ async function main() {
           const node = setupNodes[setupSelectedIdx];
           if (node) {
             node[setupEditingField] = setupEditBuffer.trim();
+            markSetupNodeDirty(node);
           }
           setupEditingField = null;
           setupEditBuffer = "";
@@ -5917,6 +5965,7 @@ async function main() {
           const node = setupNodes[setupSelectedIdx];
           if (node) {
             node[setupEditingField] = setupEditBuffer.trim();
+            markSetupNodeDirty(node);
           }
           if (currentFieldIdx < fieldOrder.length - 1) {
             setupEditingField = fieldOrder[currentFieldIdx + 1];
@@ -5932,6 +5981,7 @@ async function main() {
           const node = setupNodes[setupSelectedIdx];
           if (node) {
             node[setupEditingField] = setupEditBuffer.trim();
+            markSetupNodeDirty(node);
           }
           if (currentFieldIdx > 0) {
             setupEditingField = fieldOrder[currentFieldIdx - 1];
@@ -5970,6 +6020,7 @@ async function main() {
           if (node) {
             const ok = await saveSetupNode(node);
             if (ok) {
+              setupDirtyAliases.delete(node.alias);
               setSetupMessage(`✓ Saved ${node.alias}: ${node.env_manager || "(none)"}:${node.env_name || "(none)"} dir=${node.work_dir || "(none)"}`);
               tuiLog("INFO", `setup: saved node=${node.alias} env=${node.env_manager}:${node.env_name} dir=${node.work_dir}`);
             } else {
