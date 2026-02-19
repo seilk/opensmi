@@ -9,6 +9,7 @@ from typing import Mapping, Optional
 E_NO_SLURM_ALLOC = "E_NO_SLURM_ALLOC"
 E_PARSE_CVD = "E_PARSE_CVD"
 E_GPU_OUT_OF_SCOPE = "E_GPU_OUT_OF_SCOPE"
+E_SET_MISMATCH = "E_SET_MISMATCH"
 
 
 class SlurmBetaError(RuntimeError):
@@ -118,6 +119,49 @@ def capture_entitlement_snapshot(env: Mapping[str, str]) -> EntitlementSnapshot:
         slurm_job_id=(env.get("SLURM_JOB_ID") or "").strip(),
         captured_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def check_set_mismatch(cvd_gpus: list[int], env: Mapping[str, str]) -> Optional[str]:
+    """Cross-validate CVD against SLURM_JOB_GPUS/SLURM_STEP_GPUS.
+
+    Returns a warning string if counts differ (warn-only), or raises
+    SlurmBetaError(E_SET_MISMATCH) if sets are clearly disjoint (fail-closed).
+    Returns None if no mismatch detected.
+    """
+    for key in ("SLURM_STEP_GPUS", "SLURM_JOB_GPUS"):
+        raw = (env.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            slurm_gpus = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        except ValueError:
+            continue
+        if not slurm_gpus:
+            continue
+
+        cvd_set = set(cvd_gpus)
+        slurm_set = set(slurm_gpus)
+
+        # Completely disjoint → fail-closed
+        if cvd_set.isdisjoint(slurm_set):
+            raise SlurmBetaError(
+                E_SET_MISMATCH,
+                f"CUDA_VISIBLE_DEVICES {sorted(cvd_set)} and {key} {sorted(slurm_set)} "
+                "are completely disjoint. Cannot determine safe entitlement.",
+                diagnostics={
+                    "cvd_gpus": sorted(cvd_set),
+                    "slurm_key": key,
+                    "slurm_gpus": sorted(slurm_set),
+                },
+            )
+        # Partial mismatch → warn only
+        if cvd_set != slurm_set:
+            return (
+                f"[BETA WARNING] CUDA_VISIBLE_DEVICES {sorted(cvd_set)} differs from "
+                f"{key} {sorted(slurm_set)} — using CVD as authoritative."
+            )
+
+    return None
 
 
 def assert_gpu_in_scope(gpu_index: int, snapshot: EntitlementSnapshot) -> None:

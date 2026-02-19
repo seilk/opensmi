@@ -76,9 +76,11 @@ def test_beta_resolved_mode_log_line_only_in_beta():
 
 from opensmi.slurm_beta import (
     E_GPU_OUT_OF_SCOPE,
+    E_SET_MISMATCH,
     EntitlementSnapshot,
     assert_gpu_in_scope,
     capture_entitlement_snapshot,
+    check_set_mismatch,
 )
 
 
@@ -117,6 +119,49 @@ def test_cli_experimental_slurm_flag_wires_up(tmp_path, monkeypatch):
     # --help exits 0; flag itself without Slurm env → exit 5
     # Here we just verify flag is accepted by argparse (exit 0 for --help)
     assert exc.value.code == 0
+
+
+# ── (4/5): slurm_meta in job, E_SET_MISMATCH ────────────────────────
+
+def test_slurm_meta_stored_in_job_and_round_trips(tmp_path):
+    """EntitlementSnapshot data is stored in job.slurm_meta and survives save/load."""
+    import json as _json
+    from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+
+    snap = capture_entitlement_snapshot({"SLURM_JOB_ID": "777", "CUDA_VISIBLE_DEVICES": "0,2"})
+    job = Job(
+        id="aabbccdd",
+        command="python train.py",
+        slurm_meta={
+            "allowed_gpus": list(snap.allowed_gpus),
+            "slurm_job_id": snap.slurm_job_id,
+            "captured_at": snap.captured_at,
+        },
+    )
+    jobs = upsert_job([], job)
+    save_jobs(tmp_path, jobs)
+    loaded = load_jobs(tmp_path)
+    assert loaded[0].slurm_meta is not None
+    assert loaded[0].slurm_meta["allowed_gpus"] == [0, 2]
+    assert loaded[0].slurm_meta["slurm_job_id"] == "777"
+
+
+def test_set_mismatch_disjoint_fails_closed():
+    with pytest.raises(SlurmBetaError) as exc:
+        check_set_mismatch([0, 1], {"SLURM_JOB_GPUS": "2,3"})
+    assert exc.value.code == E_SET_MISMATCH
+    assert exc.value.diagnostics["cvd_gpus"] == [0, 1]
+    assert exc.value.diagnostics["slurm_gpus"] == [2, 3]
+
+
+def test_set_mismatch_partial_warns_only():
+    warn = check_set_mismatch([0, 1], {"SLURM_JOB_GPUS": "0,1,2"})
+    assert warn and "WARNING" in warn
+
+
+def test_set_mismatch_no_slurm_key_returns_none():
+    result = check_set_mismatch([0, 1], {})
+    assert result is None
 
 
 def test_cli_experimental_slurm_without_allocation_exits_5(monkeypatch):

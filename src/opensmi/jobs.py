@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from .config import load_config
 from .models import ClusterConfig, NodeConfig
@@ -50,6 +50,7 @@ class Job:
     max_retries: int = 3
     tags: List[str] = field(default_factory=list)  # User-defined tags
     queue_mode: str = "immediate"  # "immediate" | "queued"
+    slurm_meta: Optional[Dict[str, object]] = None  # [BETA] Slurm entitlement snapshot at submit time
 
     @staticmethod
     def new_id() -> str:
