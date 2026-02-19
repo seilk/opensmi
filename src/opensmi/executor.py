@@ -273,7 +273,7 @@ async def route_command_to_target(
 
         if is_local_node(node):
             # Local node: bypass SSH, run directly as a subprocess.
-            env = dict(__import__("os").environ)
+            env = dict(os.environ)
             env.update({k: str(v) for k, v in context.env_vars.items()})
             proc = await asyncio.create_subprocess_exec(
                 "bash", "-c", command,

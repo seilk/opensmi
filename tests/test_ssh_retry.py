@@ -118,3 +118,20 @@ class TestSSHRetry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIsLocalNode(unittest.TestCase):
+    def _make_node(self, address: str) -> NodeConfig:
+        return NodeConfig(alias="n", address=address, user="u")
+
+    def test_localhost_is_local(self):
+        from opensmi.sshutil import is_local_node
+        self.assertTrue(is_local_node(self._make_node("localhost")))
+
+    def test_loopback_ip_is_local(self):
+        from opensmi.sshutil import is_local_node
+        self.assertTrue(is_local_node(self._make_node("127.0.0.1")))
+
+    def test_remote_ip_is_not_local(self):
+        from opensmi.sshutil import is_local_node
+        self.assertFalse(is_local_node(self._make_node("10.0.0.99")))
