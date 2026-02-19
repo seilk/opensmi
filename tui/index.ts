@@ -802,6 +802,10 @@ async function dispatchQueuedJobs(): Promise<void> {
     // Hotfix: always persist latest setup before dispatching jobs.
     await flushSetupChangesToConfig();
     await _dispatchQueuedJobsInner();
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    tuiLog("ERROR", `dispatch precheck failed: ${msg}`);
+    setStatus(`✗ Setup save failed: ${msg.slice(0, 80)}`, 4000);
   } finally {
     isDispatching = false;
   }
@@ -3559,6 +3563,8 @@ async function flushSetupChangesToConfig(): Promise<void> {
     return;
   }
 
+  const failed: string[] = [];
+
   for (const alias of Array.from(setupDirtyAliases)) {
     const node = setupNodes.find((n) => n.alias === alias);
     if (!node) {
@@ -3571,8 +3577,13 @@ async function flushSetupChangesToConfig(): Promise<void> {
       setupDirtyAliases.delete(alias);
       tuiLog("INFO", `setup hotfix: persisted node=${alias}`);
     } else {
+      failed.push(alias);
       tuiLog("ERROR", `setup hotfix: failed persisting node=${alias}`);
     }
+  }
+
+  if (failed.length > 0) {
+    throw new Error(`Setup save failed for: ${failed.join(", ")}`);
   }
 }
 
