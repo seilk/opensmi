@@ -1437,6 +1437,40 @@ print(job.id)
   }
 }
 
+async function cleanupTmuxSessionsAction(job: Job): Promise<void> {
+  try {
+    const sessions = (job.tmux_sessions || []).filter(Boolean);
+    if (sessions.length === 0) {
+      setStatus("No tmux sessions to clean", 2000);
+      return;
+    }
+
+    if (job.status === "running") {
+      setStatus("Refusing cleanup for running job (cancel first)", 3000);
+      return;
+    }
+
+    setStatus(`Cleaning ${sessions.length} tmux session(s)...`, 2000);
+    await killTmuxSessions(sessions);
+
+    job.tmux_sessions = [];
+    await updateJobInStore(job);
+    await loadJobsFromCLI();
+
+    if (jobDetailView && jobDetailView.id === job.id) {
+      const fresh = jobList.find((j) => j.id === job.id) || null;
+      jobDetailView = fresh;
+      jobDetailSelectedCmd = 0;
+    }
+
+    setStatus(`✓ Cleaned ${sessions.length} tmux session(s)`, 2500);
+    requestRender?.();
+  } catch (e: any) {
+    tuiLog("ERROR", `cleanupTmuxSessionsAction error: ${e?.message || String(e)}`);
+    setStatus(`Failed to clean tmux sessions: ${e?.message || String(e)}`, 3500);
+  }
+}
+
 async function deleteJobAction(job: Job): Promise<void> {
   try {
     setStatus(`Deleting job ${job.id}...`);
@@ -2726,7 +2760,7 @@ function renderJobsListView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -2878,7 +2912,7 @@ function renderJobDetailView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+R]")} Retry all  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+R]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -6011,6 +6045,9 @@ async function main() {
         } else if (key.name === "r") {
           await retrySelectedSessionAction(jobDetailView, jobDetailSelectedCmd);
           render();
+        } else if (key.name === "x") {
+          await cleanupTmuxSessionsAction(jobDetailView);
+          render();
         }
       } else {
         if (key.name === "escape" || key.name === "backspace") {
@@ -6051,6 +6088,11 @@ async function main() {
         } else if (key.name === "d") {
           if (jobList.length > 0 && jobList[selectedJobIdx]) {
             await deleteJobAction(jobList[selectedJobIdx]);
+            render();
+          }
+        } else if (key.name === "x") {
+          if (jobList.length > 0 && jobList[selectedJobIdx]) {
+            await cleanupTmuxSessionsAction(jobList[selectedJobIdx]);
             render();
           }
         }
