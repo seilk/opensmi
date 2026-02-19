@@ -77,7 +77,25 @@ def _now_iso() -> str:
 async def _ssh_run(
     node: NodeConfig, script: str, timeout_s: int, max_retries: int = 2
 ) -> Tuple[int, str, str]:
-    from .sshutil import SSHRunError, ssh_bash_script
+    from .sshutil import SSHRunError, is_local_node, ssh_bash_script
+
+    if is_local_node(node):
+        # Local node: run the bash script directly without SSH overhead.
+        proc = await asyncio.create_subprocess_exec(
+            "bash", "-s",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(input=script.encode("utf-8")),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise SSHError(f"local script timed out after {timeout_s}s")
+        return int(proc.returncode or 0), stdout_b.decode("utf-8", errors="replace"), stderr_b.decode("utf-8", errors="replace")
 
     try:
         return await ssh_bash_script(

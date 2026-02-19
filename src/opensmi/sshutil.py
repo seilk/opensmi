@@ -3,11 +3,54 @@ from __future__ import annotations
 import asyncio
 import re
 import shlex
+import socket
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from functools import lru_cache
+from typing import Dict, List, Optional, Set, Tuple
 
 from .models import NodeConfig
+
+
+@lru_cache(maxsize=1)
+def _local_addresses() -> Set[str]:
+    """Return the set of addresses that resolve to the current machine."""
+    addrs: Set[str] = {"localhost", "127.0.0.1", "::1"}
+
+    try:
+        addrs.add(socket.gethostname())
+        addrs.add(socket.getfqdn())
+    except Exception:
+        pass
+
+    try:
+        import netifaces  # type: ignore
+        for iface in netifaces.interfaces():
+            for family in (netifaces.AF_INET, netifaces.AF_INET6):
+                for link in netifaces.ifaddresses(iface).get(family, []):
+                    addr = link.get("addr", "")
+                    if addr:
+                        addrs.add(addr.split("%")[0])  # strip IPv6 zone id
+    except ImportError:
+        # netifaces not available — fall back to socket
+        try:
+            hostname = socket.gethostname()
+            for _, _, _, _, sockaddr in socket.getaddrinfo(hostname, None):
+                addrs.add(sockaddr[0])
+        except Exception:
+            pass
+
+    return addrs
+
+
+def is_local_node(node: "NodeConfig") -> bool:
+    """Return True if *node* refers to the current machine.
+
+    Checks against localhost aliases, the machine's hostname/FQDN, and all
+    network interface IPs so that SSH can be skipped in favour of direct
+    subprocess execution.
+    """
+    return node.address in _local_addresses()
 
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

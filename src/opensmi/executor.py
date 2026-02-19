@@ -22,7 +22,7 @@ from .models import (
     PreflightResult,
     RemoteExecutionContext,
 )
-from .sshutil import RemoteExecResult, _ssh_base_cmd, ssh_exec_remote, ssh_run
+from .sshutil import RemoteExecResult, _ssh_base_cmd, is_local_node, ssh_exec_remote, ssh_run
 
 
 def _build_env_setup(node: "NodeConfig") -> str:
@@ -264,12 +264,43 @@ async def route_command_to_target(
             f"NodeTarget for {context.target.node_alias} missing node_config"
         )
 
+    node = context.target.node_config
+
     # For direct execution mode, simply execute the command with env vars
     if context.execution_mode == "direct":
-        env_setup = _build_env_setup(context.target.node_config)
+        env_setup = _build_env_setup(node)
         command = f"{env_setup}{context.command}" if env_setup else context.command
+
+        if is_local_node(node):
+            # Local node: bypass SSH, run directly as a subprocess.
+            env = dict(__import__("os").environ)
+            env.update({k: str(v) for k, v in context.env_vars.items()})
+            proc = await asyncio.create_subprocess_exec(
+                "bash", "-c", command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=context.timeout_s,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                return RemoteExecResult(
+                    exit_code=1, stdout="", stderr=f"local exec timed out after {context.timeout_s}s",
+                    node_alias=node.alias, command=context.command,
+                )
+            return RemoteExecResult(
+                exit_code=int(proc.returncode or 0),
+                stdout=stdout_b.decode("utf-8", errors="replace"),
+                stderr=stderr_b.decode("utf-8", errors="replace"),
+                node_alias=node.alias,
+                command=context.command,
+            )
+
         return await ssh_exec_remote(
-            node=context.target.node_config,
+            node=node,
             command=command,
             env_vars=context.env_vars,
             timeout_s=context.timeout_s,
@@ -286,9 +317,7 @@ async def route_command_to_target(
         if not context.tmux_session:
             raise ValueError("tmux_session name required for tmux execution mode")
 
-        node = context.target.node_config
-
-        # Build the remote command: env_setup prefix + env vars + user command
+        # Build the command: env_setup prefix + env vars + user command
         env_setup = _build_env_setup(node)
         if context.env_vars:
             env_prefix = " ".join(
@@ -298,12 +327,53 @@ async def route_command_to_target(
         else:
             remote_command = f"{env_setup}{context.command}"
 
-        # Wrap remote command with PID tracking:
+        # Sanitize session name for safe use in file paths, tmux, and remote shell
+        safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', context.tmux_session)
+
+        # Local node fast-path: skip SSH wrapper entirely, run directly in tmux.
+        if is_local_node(node):
+            pid_file = f"/tmp/opensmi-{safe_session}.pid"
+            local_command = (
+                f'echo $$ > {pid_file}; '
+                f'trap "rm -f {pid_file}" EXIT; '
+                f'{remote_command}'
+            )
+            wrapper_dir = os.path.join(os.path.expanduser("~"), ".opensmi", "tmp")
+            os.makedirs(wrapper_dir, exist_ok=True)
+            wrapper_path = os.path.join(wrapper_dir, f"tmux-{safe_session}.sh")
+            with open(wrapper_path, "w") as _f:
+                _f.write("#!/usr/bin/env bash\n")
+                _f.write(local_command + "\n")
+                _f.write(f'\necho\necho "--- Job finished (press Enter to close) ---"\n')
+                _f.write("read -r _ignore 2>/dev/null || true\n")
+            os.chmod(wrapper_path, 0o755)
+
+            tmux_bin = _find_tmux_binary() or "tmux"
+            proc = await asyncio.create_subprocess_exec(
+                tmux_bin, "new-session", "-d", "-s", safe_session, wrapper_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=context.timeout_s)
+            except asyncio.TimeoutError:
+                proc.kill()
+                return RemoteExecResult(
+                    exit_code=1, stdout="", stderr=f"local tmux creation timed out after {context.timeout_s}s",
+                    node_alias=node.alias, command=context.command,
+                )
+            return RemoteExecResult(
+                exit_code=int(proc.returncode or 0),
+                stdout=stdout_b.decode("utf-8", errors="replace"),
+                stderr=stderr_b.decode("utf-8", errors="replace"),
+                node_alias=node.alias,
+                command=context.command,
+            )
+
+        # Remote path: Wrap remote command with PID tracking:
         # 1. Write bash PID to a known file on the remote node
         # 2. Run the actual command
         # 3. Clean up PID file on exit (normal or error)
-        # Sanitize session name for safe use in file paths, tmux, and remote shell
-        safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', context.tmux_session)
         pid_file = f"/tmp/opensmi-{safe_session}.pid"
         wrapped_command = (
             f'echo $$ > {pid_file}; '
