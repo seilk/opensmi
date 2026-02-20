@@ -168,21 +168,60 @@ def _require_admin(
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    state_dir = get_state_dir(args.state_dir)
-    ensure_state_dir(state_dir)
+    """Deprecated — use 'opensmi onboard' instead."""
+    print(
+        "\033[33mWarning:\033[0m 'opensmi init' is deprecated."
+        " Use 'opensmi onboard' instead.",
+        file=sys.stderr,
+    )
+    return _cmd_onboard(args)
 
-    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
 
-    if args.wizard:
-        return _init_wizard(cfg_path, n_nodes=args.nodes)
+# ── ANSI helpers (tty-safe) ────────────────────────────────────────────────
+def _ob_c(code: str) -> str:
+    return f"\033[{code}m" if sys.stdout.isatty() else ""
 
-    if args.from_ssh_config:
-        return _init_from_ssh_config(cfg_path, args.from_ssh_config)
 
-    save_default_config(cfg_path, force=bool(args.force))
-    print(f"Config created: {cfg_path}")
-    print(f"Edit it, then run: opensmi poll")
-    return 0
+_OB_GREEN  = _ob_c("32")
+_OB_YELLOW = _ob_c("33")
+_OB_BOLD   = _ob_c("1")
+_OB_DIM    = _ob_c("2")
+_OB_RESET  = _ob_c("0")
+
+
+def _ob_box_row(text: str, W: int = 44, style: str = "") -> str:
+    return (
+        f"  {_OB_GREEN}│{_OB_RESET}  {style}{text[:W].ljust(W)}{_OB_RESET}"
+        f"{_OB_GREEN}│{_OB_RESET}"
+    )
+
+
+def _ob_prompt(label: str, hint: str, default: str) -> str:
+    """Return a formatted prompt string."""
+    hint_str = f"  {_OB_DIM}{hint}{_OB_RESET}\n" if hint else ""
+    default_str = f" [{_OB_DIM}{default}{_OB_RESET}]" if default else ""
+    return f"{hint_str}  {_OB_BOLD}{label}{_OB_RESET}{default_str}: "
+
+
+def _ob_ssh_test(address: str, user: str, timeout: int = 5) -> bool:
+    """Return True if SSH echo succeeds within timeout."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            [
+                "ssh",
+                "-o", "ConnectTimeout=5",
+                "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=no",
+                f"{user}@{address}",
+                "true",
+            ],
+            capture_output=True,
+            timeout=timeout + 1,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _cmd_onboard(args: argparse.Namespace) -> int:
@@ -194,69 +233,113 @@ def _cmd_onboard(args: argparse.Namespace) -> int:
 
     if cfg_path.exists() and not bool(args.force):
         print(
-            f"Config already exists: {cfg_path} (use --force to overwrite)",
+            f"{_OB_YELLOW}Config already exists:{_OB_RESET} {cfg_path}\n"
+            f"  To add a node:   opensmi node add\n"
+            f"  To reconfigure:  opensmi onboard --force",
             file=sys.stderr,
         )
         return 2
 
-    if args.from_ssh_config:
+    if getattr(args, "from_ssh_config", None):
         return _init_from_ssh_config(cfg_path, args.from_ssh_config)
 
-    return _init_wizard(cfg_path, n_nodes=args.nodes)
+    if getattr(args, "defaults", False):
+        save_default_config(cfg_path, force=bool(args.force))
+        print(f"Config created: {cfg_path}")
+        print(f"Edit it, then run: opensmi poll")
+        return 0
+
+    return _init_wizard(cfg_path, n_nodes=getattr(args, "nodes", None))
 
 
 def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
-    """Interactive setup wizard."""
+    """Interactive onboarding wizard — fancy edition."""
     import json as _json
+    import subprocess  # noqa: F401 (used in _ob_ssh_test)
 
-    print("=== opensmi init wizard ===\n")
+    W = 44
+    line = "─" * W
 
-    cluster_name = input("Cluster name [GPU-Cluster]: ").strip() or "GPU-Cluster"
+    # ── header ────────────────────────────────────────────────────────────
+    print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
+    print(_ob_box_row("opensmi onboard", W, _OB_BOLD))
+    print(_ob_box_row("Set up your GPU cluster config.", W, _OB_DIM))
+    print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
 
-    # Nodes
+    # ── cluster label ──────────────────────────────────────────────────────
+    raw = input(_ob_prompt(
+        "Cluster label",
+        "Shown in the dashboard header — any name you like.",
+        "GPU-Cluster",
+    )).strip()
+    cluster_name = raw or "GPU-Cluster"
+
+    # ── node count ─────────────────────────────────────────────────────────
     if n_nodes is None:
         while True:
-            raw_n = input("\nNumber of GPU nodes [2]: ").strip() or "2"
+            raw_n = input(_ob_prompt("Number of GPU nodes", "", "2")).strip() or "2"
             try:
                 n_nodes = int(raw_n)
                 if n_nodes <= 0:
                     raise ValueError
                 break
             except ValueError:
-                print("Please enter a positive integer (e.g. 6).")
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Please enter a positive integer.")
     else:
         if int(n_nodes) <= 0:
             print("--nodes must be a positive integer", file=sys.stderr)
             return 2
         n_nodes = int(n_nodes)
 
-    nodes = []
-    print("\nAdd GPU nodes:")
+    # ── nodes ──────────────────────────────────────────────────────────────
+    nodes: list[dict] = []
+    print(f"\n  {_OB_BOLD}Add GPU nodes{_OB_RESET}  {_OB_DIM}({n_nodes} total){_OB_RESET}\n")
 
     for idx in range(1, n_nodes + 1):
         default_alias = f"GPU-{idx:02d}"
-
+        print(f"  {_OB_DIM}── Node #{idx} ──────────────────────────────────{_OB_RESET}")
         while True:
-            alias = (
-                input(f"  Node #{idx} alias [{default_alias}]: ").strip()
-                or default_alias
-            )
-            address = input(f"  Node #{idx} address (IP or hostname): ").strip()
+            alias   = input(_ob_prompt("  Alias",   "", default_alias)).strip() or default_alias
+            address = input(_ob_prompt("  Address", "IP or hostname", "")).strip()
             if not address:
-                print("  Address required. Try again.")
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Address is required.")
                 continue
-            user = input(f"  Node #{idx} SSH user [seil]: ").strip() or "seil"
-            nodes.append({"alias": alias, "address": address, "user": user})
-            break
+            default_user = os.environ.get("USER", "ubuntu")
+            user = input(_ob_prompt("  SSH user", "", default_user)).strip() or default_user
+
+            # SSH connectivity test
+            sys.stdout.write(f"  {_OB_DIM}Testing SSH ({user}@{address})...{_OB_RESET}  ")
+            sys.stdout.flush()
+            ok = _ob_ssh_test(address, user)
+            if ok:
+                print(f"{_OB_GREEN}✓ connected{_OB_RESET}")
+                nodes.append({"alias": alias, "address": address, "user": user})
+                break
+            else:
+                print(f"{_OB_YELLOW}⚠ unreachable{_OB_RESET}")
+                raw_cont = input(
+                    f"  {_OB_DIM}Continue anyway?{_OB_RESET} [y/N]: "
+                ).strip().lower()
+                if raw_cont == "y":
+                    nodes.append({"alias": alias, "address": address, "user": user})
+                    break
+                print(f"  {_OB_DIM}Re-enter node details.{_OB_RESET}\n")
+
+        print()
 
     if not nodes:
-        print("No nodes added. Aborting.")
+        print(f"{_OB_YELLOW}No nodes added. Aborting.{_OB_RESET}")
         return 1
 
-    admin = input(
-        f"\nMaster admin username [{nodes[0].get('user', 'admin')}]: "
-    ).strip() or nodes[0].get("user", "admin")
+    # ── admin ──────────────────────────────────────────────────────────────
+    default_admin = nodes[0].get("user", os.environ.get("USER", "admin"))
+    admin = input(_ob_prompt(
+        "Admin username",
+        "SSH user who manages the cluster.",
+        default_admin,
+    )).strip() or default_admin
 
+    # ── write config ───────────────────────────────────────────────────────
     data = {
         "cluster_name": cluster_name,
         "nodes": nodes,
@@ -272,10 +355,17 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     cfg_path.write_text(
         _json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
     )
-    print(f"\n✅ Config written: {cfg_path}")
-    print(f"Next steps:")
-    print(f"  opensmi poll            # verify connectivity")
-    print(f"  opensmi alloc seed      # seed allocations from live usage")
+
+    # ── done card ──────────────────────────────────────────────────────────
+    print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
+    print(_ob_box_row(f"✓  Config saved", W, _OB_BOLD))
+    print(_ob_box_row(f"   {cfg_path}", W, _OB_DIM))
+    print(_ob_box_row("", W))
+    print(_ob_box_row("Next steps:", W, _OB_DIM))
+    print(_ob_box_row("  opensmi poll          # verify SSH + GPUs", W))
+    print(_ob_box_row("  opensmi alloc seed    # seed from live usage", W))
+    print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
+
     return 0
 
 
@@ -1630,21 +1720,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = p.add_subparsers(dest="cmd", required=False)
 
-    sp_init = sub.add_parser("init", help="Create default opensmi.json")
-    sp_init.add_argument(
-        "--force", action="store_true", help="Overwrite existing config"
+    sp_init = sub.add_parser(
+        "init", help="[deprecated] Use 'opensmi onboard' instead"
     )
-    sp_init.add_argument(
-        "--wizard", action="store_true", help="Interactive setup wizard"
-    )
-    sp_init.add_argument(
-        "--nodes", type=int, default=None, help="Number of nodes (wizard only)"
-    )
+    sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
+    sp_init.add_argument("--wizard", action="store_true", help="[deprecated] ignored")
+    sp_init.add_argument("--defaults", action="store_true", help="Non-interactive: write defaults")
+    sp_init.add_argument("--nodes", type=int, default=None, help="Number of nodes")
     sp_init.add_argument(
         "--from-ssh-config",
         default=None,
         metavar="PATH",
-        help="Import nodes from ~/.ssh/config (e.g. --from-ssh-config ~/.ssh/config)",
+        help="Import nodes from ~/.ssh/config",
     )
     sp_init.set_defaults(func=_cmd_init)
 
@@ -1653,7 +1740,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_on.add_argument("--force", action="store_true", help="Overwrite existing config")
     sp_on.add_argument(
-        "--nodes", type=int, default=None, help="Number of nodes (wizard only)"
+        "--defaults",
+        action="store_true",
+        help="Non-interactive: write default config (CI/automation use)",
+    )
+    sp_on.add_argument(
+        "--nodes", type=int, default=None, help="Number of nodes (interactive wizard)"
     )
     sp_on.add_argument(
         "--from-ssh-config",

@@ -120,7 +120,8 @@ print_summary() {
   box_row "CLI  →  ${bin_dir}/opensmi"
   box_row "TUI  →  ${bin_dir}/opensmi-tui"
   box_row ""
-  box_row "Next: opensmi onboard" "${C_DIM}"
+  box_row "Get started:" "${C_DIM}"
+  box_row "  opensmi onboard" "${C_BOLD}"
   printf "  ${C_GREEN}╰%s╯${C_RESET}\n" "$line"
   printf "\n"
 }
