@@ -1742,7 +1742,7 @@ function _toggleDraftUser(raw: string, user: string, universeSet: Set<string>): 
 
 function isViolation(nodeAlias: string, gpuIdx: number, user: string): boolean {
   const target = getAllocTarget(nodeAlias, gpuIdx);
-  if (target === null) return true; // unallocated = violation when require_allocation
+  if (target === null) return false; // default-open before explicit admin allocation
   if (target === "*") return false;
 
   const allowed = new Set(_parseTargets(target));
@@ -2540,11 +2540,9 @@ function renderDetail() {
   for (const g of node.gpus) {
     const procs = node.processes.filter((p) => p.gpu_uuid === g.uuid);
     const alloc = getAllocation(node.node_alias, g.index);
-    const allocTarget = alloc?.target || null;
+    const allocTarget = alloc?.target || "*";
     const remain = expiresInShort(alloc?.expires_at);
-    const allocStr = allocTarget
-      ? `Alloc: ${allocTarget}${remain ? ` (exp ${remain})` : ""}`
-      : "Alloc: (none)";
+    const allocStr = `Alloc: ${allocTarget}${remain ? ` (exp ${remain})` : ""}`;
     const utilVal = gpuUtilPct(g);
     const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
     const activityStr = gpuActivityStatus(node, g.index, g.uuid);
@@ -3118,7 +3116,7 @@ function renderMyGpuView() {
       
       const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
       const alloc = getAllocation(gpuRef.node, gpuRef.gpu);
-      const allocStr = alloc ? alloc.target : "(none)";
+      const allocStr = alloc ? alloc.target : "*";
       const utilVal = gpuUtilPct(gpu);
       const utilStr = utilVal !== null ? `${utilVal}%` : "?";
       const activityStr = gpuActivityStatus(node, gpuRef.gpu, gpu.uuid);
@@ -3184,7 +3182,7 @@ function renderAlloc() {
   const liveUsers = nodeSnap && gpuInfo ? usersOnGpu(nodeSnap, gpuInfo.uuid) : [];
 
   const currentAlloc = getAllocTarget(ctx.nodeAlias, ctx.gpuIdx);
-  const currentAllocStr = currentAlloc ? currentAlloc : "(none)";
+  const currentAllocStr = currentAlloc ? currentAlloc : "*";
   const liveStr = liveUsers.length ? liveUsers.join(", ") : "(idle)";
 
   const universe = knownUsers.length ? knownUsers : liveUsers;
