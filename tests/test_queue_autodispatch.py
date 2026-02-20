@@ -10,6 +10,8 @@ Tests the complete workflow:
 This verifies QUEUE-J completion.
 """
 
+from __future__ import annotations
+
 import json
 import subprocess
 import time
