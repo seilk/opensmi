@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-opensmi update UI demo — progress bar + spinner + summary card
-Following opencode's approach: progress bar for downloads, spinner for short ops.
+opensmi update UI demo — spinner + summary card
 Usage: python3 scripts/demo-installer-ui.py
 """
 
@@ -10,7 +9,7 @@ import sys
 import time
 import threading
 
-# ── ANSI / cursor helpers ─────────────────────────────────────────
+# ── ANSI helpers ──────────────────────────────────────────────────
 IS_TTY = sys.stdout.isatty()
 
 def _c(code: str) -> str:
@@ -29,55 +28,15 @@ def cursor_show() -> None:
     if IS_TTY: sys.stdout.write("\033[?25h"); sys.stdout.flush()
 
 
-# ── Progress Bar ──────────────────────────────────────────────────
-BAR_W = 20   # chars for the ■■･･ bar
-
-def _fmt_bytes(n: int) -> str:
-    if n >= 1_048_576: return f"{n/1_048_576:.1f} MB"
-    if n >= 1_024:     return f"{n/1_024:.0f} KB"
-    return f"{n} B"
-
-def draw_progress(label: str, current: int, total: int) -> None:
-    pct  = int(current * 100 / total) if total > 0 else 0
-    on   = int(pct * BAR_W / 100)
-    off  = BAR_W - on
-    bar  = "■" * on + "･" * off
-    size = _fmt_bytes(current)
-    sys.stdout.write(
-        f"\r  {DIM}{label:<36}{RESET}  "
-        f"{GREEN}{bar}{RESET}  "
-        f"{BOLD}{pct:3d}%{RESET}  "
-        f"{DIM}{size}{RESET}"
-    )
-    sys.stdout.flush()
-
-def simulate_download(label: str, total_bytes: int, duration_s: float) -> None:
-    """Demo only — real version hooks into curl -w bytes progress."""
-    steps     = 40
-    step_s    = duration_s / steps
-    step_b    = total_bytes // steps
-
-    cursor_hide()
-    try:
-        for i in range(steps + 1):
-            cur = min(i * step_b, total_bytes)
-            draw_progress(label, cur, total_bytes)
-            time.sleep(step_s)
-        draw_progress(label, total_bytes, total_bytes)
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
-    finally:
-        cursor_show()
-
-    print(f"  {GREEN}✓{RESET}  {label}")
-
-
-# ── Spinner (| / - \) ─────────────────────────────────────────────
+# ── Spinner ───────────────────────────────────────────────────────
 class Spinner:
-    """Line/Clock spinner for non-download steps."""
+    """Line/Clock spinner: | / - \\
+    - FRAMES uses "\\" which is a single backslash — correct in Python
+    - Thread clears its line before exit → no race with ✓ print
+    """
 
-    FRAMES   = ["|", "/", "-", "\\"]
-    INTERVAL = 0.12
+    FRAMES   = ["|", "/", "-", "\\"]   # "\\" = one backslash
+    INTERVAL = 0.06                     # faster: was 0.12
 
     def __init__(self, msg: str) -> None:
         self.msg   = msg
@@ -137,24 +96,21 @@ def print_summary(version: str, bin_dir: str) -> None:
 # ── Demo ──────────────────────────────────────────────────────────
 def main() -> None:
     print()
-    print(f"  {BOLD}Updating opensmi{RESET}  {DIM}(demo){RESET}")
+    print(f"  {BOLD}Installing opensmi{RESET}  {DIM}(demo){RESET}")
     print()
 
-    with Spinner("Fetching latest release from GitHub..."):
-        time.sleep(0.8)
+    steps = [
+        ("Fetching latest release from GitHub...", 1.2),
+        ("Downloading opensmi CLI...",             1.5),
+        ("Downloading opensmi-tui (darwin-arm64)...", 2.0),
+        ("Verifying SHA256 checksums...",          0.8),
+        ("Installing to ~/.local/bin...",          0.6),
+        ("Updating PATH in ~/.zshrc...",           0.4),
+    ]
 
-    # Downloads: progress bar
-    simulate_download("Downloading opensmi CLI...",          2_621_440,  1.5)
-    simulate_download("Downloading opensmi-tui (arm64)...", 15_728_640, 2.0)
-
-    with Spinner("Verifying SHA256 checksums..."):
-        time.sleep(0.6)
-
-    with Spinner("Installing to ~/.local/bin..."):
-        time.sleep(0.4)
-
-    with Spinner("Updating PATH in ~/.zshrc..."):
-        time.sleep(0.3)
+    for msg, duration in steps:
+        with Spinner(msg):
+            time.sleep(duration)
 
     print_summary("v0.3.1", "~/.local/bin")
 
