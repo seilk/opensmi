@@ -5,6 +5,7 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-blue.svg">
     <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
+    <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-informational.svg">
   </p>
 </p>
 
@@ -21,49 +22,50 @@
 
 ---
 
-`opensmi` helps admins monitor and enforce GPU allocations across a cluster **without installing anything on GPU nodes**.
+`opensmi` helps teams monitor and enforce GPU allocations across a self-managed cluster **without installing anything on GPU nodes**.  
 It runs from your terminal, connects over SSH, and reads `nvidia-smi`.
+
+---
 
 ## What you get
 
-- **Interactive TUI**: dashboard, node detail, allocate/clear, kill violators
-- **CLI**: poll, allocations, violations, watch (Slack alerts)
-- **Policy**: unallocated GPU usage is a violation; `*` = open-to-all
-- **No agents / daemons** on GPU nodes
-- **Python stdlib only** (CLI has zero dependencies)
+- **Interactive TUI** — live dashboard, node detail, GPU runner, job tracker
+- **CLI** — poll, allocate, detect violations, watch, kill, exec
+- **Policy enforcement** — unallocated GPU usage is a violation; `*` = open to all
+- **No agents or daemons** on GPU nodes
+- **Python stdlib only** — zero pip dependencies for the CLI
 
 ---
 
 ## Install
 
-Recommended (installs both CLI + TUI):
+Recommended — installs both CLI + TUI:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh | bash
 ```
 
-This will place binaries in `~/.local/bin` (and print a PATH hint if needed).
+Binaries land in `~/.local/bin`. The installer auto-detects your shell (zsh/bash/fish) and prints the exact PATH line to add — or offers to add it for you when run interactively.
 
-**Requirements:** macOS/Linux, **Python 3.8+**, SSH access to GPU nodes with `nvidia-smi`.
+**Requirements:** macOS or Linux · Python 3.8+ · SSH access to GPU nodes with `nvidia-smi`
 
 ### Update
-
-Once installed:
 
 ```bash
 opensmi update
 ```
 
-If you hit GitHub API rate limits, set `OPENSMI_GITHUB_TOKEN`.
+Replaces the CLI, TUI binary, and wrapper in one step. No uninstall needed.  
+If you hit GitHub API rate limits: `export OPENSMI_GITHUB_TOKEN=<token>`
 
 ### Uninstall
 
 ```bash
-opensmi uninstall           # remove CLI + TUI
-opensmi uninstall --dry-run # preview
+opensmi uninstall             # remove CLI + TUI
+opensmi uninstall --dry-run   # preview what would be removed
 ```
 
-To remove state/config too (destructive):
+To also wipe state and config (irreversible):
 
 ```bash
 opensmi uninstall --purge-state --yes
@@ -73,82 +75,230 @@ opensmi uninstall --purge-state --yes
 
 ## Quick start
 
-### 1) Create config
-
 ```bash
+# 1. Create config (interactive wizard)
 opensmi onboard
+
+# 2. Verify SSH connectivity + GPU visibility
+opensmi poll
+
+# 3. Launch the TUI
+opensmi
 ```
 
-Config lives at:
+Config is written to `~/.opensmi/opensmi.json` by default.  
+Override with `--config <path>` or `OPENSMI_CONFIG`.
 
-- `~/.opensmi/opensmi.json` (default)
+---
 
-### 2) Run
+## TUI
 
-- Launch the TUI:
+Launch with:
 
 ```bash
 opensmi
 ```
 
-- Or use the CLI:
+The top bar shows: **cluster name · user@hostname · GPUs used/total · Violations · Poll time**
 
-```bash
-opensmi poll
-opensmi violations
-opensmi alloc list
-opensmi --help
-```
+### Tabs
+
+| Tab | Key | Description |
+|-----|-----|-------------|
+| Dashboard | `1` | Live GPU grid — who's using what, per node |
+| Node Detail | `2` | Per-GPU memory, utilization, process list |
+| Runner | `3` / `l` | Launch GPU workloads with auto-selection |
+| Jobs | `4` | Track queued, running, and finished jobs |
+| Allocations | `5` | View and manage GPU→user assignments |
+| Setup | `6` | Per-node env config (conda, venv, work dir) |
+
+### Command Runner
+
+Press `l` or `Ctrl+R` to open. Launches GPU workloads with automatic GPU selection and orchestration.
+
+**Execution modes** (`Tab` to toggle):
+- `direct` — background process, output captured
+- `tmux` — creates a tmux session you can attach to
+
+**Distribution modes** (`Shift+Tab` to toggle):
+- `single` — one command across multiple GPUs (`CUDA_VISIBLE_DEVICES=0,1,2`)
+- `one-to-one` — different command per GPU (e.g., cross-validation folds)
+
+**GPU assignment** (`g` to toggle):
+- `auto` — ranks GPUs by idleness, last-used time, utilization
+- `manual` — click GPUs in the panel to select
+
+**Queue mode** (`q` to toggle):
+- `immediate` — runs now
+- `queued` — saves to job queue for auto-dispatch when GPUs free up
+
+Preflight checks run before execution: tmux availability, command syntax, GPU availability.
+
+### Jobs Tab
+
+Tracks all submitted jobs (immediate and queued). From the detail view you can:
+- View live output from tmux sessions
+- Retry the last command on a session
+- Cancel or delete a job record
+- Clean up finished tmux sessions
 
 ---
 
-## Command Runner
+## CLI Reference
 
-The TUI includes an integrated command runner for launching GPU workloads with automatic GPU selection and orchestration.
+```
+opensmi poll                        # snapshot cluster GPU state
+opensmi violations                  # list allocation violations (live)
+opensmi alloc list                  # show all allocations
+opensmi job list                    # list jobs
+opensmi job list --status running   # filter by status
+opensmi log                         # tail opensmi debug logs
+opensmi log --follow                # live log stream
+opensmi --help                      # full command list
+```
 
-### Quick access
+All commands support `--json` for machine-readable output where applicable.
 
-Press `l` or `Ctrl+R` in the TUI to open the runner pane.
+---
 
-### Key features
+## Admin Features
 
-- **Auto GPU selection**: Ranks available GPUs by last-used time, active processes, and utilization
-- **Execution modes**: Direct background execution or tmux session orchestration
-- **Distribution modes**: 
-  - **single**: One command across multiple GPUs (`CUDA_VISIBLE_DEVICES=0,1,2`)
-  - **one-to-one**: Different command per GPU (e.g., cross-validation folds)
-- **Preflight checks**: Validates tmux availability, command syntax, GPU availability
-- **Status tracking**: Real-time state (QUEUED → PREPARING → SENT → RUNNING/FAILED)
-- **Multiline paste**: Supports pasting multiple commands for one-to-one mode
+> Admin actions require the operator to be listed in `opensmi.json` under `admins.master` or `admins.members`, and to have remote sudo-group membership on target nodes.
 
-### Example workflow
+### Allocations
 
-1. Press `l` to open the runner
-2. Paste your training command(s)
-3. Adjust GPU count with `+`/`-`
-4. Toggle modes: `Tab` (direct/tmux), `Shift+Tab` (single/one-to-one)
-5. Review auto-selected GPUs and preflight status
-6. Press `Enter` to execute
+Allocations define which user is allowed on which GPU. Without an allocation, any GPU usage is a violation.
 
-For tmux mode, the runner displays the attach command (e.g., `tmux attach -t opensmi-1739742482`).
+```bash
+opensmi alloc list                        # show all allocations
+opensmi alloc set GPU-01 0 alice          # assign GPU 0 on GPU-01 to alice
+opensmi alloc set GPU-01 1 '*'            # open GPU 1 to everyone
+opensmi alloc clear GPU-01 0              # remove allocation
+opensmi alloc seed                        # auto-seed from live usage
+opensmi alloc seed --force                # overwrite existing allocations
+```
 
-**Full documentation**: See [`tui/README.md`](tui/README.md#command-runner) for keybindings, examples, and advanced usage.
+Special target `*` means any user is allowed on that GPU.
+
+### Violations & Watch
+
+```bash
+opensmi violations                        # one-shot violation check (exit 1 if any)
+opensmi watch                             # poll every 60s, print new violations
+opensmi watch --interval 30               # custom poll interval (seconds)
+opensmi watch --slack-webhook <url>       # send alerts to Slack
+```
+
+`violations` exits `0` (clean) or `1` (violations found) — suitable for CI/cron.
+
+### Kill
+
+Send a signal to remote PIDs:
+
+```bash
+opensmi kill GPU-01 <pid> [<pid> ...]
+opensmi kill GPU-01 1234 5678 --signal KILL
+opensmi kill GPU-01 1234 --no-sudo        # skip sudo, only own processes
+```
+
+Supported signals: `TERM` (default), `KILL`, `INT`, `HUP`.
+
+### Remote Execution
+
+```bash
+# Run a command on a node with specific GPUs
+opensmi exec GPU-01 --gpus 0,1 --command "python train.py"
+
+# Use tmux mode for long-running jobs
+opensmi exec GPU-01 --gpus 0 --command "python train.py" --mode tmux
+
+# Submit to the job queue (auto-dispatches when GPUs free up)
+opensmi job submit --auto-gpus 2 --command "python train.py"
+```
+
+### Node Env
+
+Per-node environment configuration (conda/venv activation, working directory):
+
+```bash
+opensmi node-env GPU-01                                   # show current config
+opensmi node-env GPU-01 --env-manager conda --env-name ml # set conda env
+opensmi node-env GPU-01 --work-dir ~/projects             # set working dir
+opensmi node-env GPU-01 --env-manager venv --env-name .venv
+```
+
+This config is used automatically when dispatching jobs to that node.
+
+### Sudo Check
+
+Verify that your SSH user has the required sudo-group membership on a node:
+
+```bash
+opensmi sudo-check GPU-01
+opensmi sudo-check GPU-01 --json
+```
+
+### Admin Config
+
+Admin identity and remote sudo-group requirements are set in `opensmi.json`:
+
+```json
+{
+  "admins": {
+    "master": "alice",
+    "members": ["alice", "bob"],
+    "remote_sudo_groups": ["sudo", "wheel"]
+  }
+}
+```
+
+- `master` / `members`: local usernames allowed to run admin commands
+- `remote_sudo_groups`: SSH user must be in one of these groups on the target node for `alloc`, `kill`, and `exec` actions
 
 ---
 
 ## Configuration
 
-The config is plain JSON. Start from the template:
-
-- [`opensmi.example.json`](opensmi.example.json)
-
-(Keep your real `opensmi.json` private; the repo ignores it by default.)
-
-Override state directory (for NFS/shared home):
+Config is plain JSON. Start from the template:
 
 ```bash
-export OPENSMI_STATE_DIR=/nfs/shared/.opensmi
+opensmi onboard          # interactive wizard
+opensmi init             # write default template
 ```
+
+Reference template: [`opensmi.example.json`](opensmi.example.json)  
+Keep your real `opensmi.json` private — it's gitignored by default.
+
+**Key environment variables:**
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENSMI_CONFIG` | Override config path |
+| `OPENSMI_STATE_DIR` | Override state directory (useful for NFS/shared home) |
+| `OPENSMI_PYTHON` | Override Python interpreter |
+| `OPENSMI_GITHUB_TOKEN` | GitHub token to avoid API rate limits during update |
+
+---
+
+## Scope / Supported Environments
+
+opensmi is a **standalone alternative to Slurm**, not a supplement.  
+Running alongside an active Slurm installation is **not supported** and causes conflicts:
+
+- **`CUDA_VISIBLE_DEVICES`**: Slurm remaps GPU indices to 0-based; opensmi uses physical indices — they conflict.
+- **Process lifecycle**: opensmi tmux sessions run outside Slurm cgroups, bypassing Slurm's resource accounting.
+
+**Supported use case**: self-managed GPU clusters with no workload scheduler (Slurm, PBS, LSF, etc.).
+
+**Local node**: If opensmi runs on a GPU node itself, SSH is bypassed automatically — no loopback connection needed.
+
+---
+
+## Security
+
+`opensmi` can execute remote commands over SSH (including process signals).  
+Treat the machine you run it on as an admin workstation.  
+See [`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -157,26 +307,6 @@ export OPENSMI_STATE_DIR=/nfs/shared/.opensmi
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Releasing: [`docs/RELEASING.md`](docs/RELEASING.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
-
----
-
-## Scope / Supported Environments
-
-opensmi is designed as a **standalone alternative to Slurm**, not a supplement to it.
-Running opensmi alongside an active Slurm installation is **not supported** and will cause resource management conflicts:
-
-- **CUDA_VISIBLE_DEVICES**: Slurm uses 0-based GPU remapping; opensmi uses physical indices. The two will conflict.
-- **Process lifecycle**: opensmi tmux sessions run outside Slurm cgroups, bypassing Slurm's resource accounting and allocation enforcement.
-
-**Supported use case**: self-managed GPU clusters where no workload scheduler (Slurm, PBS, LSF, etc.) is running.
-
----
-
-## Security notes
-
-`opensmi` can execute remote commands over SSH (including process signals).
-Treat the machine you run it on as an admin workstation.
-See [`SECURITY.md`](SECURITY.md).
 
 ---
 
