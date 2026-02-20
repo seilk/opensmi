@@ -13,6 +13,7 @@ import {
 import { spawn } from "bun";
 import { existsSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { tabRegistry, type Tab } from "./tabRegistry";
 
 // ── TUI Logger ─────────────────────────────────────────────────────
@@ -21,6 +22,16 @@ const LOG_DIR = path.join(process.env.OPENSMI_LOG_DIR || path.join(process.env.H
 const LOG_FILE = path.join(LOG_DIR, "tui.log");
 const LOG_LEVEL = (process.env.OPENSMI_LOG_LEVEL || "INFO").toUpperCase();
 const LOG_LEVELS: Record<string, number> = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3 };
+
+const CURRENT_USER_HOST = (() => {
+  try {
+    const user = os.userInfo().username || process.env.USER || "?";
+    const host = os.hostname().split(".")[0] || "?";
+    return `${user}@${host}`;
+  } catch {
+    return process.env.USER ? `${process.env.USER}@?` : "?";
+  }
+})();
 const LOG_THRESHOLD = LOG_LEVELS[LOG_LEVEL] ?? 1;
 const LOG_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 
@@ -2077,8 +2088,6 @@ function renderDashboard() {
     }
   }
 
-  const expiringSoon = countExpiringWithin(24);
-
   // Header
   const header = Box(
     {
@@ -2093,7 +2102,7 @@ function renderDashboard() {
       content: t`${bold(fg(C.blue)(snapshot.cluster_name))} ${fg(C.textDim)("· opensmi")}`,
     }),
     Text({
-      content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Expiring<24h: ${expiringSoon > 0 ? fg(C.yellow)(`${expiringSoon}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
     })
   );
 
