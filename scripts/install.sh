@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# S3: guard against `sh install.sh` misuse
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "error: opensmi installer requires bash. Re-run with:" >&2
+  echo "  bash <(curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.sh)" >&2
+  exit 1
+fi
+
 # opensmi installer
 # - Installs Python CLI (wheel) + TUI binary from GitHub Releases
 # - Places binaries in a common bin directory and creates a stable symlink
@@ -52,6 +59,23 @@ info() { say "${C_BLUE}==>${C_RESET} $*"; }
 ok()   { say "${C_GREEN}✓${C_RESET} $*"; }
 warn() { say "${C_YELLOW}warning:${C_RESET} $*" >&2; }
 die()  { say "${C_RED}error:${C_RESET} $*" >&2; exit 2; }
+
+# S1: detect shell and return the appropriate profile file path
+detect_shell_profile() {
+  local shell_bin
+  shell_bin="$(basename "${SHELL:-}")"
+  case "$shell_bin" in
+    zsh)  echo "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash)
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "$HOME/.bash_profile"
+      else
+        echo "$HOME/.bashrc"
+      fi ;;
+    fish) echo "$HOME/.config/fish/config.fish" ;;
+    *)    echo "$HOME/.profile" ;;
+  esac
+}
 
 usage() {
   cat <<EOF
@@ -421,12 +445,9 @@ if [[ $INSTALL_CLI -eq 1 ]]; then
     chmod 0755 "$SHARE_DIR/opensmi.pyz"
 
     cat > "$BIN_DIR/opensmi" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-
+#!/bin/sh
 PYTHON_BIN="${OPENSMI_PYTHON:-python3}"
-HOME_DIR="${HOME%/}"
-exec "$PYTHON_BIN" "${HOME_DIR}/.local/share/opensmi/opensmi.pyz" "$@"
+exec "$PYTHON_BIN" "${HOME%/}/.local/share/opensmi/opensmi.pyz" "$@"
 SH
     chmod 0755 "$BIN_DIR/opensmi"
 
@@ -437,11 +458,29 @@ SH
   fi
 fi
 
-# PATH hint
+# S1 + S2: shell-aware PATH hint + optional auto-append
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+  PROFILE="$(detect_shell_profile)"
+  shell_bin="$(basename "${SHELL:-bash}")"
+
+  if [[ "$shell_bin" == "fish" ]]; then
+    PATH_LINE="set -gx PATH \"$BIN_DIR\" \$PATH"
+  else
+    PATH_LINE="export PATH=\"$BIN_DIR:\$PATH\""
+  fi
+
   warn "'$BIN_DIR' is not in your PATH"
-  warn "Add this to your shell profile (~/.bashrc, ~/.zshrc):"
-  warn "  export PATH=\"$BIN_DIR:\$PATH\""
+  warn "Add this to ${PROFILE}:"
+  warn "  ${PATH_LINE}"
+
+  # S2: interactive TTY → offer to auto-append
+  if [[ $IS_TTY -eq 1 ]]; then
+    read -r -p "$(printf '%s' "${C_YELLOW}?${C_RESET} Add to ${PROFILE} automatically? [Y/n] ")" yn 2>/dev/tty || yn="n"
+    if [[ "${yn:-Y}" =~ ^[Yy]$ ]]; then
+      printf '\n# opensmi\n%s\n' "$PATH_LINE" >> "$PROFILE"
+      ok "Added to ${PROFILE} — restart terminal or: source ${PROFILE}"
+    fi
+  fi
 fi
 
 ok "Installation complete"
