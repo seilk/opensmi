@@ -8,11 +8,88 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+
+# ── Terminal UI ───────────────────────────────────────────────────
+
+def _c(code: str) -> str:
+    return f"\033[{code}m" if sys.stdout.isatty() else ""
+
+_GREEN = _c("32")
+_BOLD  = _c("1")
+_DIM   = _c("2")
+_RED   = _c("31")
+_RESET = _c("0")
+
+
+class Spinner:
+    """Line/Clock spinner (| / - \\) shown during long operations."""
+
+    FRAMES   = ["|", "/", "-", "\\"]
+    INTERVAL = 0.06
+
+    def __init__(self, msg: str) -> None:
+        self.msg   = msg
+        self._stop = threading.Event()
+        self._t    = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        if not sys.stdout.isatty():
+            sys.stdout.write(f"  {self.msg}\n")
+            sys.stdout.flush()
+            return
+        i = 0
+        while not self._stop.is_set():
+            c = self.FRAMES[i % len(self.FRAMES)]
+            sys.stdout.write(f"\r  {_GREEN}{c}{_RESET}  {self.msg}")
+            sys.stdout.flush()
+            time.sleep(self.INTERVAL)
+            i += 1
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+
+    def __enter__(self) -> "Spinner":
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[?25l")
+            sys.stdout.flush()
+        self._t.start()
+        return self
+
+    def __exit__(self, exc_type, *_) -> None:
+        self._stop.set()
+        self._t.join()
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
+        if exc_type:
+            print(f"  {_RED}✗{_RESET}  {self.msg}")
+        else:
+            print(f"  {_GREEN}✓{_RESET}  {self.msg}")
+
+
+def _print_update_summary(version: str, bin_dir: str) -> None:
+    W    = 44
+    line = "─" * W
+
+    def row(text: str = "", style: str = "") -> str:
+        return f"  {_GREEN}│{_RESET}  {style}{text[:W].ljust(W)}{_RESET}{_GREEN}│{_RESET}"
+
+    print()
+    print(f"  {_GREEN}╭{line}╮{_RESET}")
+    print(row(f"opensmi {version} installed", _BOLD))
+    print(row())
+    print(row(f"CLI  →  {bin_dir}/opensmi"))
+    print(row(f"TUI  →  {bin_dir}/opensmi-tui"))
+    print(row())
+    print(row("Run: opensmi --help", _DIM))
+    print(f"  {_GREEN}╰{line}╯{_RESET}")
+    print()
 
 
 @dataclass
@@ -283,19 +360,30 @@ def update(
 ) -> Tuple[str, str]:
     bin_dir = (bin_dir or _default_bin_dir()).expanduser().resolve()
 
-    rel = get_release_info(repo=repo, version=version)
+    print()
+    print(f"  {_BOLD}Updating opensmi{_RESET}  {_DIM}({repo}){_RESET}")
+    print()
+
+    with Spinner("Fetching release info from GitHub..."):
+        rel = get_release_info(repo=repo, version=version)
+
+    suffix = _os_arch_suffix()
+    if sys.stdout.isatty():
+        print(f"  {_DIM}Release: {rel.tag}  •  {suffix}{_RESET}\n")
 
     sha_map: Dict[str, str] = {}
     if verify and rel.sha_url:
-        with tempfile.TemporaryDirectory() as td:
-            tmp = Path(td) / "SHA256SUMS.txt"
-            _download(rel.sha_url, tmp)
-            sha_map = _parse_sha256sums(tmp.read_text(encoding="utf-8", errors="replace"))
+        with Spinner("Fetching SHA256 checksums..."):
+            with tempfile.TemporaryDirectory() as td:
+                tmp = Path(td) / "SHA256SUMS.txt"
+                _download(rel.sha_url, tmp)
+                sha_map = _parse_sha256sums(tmp.read_text(encoding="utf-8", errors="replace"))
 
     if install_tui_flag:
         if not rel.tui_url:
             raise UpdateError("TUI asset not found for this platform in the release")
-        install_tui(url=rel.tui_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
+        with Spinner(f"Downloading & installing opensmi-tui ({suffix})..."):
+            install_tui(url=rel.tui_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
 
     if install_cli_flag:
         method = cli_method
@@ -305,12 +393,15 @@ def update(
         if method == "pyz":
             if not rel.pyz_url:
                 raise UpdateError("opensmi.pyz not found in the release")
-            install_cli_pyz(url=rel.pyz_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
+            with Spinner("Downloading & installing opensmi CLI..."):
+                install_cli_pyz(url=rel.pyz_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
         elif method == "pip":
             if not rel.wheel_url:
                 raise UpdateError("wheel (.whl) not found in the release")
-            install_cli_pip(url=rel.wheel_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
+            with Spinner("Downloading & installing opensmi CLI (wheel)..."):
+                install_cli_pip(url=rel.wheel_url, bin_dir=bin_dir, sha_map=sha_map, verify=verify)
         else:
             raise UpdateError(f"Unknown cli_method: {cli_method}")
 
+    _print_update_summary(rel.tag, str(bin_dir))
     return rel.tag, str(bin_dir)

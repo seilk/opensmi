@@ -36,29 +36,94 @@ CLI_METHOD="auto"  # auto|pip|pyz
 PYTHON="${OPENSMI_PYTHON:-python3}"
 TOKEN="${OPENSMI_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 
-# ── logging helpers ───────────────────────────────────────────────
+# ── colors & TTY ─────────────────────────────────────────────────
 IS_TTY=0
 if [[ -t 1 ]]; then IS_TTY=1; fi
 
-C_RESET=""
-C_BLUE=""
-C_GREEN=""
-C_YELLOW=""
-C_RED=""
+C_RESET=""; C_BOLD=""; C_DIM=""
+C_BLUE=""; C_GREEN=""; C_YELLOW=""; C_RED=""
 
 if [[ $IS_TTY -eq 1 ]]; then
   C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
   C_BLUE=$'\033[34m'
   C_GREEN=$'\033[32m'
   C_YELLOW=$'\033[33m'
   C_RED=$'\033[31m'
 fi
 
+cursor_hide() { [[ $IS_TTY -eq 1 ]] && printf '\033[?25l'; }
+cursor_show() { [[ $IS_TTY -eq 1 ]] && printf '\033[?25h'; }
+trap 'cursor_show' EXIT
+
+# ── basic log helpers (non-animated; used for warnings/errors) ────
 say()  { printf '%s\n' "$*"; }
-info() { say "${C_BLUE}==>${C_RESET} $*"; }
-ok()   { say "${C_GREEN}✓${C_RESET} $*"; }
 warn() { say "${C_YELLOW}warning:${C_RESET} $*" >&2; }
-die()  { say "${C_RED}error:${C_RESET} $*" >&2; exit 2; }
+die()  { cursor_show; say "${C_RED}error:${C_RESET} $*" >&2; exit 2; }
+
+# ── spinner (Line/Clock: | / - \) ────────────────────────────────
+_SPINNER_PID=""
+_SPINNER_MSG=""
+
+spin_start() {
+  _SPINNER_MSG="$1"
+  local msg="$1"
+  if [[ $IS_TTY -eq 0 ]]; then
+    printf '  => %s\n' "$msg"
+    return
+  fi
+  cursor_hide
+  (
+    i=0
+    while true; do
+      case $((i % 4)) in
+        0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c="\\" ;;
+      esac
+      printf "\r  ${C_GREEN}%s${C_RESET}  %s" "$c" "$msg"
+      sleep 0.06
+      i=$(( i + 1 ))
+    done
+  ) &
+  _SPINNER_PID=$!
+}
+
+_spin_stop() {
+  if [[ -n "$_SPINNER_PID" ]]; then
+    kill "$_SPINNER_PID" 2>/dev/null || true
+    wait "$_SPINNER_PID" 2>/dev/null || true
+    _SPINNER_PID=""
+    printf "\r\033[K"
+    cursor_show
+  fi
+}
+
+spin_ok()   { _spin_stop; printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$_SPINNER_MSG"; }
+spin_fail() { _spin_stop; printf "  ${C_RED}✗${C_RESET}  %s\n"   "$_SPINNER_MSG"; }
+
+# ── summary card ──────────────────────────────────────────────────
+print_summary() {
+  local version="$1"
+  local bin_dir="$2"
+  local W=44
+  local line
+  line="$(printf '─%.0s' $(seq 1 $W))"
+
+  box_row() {
+    printf "  ${C_GREEN}│${C_RESET}  ${2:-}%-${W}s${C_RESET}${C_GREEN}│${C_RESET}\n" "${1:-}"
+  }
+
+  printf "\n"
+  printf "  ${C_GREEN}╭%s╮${C_RESET}\n" "$line"
+  box_row "opensmi ${version} installed" "${C_BOLD}"
+  box_row ""
+  box_row "CLI  →  ${bin_dir}/opensmi"
+  box_row "TUI  →  ${bin_dir}/opensmi-tui"
+  box_row ""
+  box_row "Next: opensmi onboard" "${C_DIM}"
+  printf "  ${C_GREEN}╰%s╯${C_RESET}\n" "$line"
+  printf "\n"
+}
 
 # S1: detect shell and return the appropriate profile file path
 detect_shell_profile() {
@@ -125,7 +190,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-info "opensmi installer"
+printf "\n  ${C_BOLD}Installing opensmi${C_RESET}  ${C_DIM}(${REPO})${C_RESET}\n\n"
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   die "python not found: $PYTHON (set OPENSMI_PYTHON, e.g. python3.11)"
@@ -257,11 +322,7 @@ else
   API_URL="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
 fi
 
-info "Target:  ${REPO} (${VERSION})"
-info "System:  ${OS}/${ARCH}"
-info "Python:  ${PYTHON} (${PY_VER})"
-info "Prefix:  ${BIN_DIR}"
-
+spin_start "Fetching release info from GitHub..."
 fetch "$API_URL" "$TMP/release.json"
 
 # Basic sanity check: empty or non-JSON responses happen on some networks/proxies.
@@ -324,7 +385,8 @@ if [[ -z "$TAG_NAME" ]]; then
   die "Failed to detect release tag_name (bad API response?)"
 fi
 
-info "Release:  ${TAG_NAME}"
+spin_ok
+printf "  ${C_DIM}Release: ${TAG_NAME}  •  ${OS}/${ARCH}  •  Python ${PY_VER}${C_RESET}\n\n"
 
 if [[ $INSTALL_TUI -eq 1 && -z "$TUI_URL" ]]; then
   die "TUI asset not found in release: ${TUI_ASSET}"
@@ -348,7 +410,9 @@ if [[ $VERIFY -eq 1 ]]; then
     warn "SHA256SUMS not found; skipping verification."
     VERIFY=0
   else
+    spin_start "Fetching SHA256 checksums..."
     fetch "$SHA_URL" "$TMP/SHA256SUMS.txt"
+    spin_ok
   fi
 fi
 
@@ -384,21 +448,20 @@ verify_one() {
 
 # Install TUI
 if [[ $INSTALL_TUI -eq 1 ]]; then
-  info "Installing TUI"
+  spin_start "Downloading opensmi-tui (${SUFFIX})..."
   fetch "$TUI_URL" "$TMP/${TUI_ASSET}"
+  spin_ok
+
+  spin_start "Verifying & installing opensmi-tui..."
   chmod +x "$TMP/${TUI_ASSET}"
   verify_one "$TUI_ASSET" "$TMP/${TUI_ASSET}"
-
   mv "$TMP/${TUI_ASSET}" "$BIN_DIR/${TUI_ASSET}"
   ln -sf "$BIN_DIR/${TUI_ASSET}" "$BIN_DIR/opensmi-tui"
-
-  ok "opensmi-tui → $BIN_DIR/opensmi-tui"
+  spin_ok
 fi
 
 # Install CLI
 if [[ $INSTALL_CLI -eq 1 ]]; then
-  info "Installing CLI"
-
   # Decide method in auto mode
   if [[ "$CLI_METHOD" == "auto" ]]; then
     # Prefer pyz when available: works without pip and keeps installs simple.
@@ -412,46 +475,43 @@ if [[ $INSTALL_CLI -eq 1 ]]; then
   fi
 
   if [[ "$CLI_METHOD" == "pip" ]]; then
-    info "CLI method: pip (wheel)"
-
     if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
       die "pip is not available for ${PYTHON}. Retry with: --cli-method pyz"
     fi
 
     WHEEL_ASSET="$(basename "$WHEEL_URL")"
+    spin_start "Downloading opensmi CLI (wheel)..."
     fetch "$WHEEL_URL" "$TMP/$WHEEL_ASSET"
+    spin_ok
+
+    spin_start "Verifying & installing opensmi CLI..."
     verify_one "$WHEEL_ASSET" "$TMP/$WHEEL_ASSET"
-
-    "$PYTHON" -m pip install --user --upgrade "$TMP/$WHEEL_ASSET"
-    ok "opensmi (pip) installed"
-
+    "$PYTHON" -m pip install --user --upgrade "$TMP/$WHEEL_ASSET" >/dev/null 2>&1
     # Ensure the opensmi entrypoint is reachable from BIN_DIR
     if [[ -x "$PY_USER_BIN/opensmi" && "$PY_USER_BIN" != "$BIN_DIR" ]]; then
       ln -sf "$PY_USER_BIN/opensmi" "$BIN_DIR/opensmi" || true
-      ok "opensmi → $BIN_DIR/opensmi"
     fi
+    spin_ok
 
   elif [[ "$CLI_METHOD" == "pyz" ]]; then
-    info "CLI method: pyz (zipapp)"
-
     PYZ_ASSET="$(basename "$PYZ_URL")"
+    spin_start "Downloading opensmi CLI (pyz)..."
     fetch "$PYZ_URL" "$TMP/$PYZ_ASSET"
-    verify_one "$PYZ_ASSET" "$TMP/$PYZ_ASSET"
+    spin_ok
 
+    spin_start "Verifying & installing opensmi CLI..."
+    verify_one "$PYZ_ASSET" "$TMP/$PYZ_ASSET"
     SHARE_DIR="$HOME/.local/share/opensmi"
     mkdir -p "$SHARE_DIR"
-
     mv "$TMP/$PYZ_ASSET" "$SHARE_DIR/opensmi.pyz"
     chmod 0755 "$SHARE_DIR/opensmi.pyz"
-
     cat > "$BIN_DIR/opensmi" <<'SH'
 #!/bin/sh
 PYTHON_BIN="${OPENSMI_PYTHON:-python3}"
 exec "$PYTHON_BIN" "${HOME%/}/.local/share/opensmi/opensmi.pyz" "$@"
 SH
     chmod 0755 "$BIN_DIR/opensmi"
-
-    ok "opensmi → $BIN_DIR/opensmi"
+    spin_ok
 
   else
     die "Unknown --cli-method: $CLI_METHOD (expected: auto|pip|pyz)"
@@ -478,15 +538,10 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     read -r -p "$(printf '%s' "${C_YELLOW}?${C_RESET} Add to ${PROFILE} automatically? [Y/n] ")" yn 2>/dev/tty || yn="n"
     if [[ "${yn:-Y}" =~ ^[Yy]$ ]]; then
       printf '\n# opensmi\n%s\n' "$PATH_LINE" >> "$PROFILE"
-      ok "Added to ${PROFILE} — restart terminal or: source ${PROFILE}"
+      printf "  ${C_GREEN}✓${C_RESET}  Added to ${PROFILE} — restart terminal or: source ${PROFILE}\n"
     fi
   fi
 fi
 
-ok "Installation complete"
-
-say "Next:"
-say "  opensmi onboard"
-say "  opensmi poll"
-say "  opensmi        # TUI"
+print_summary "$TAG_NAME" "$BIN_DIR"
 say "  opensmi --help" 
