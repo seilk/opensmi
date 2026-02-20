@@ -992,7 +992,7 @@ asyncio.run(main())
     gpuLivenessCache.set(job.id, parsed);
     return parsed;
   } catch (e) {
-    tuiLog("ERROR", `checkGpuLiveness failed job=${job.id}: ${e?.message || String(e)}`);
+    tuiLog("ERROR", `checkGpuLiveness failed job=${job.id}: ${(e as any)?.message || String(e)}`);
     return null;  // null = unknown
   }
 }
@@ -2865,7 +2865,7 @@ function renderJobDetailView() {
       const session = job.tmux_sessions[i] || null;
       let color: string;
       if (job.status !== "running") {
-        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
+        color = job.status === "done" ? C.green : job.status === "failed" ? C.red : C.textDim;
       } else {
         color = alive === true ? C.green : alive === false ? C.red : C.yellow;
       }
@@ -2880,7 +2880,7 @@ function renderJobDetailView() {
       const session = job.tmux_sessions[i] || null;
       let color: string;
       if (job.status !== "running") {
-        color = job.status === "success" ? C.green : job.status === "failed" ? C.red : C.textDim;
+        color = job.status === "done" ? C.green : job.status === "failed" ? C.red : C.textDim;
       } else {
         color = alive === true ? C.green : alive === false ? C.red : C.yellow;
       }
@@ -4978,11 +4978,11 @@ async function main() {
           newNode = renderSetupView();
         } catch (e: any) {
           tuiLog("ERROR", `renderSetupView failed: ${e?.message || String(e)}\n${e?.stack || ""}`);
-          newNode = Box({ padding: 1, children: [
-            Text({ content: `ERROR rendering Setup: ${e?.message || String(e)}`, fg: "red" }),
+          newNode = Box({ padding: 1 },
+            Text({ content: `ERROR rendering Setup: ${(e as any)?.message || String(e)}`, fg: "red" }),
             Text({ content: `setupNodes: ${setupNodes.length}`, fg: "gray" }),
             Text({ content: `setupSelectedIdx: ${setupSelectedIdx}`, fg: "gray" }),
-          ]});
+          );
         }
         break;
     }
