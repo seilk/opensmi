@@ -68,7 +68,7 @@ git push origin main --tags
 ### 5. Verify
 
 GitHub Actions will:
-1. Run CI (Python 3.8-3.12 + TUI typecheck)
+1. Run CI (Python 3.9-3.12 + TUI typecheck)
 2. Build sdist + wheel
 3. Cross-compile TUI binaries on 4 platforms
 4. Create a GitHub Release with all artifacts

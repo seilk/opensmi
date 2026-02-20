@@ -3,7 +3,7 @@
   <p align="center">Agentless, multi-node GPU allocation manager (SSH + nvidia-smi only)</p>
   <p align="center">
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-    <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-blue.svg">
+    <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
     <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
     <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-informational.svg">
   </p>
@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.
 
 Binaries land in `~/.local/bin`. The installer auto-detects your shell (zsh/bash/fish) and prints the exact PATH line to add — or offers to add it for you when run interactively.
 
-**Requirements:** macOS or Linux · Python 3.8+ · SSH access to GPU nodes with `nvidia-smi`
+**Requirements:** macOS or Linux · Python 3.9+ · SSH access to GPU nodes with `nvidia-smi`
 
 ### Update
 
