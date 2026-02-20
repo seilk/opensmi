@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-opensmi update UI demo — spinner + summary card
+opensmi update UI demo — spinner + summary card (no vertical bars)
 Usage: python3 scripts/demo-installer-ui.py
 """
 
@@ -30,13 +30,8 @@ def cursor_show() -> None:
 
 # ── Spinner ───────────────────────────────────────────────────────
 class Spinner:
-    """Line/Clock spinner: | / - \\
-    - FRAMES uses "\\" which is a single backslash — correct in Python
-    - Thread clears its line before exit → no race with ✓ print
-    """
-
-    FRAMES   = ["|", "/", "-", "\\"]   # "\\" = one backslash
-    INTERVAL = 0.06                     # faster: was 0.12
+    FRAMES   = ["|", "/", "-", "\\"]
+    INTERVAL = 0.06
 
     def __init__(self, msg: str) -> None:
         self.msg   = msg
@@ -45,9 +40,7 @@ class Spinner:
 
     def _run(self) -> None:
         if not IS_TTY:
-            sys.stdout.write(f"  |  {self.msg}\n")
-            sys.stdout.flush()
-            return
+            sys.stdout.write(f"  {self.msg}\n"); sys.stdout.flush(); return
         i = 0
         while not self._stop.is_set():
             c = self.FRAMES[i % len(self.FRAMES)]
@@ -55,41 +48,36 @@ class Spinner:
             sys.stdout.flush()
             time.sleep(self.INTERVAL)
             i += 1
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
+        sys.stdout.write("\r\033[K"); sys.stdout.flush()
 
     def __enter__(self) -> "Spinner":
-        cursor_hide()
-        self._t.start()
-        return self
+        cursor_hide(); self._t.start(); return self
 
     def __exit__(self, exc_type, *_) -> None:
-        self._stop.set()
-        self._t.join()
-        cursor_show()
+        self._stop.set(); self._t.join(); cursor_show()
         if exc_type:
             print(f"  {RED}✗{RESET}  {self.msg}")
         else:
             print(f"  {GREEN}✓{RESET}  {self.msg}")
 
 
-# ── Summary Card ──────────────────────────────────────────────────
-def print_summary(version: str, bin_dir: str) -> None:
-    W    = 44
+# ── Summary Card (no vertical bars) ──────────────────────────────
+def print_summary(version: str, bin_dir: str, config_dir: str) -> None:
+    W    = 48
     line = "─" * W
 
-    def row(text: str = "", style: str = "") -> str:
-        return f"  {GREEN}│{RESET}  {style}{text[:W].ljust(W)}{RESET}{GREEN}│{RESET}"
-
     print()
-    print(f"  {GREEN}╭{line}╮{RESET}")
-    print(row(f"opensmi {version} installed", BOLD))
-    print(row())
-    print(row(f"CLI  →  {bin_dir}/opensmi"))
-    print(row(f"TUI  →  {bin_dir}/opensmi-tui"))
-    print(row())
-    print(row("Run: opensmi --help", DIM))
-    print(f"  {GREEN}╰{line}╯{RESET}")
+    print(f"  {GREEN}{line}{RESET}")
+    print()
+    print(f"  {BOLD}opensmi {version}{RESET}  {DIM}installed{RESET}")
+    print()
+    print(f"  {DIM}{'CLI':<8}{RESET}  {bin_dir}/opensmi")
+    print(f"  {DIM}{'TUI':<8}{RESET}  {bin_dir}/opensmi-tui")
+    print(f"  {DIM}{'Config':<8}{RESET}  {config_dir}/opensmi.json")
+    print()
+    print(f"  {GREEN}Next:{RESET}  opensmi onboard")
+    print()
+    print(f"  {GREEN}{line}{RESET}")
     print()
 
 
@@ -112,7 +100,7 @@ def main() -> None:
         with Spinner(msg):
             time.sleep(duration)
 
-    print_summary("v0.3.1", "~/.local/bin")
+    print_summary("v0.3.1", "~/.local/bin", "~/.opensmi")
 
 
 if __name__ == "__main__":

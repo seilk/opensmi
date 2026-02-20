@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# opensmi installer UI demo  —  spinner + summary card
+# opensmi installer UI demo  —  spinner + summary card (no vertical bars)
 # Usage: bash scripts/demo-installer-ui.sh
 
 set -euo pipefail
@@ -19,34 +19,25 @@ cursor_hide() { [[ $IS_TTY -eq 1 ]] && printf '\033[?25l'; }
 cursor_show() { [[ $IS_TTY -eq 1 ]] && printf '\033[?25h'; }
 trap 'cursor_show' EXIT
 
-# ── Spinner  (Line/Clock: | / - \)  ──────────────────────────────
-# Fix: c="\\" (double-quoted) → single backslash.
-#      c='\\'  (single-quoted) → two backslashes (bug).
-
+# ── Spinner  (Line/Clock: | / - \) ───────────────────────────────
 _SPINNER_PID=""
 _SPINNER_MSG=""
 
 spin_start() {
   _SPINNER_MSG="$1"
   local msg="$1"
-
   if [[ $IS_TTY -eq 0 ]]; then
-    printf "  | %s\n" "$msg"
-    return
+    printf '  => %s\n' "$msg"; return
   fi
-
   cursor_hide
   (
     i=0
     while true; do
       case $((i % 4)) in
-        0) c='|' ;;
-        1) c='/' ;;
-        2) c='-' ;;
-        3) c="\\" ;;   # double-quoted: one backslash
+        0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c="\\" ;;
       esac
       printf "\r  ${C_GREEN}%s${C_RESET}  %s" "$c" "$msg"
-      sleep 0.06       # faster: was 0.12
+      sleep 0.06
       i=$(( i + 1 ))
     done
   ) &
@@ -66,29 +57,27 @@ _spin_stop() {
 spin_ok()   { _spin_stop; printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$_SPINNER_MSG"; }
 spin_fail() { _spin_stop; printf "  ${C_RED}✗${C_RESET}  %s\n"   "$_SPINNER_MSG"; }
 
-# ── Summary Card ──────────────────────────────────────────────────
+# ── Summary Card (no vertical bars) ──────────────────────────────
 print_summary() {
   local version="${1:-v0.3.1}"
   local bin_dir="${2:-~/.local/bin}"
-  local W=44
+  local config_dir="${3:-~/.opensmi}"
+  local W=48
   local line
   line="$(printf '─%.0s' $(seq 1 $W))"
 
-  box_row() {
-    local content="${1:-}"
-    local style="${2:-}"
-    printf "  ${C_GREEN}│${C_RESET}  ${style}%-${W}s${C_RESET}${C_GREEN}│${C_RESET}\n" "$content"
-  }
-
   printf "\n"
-  printf "  ${C_GREEN}╭%s╮${C_RESET}\n" "$line"
-  box_row "opensmi ${version} installed" "${C_BOLD}"
-  box_row ""
-  box_row "CLI  →  ${bin_dir}/opensmi"
-  box_row "TUI  →  ${bin_dir}/opensmi-tui"
-  box_row ""
-  box_row "Run: opensmi --help" "${C_DIM}"
-  printf "  ${C_GREEN}╰%s╯${C_RESET}\n" "$line"
+  printf "  ${C_GREEN}%s${C_RESET}\n" "$line"
+  printf "\n"
+  printf "  ${C_BOLD}opensmi %s${C_RESET}  ${C_DIM}installed${C_RESET}\n" "$version"
+  printf "\n"
+  printf "  ${C_DIM}%-8s${C_RESET}  %s\n" "CLI"    "${bin_dir}/opensmi"
+  printf "  ${C_DIM}%-8s${C_RESET}  %s\n" "TUI"    "${bin_dir}/opensmi-tui"
+  printf "  ${C_DIM}%-8s${C_RESET}  %s\n" "Config" "${config_dir}/opensmi.json"
+  printf "\n"
+  printf "  ${C_GREEN}Next:${C_RESET}  opensmi onboard\n"
+  printf "\n"
+  printf "  ${C_GREEN}%s${C_RESET}\n" "$line"
   printf "\n"
 }
 
@@ -119,4 +108,4 @@ spin_start "Updating PATH in ~/.zshrc..."
 sleep 0.4
 spin_ok
 
-print_summary "v0.3.1" "~/.local/bin"
+print_summary "v0.3.1" "~/.local/bin" "~/.opensmi"
