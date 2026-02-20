@@ -639,18 +639,22 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
 
     ensure_state_dir(state_dir)
 
+    target = str(args.user or "").strip()
+    if not target or target.lower() == "none":
+        target = "*"
+
     allocs = load_allocations(state_dir)
     new_alloc = Allocation(
         node_alias=args.node,
         gpu_index=int(args.gpu),
-        target=args.user,
+        target=target,
         assigned_by=args.by or _current_operator() or "admin",
         assigned_at=_now_iso(),
         notes=args.notes or "",
     )
     allocs = upsert_allocation(allocs, new_alloc)
     save_allocations(state_dir, allocs)
-    print(f"OK: {args.node} GPU{args.gpu} → {args.user}")
+    print(f"OK: {args.node} GPU{args.gpu} → {target}")
     return 0
 
 
@@ -1777,7 +1781,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_as = alloc_sub.add_parser("set", help="Assign a GPU to a user")
     sp_as.add_argument("node", help="Node alias (e.g. 'GPU-01')")
     sp_as.add_argument("gpu", type=int, help="GPU index (0-3)")
-    sp_as.add_argument("user", help="Linux username or '*' for everyone")
+    sp_as.add_argument("user", help="Linux username (or '*' for everyone; 'none' is normalized to '*')")
     sp_as.add_argument("--by", default=None, help="Admin performing the action")
     sp_as.add_argument("--notes", default=None, help="Optional note")
     sp_as.set_defaults(func=_cmd_alloc_set)

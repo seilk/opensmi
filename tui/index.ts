@@ -537,12 +537,17 @@ async function allocSet(
   user: string
 ): Promise<void> {
   const by = process.env.USER || "admin";
+  const normalized = (() => {
+    const t = String(user ?? "").trim();
+    if (!t || t.toLowerCase() === "none") return "*";
+    return t;
+  })();
   const { code, stderr } = await runOpensmi([
     "alloc",
     "set",
     nodeAlias,
     String(gpuIdx),
-    user,
+    normalized,
     "--by",
     by,
   ]);
@@ -658,7 +663,13 @@ async function loadAllocations(): Promise<void> {
     try {
       const raw = await Bun.file(allocPath).text();
       const data = JSON.parse(raw);
-      allocations = (data.allocations || []) as Allocation[];
+      allocations = ((data.allocations || []) as Allocation[]).map((a: Allocation) => {
+        const t = String((a as any).target ?? "").trim();
+        return {
+          ...a,
+          target: !t || t.toLowerCase() === "none" ? "*" : t,
+        } as Allocation;
+      });
     } catch {
       allocations = [];
     }
@@ -1806,14 +1817,16 @@ function openAllocModal(node: NodeSnapshot, gpuIdx: number): void {
   allocUserHighlight = "";
 
   const existing = getAllocTarget(node.node_alias, gpuIdx);
-  let prefill = existing || "";
-  if (!prefill) {
+  let prefill = existing || "*";
+  if (!existing) {
     const gi = node.gpus.find((g) => g.index === gpuIdx);
     if (gi) {
       const live = usersOnGpu(node, gi.uuid);
-      if (live.length === 1) prefill = live[0] || "";
+      if (live.length === 1) prefill = live[0] || "*";
     }
   }
+
+  if (prefill.trim().toLowerCase() === "none") prefill = "*";
 
   allocDraftUser = prefill;
   screen = "alloc";
@@ -1838,7 +1851,7 @@ function recomputeKnownUsers(): void {
   // Alloc targets (except special tokens)
   for (const a of allocations) {
     const t = (a.target || "").trim();
-    if (!t || t === "*") continue;
+    if (!t || t === "*" || t.toLowerCase() === "none") continue;
     users.add(t);
   }
 
@@ -3189,7 +3202,7 @@ function renderAlloc() {
     id: "alloc-user-input",
     width: "100%",
     value: allocDraftUser,
-    placeholder: "username or *",
+    placeholder: "* (default) or username", 
     backgroundColor: C.bgAlt,
     focusedBackgroundColor: "#3b4261",
     textColor: "#ffffff",
@@ -3321,7 +3334,7 @@ function renderAlloc() {
       },
       ...selectedRows
     ),
-    Text({ content: "Enter username (or * for everyone):", fg: C.textDim }),
+    Text({ content: "Enter username (default: * for everyone):", fg: C.textDim }),
     input,
     Text({ content: "[Tab] Autocomplete last segment", fg: C.textDim }),
     Text({ content: matchesLine, fg: C.textDim }),
@@ -6029,14 +6042,9 @@ async function main() {
         }
 
         const inputAny: any = container.findDescendantById("alloc-user-input");
-        const user = String(inputAny?.value ?? "").trim();
+        let user = String(inputAny?.value ?? "").trim();
+        if (!user || user.toLowerCase() === "none") user = "*";
         allocDraftUser = user;
-
-        if (!user) {
-          allocErrorMsg = "Username required (use * for everyone)";
-          render();
-          return;
-        }
 
         try {
           await allocSet(allocCtx.nodeAlias, allocCtx.gpuIdx, user);

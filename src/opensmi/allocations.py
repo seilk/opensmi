@@ -62,6 +62,15 @@ def _locked(path: Path):
         yield
 
 
+def _normalize_target(raw: str) -> str:
+    t = str(raw).strip()
+    if not t:
+        return "*"
+    if t.lower() == "none":
+        return "*"
+    return t
+
+
 def load_allocations(state_dir: Path) -> List[Allocation]:
     path = allocations_path(state_dir)
     if not path.exists():
@@ -74,7 +83,7 @@ def load_allocations(state_dir: Path) -> List[Allocation]:
             Allocation(
                 node_alias=str(raw["node_alias"]),
                 gpu_index=int(raw["gpu_index"]),
-                target=str(raw["target"]),
+                target=_normalize_target(str(raw.get("target", "*"))),
                 assigned_by=str(raw.get("assigned_by", "unknown")),
                 assigned_at=str(raw.get("assigned_at", "")),
                 gpu_uuid=raw.get("gpu_uuid"),
@@ -89,10 +98,16 @@ def save_allocations(state_dir: Path, allocs: List[Allocation]) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = allocations_path(state_dir)
 
+    payload_allocs = []
+    for a in allocs:
+        d = asdict(a)
+        d["target"] = _normalize_target(str(d.get("target", "*")))
+        payload_allocs.append(d)
+
     doc: Dict[str, object] = {
         "version": ALLOCS_VERSION,
         "updated_at": _now_iso(),
-        "allocations": [asdict(a) for a in allocs],
+        "allocations": payload_allocs,
     }
 
     payload = json.dumps(doc, indent=2, sort_keys=False) + "\n"
