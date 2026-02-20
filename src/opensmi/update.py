@@ -229,10 +229,9 @@ def install_cli_pyz(*, url: str, bin_dir: Path, sha_map: Dict[str, str], verify:
 
     wrapper = bin_dir / "opensmi"
     wrapper.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n\n"
+        "#!/bin/sh\n"
         'PYTHON_BIN="${OPENSMI_PYTHON:-python3}"\n'
-        'exec "$PYTHON_BIN" "${HOME}/.local/share/opensmi/opensmi.pyz" "$@"\n',
+        'exec "$PYTHON_BIN" "${HOME%/}/.local/share/opensmi/opensmi.pyz" "$@"\n',
         encoding="utf-8",
     )
     wrapper.chmod(0o755)
