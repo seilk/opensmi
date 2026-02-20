@@ -101,29 +101,36 @@ opensmi
 
 The top bar shows: **cluster name · user@hostname · GPUs used/total · Violations · Poll time**
 
-### Tabs
+### Tab Navigation
 
-| Tab | Key | Description |
-|-----|-----|-------------|
-| Dashboard | `1` | Live GPU grid — who's using what, per node |
-| Node Detail | `2` | Per-GPU memory, utilization, process list |
-| Jobs | `3` | Track queued, running, and finished jobs |
-| Allocations | `4` | View and manage GPU→user assignments |
-| Setup | `5` | Per-node env config (conda, venv, work dir) |
+Switch tabs with **`Ctrl+X T`** to open the tab switcher, then press the shortcut or use arrow keys.
+
+| Shortcut | Tab | Description |
+|----------|-----|-------------|
+| `d` | Dashboard | Live GPU grid — who's using what, per node |
+| `n` | Node Detail | Per-GPU memory, utilization, process list (enter from Dashboard via `Enter`) |
+| `g` | My GPUs | Personal GPU view for the current operator |
+| `j` | Jobs | Track queued, running, and finished jobs |
+| `s` | Setup | Per-node env config (conda, venv, work dir) |
+| `h` | Help | Keyboard shortcuts reference |
+
+> **Note:** Node Detail is a hidden tab — navigate to it by selecting a node in the Dashboard and pressing `Enter`.  
+> **Allocation management** (`a` allocate, `x` clear, `Shift+K` kill) is done directly from the Dashboard, not from a separate tab.
 
 The **Command Runner** is a persistent pane at the bottom of the screen (not a tab). Focus it with `Ctrl+X ↓`.
 
-### Command Runner
-
-The runner pane sits at the bottom of the TUI at all times. Use `Ctrl+X ↓` to focus it.
+**Global shortcuts (work from any tab):**
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+X ↓` | Focus runner pane |
+| `Ctrl+X T` | Open tab switcher |
+| `Ctrl+X ↓` | Focus command runner pane |
 | `Ctrl+X F` | Fold / unfold runner pane |
-| `Enter` | Start editing the command field |
-| `Ctrl+X Enter` | Execute |
-| `Esc` | Unfocus runner |
+| `Ctrl+X Q` | Quit |
+
+### Command Runner
+
+The runner pane sits at the bottom of the TUI at all times. Focus it with `Ctrl+X ↓`, type a command, and execute with `Ctrl+X Enter`. Press `Esc` to unfocus.
 
 **Execution modes** (`Tab` to toggle):
 - `direct` — background process, output captured
