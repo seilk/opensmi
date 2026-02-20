@@ -15,25 +15,24 @@ IS_TTY = sys.stdout.isatty()
 def _c(code: str) -> str:
     return f"\033[{code}m" if IS_TTY else ""
 
-RESET      = _c("0")
-GREEN      = _c("32")
-DIM        = _c("2")
-BOLD       = _c("1")
-RED        = _c("31")
-ERASE_LINE = "\033[2K" if IS_TTY else ""  # clear entire line
+RESET = _c("0")
+GREEN = _c("32")
+DIM   = _c("2")
+BOLD  = _c("1")
+RED   = _c("31")
 
 
 # ── Spinner ───────────────────────────────────────────────────────
 class Spinner:
-    """Line/Clock spinner: - \\ | /  in green.
+    """Line/Clock spinner: | / - \\  in green.
 
-    Fixes vs naive implementation:
-    - Uses \\033[2K to fully erase the line before each frame (no leftover chars)
-    - Thread clears its own line before exiting → __exit__ just prints final status
-    - join() before print ensures no race between last frame and ✓/✗
+    Follows tw93/Mole pattern:
+    - frames redrawn with \\r each tick (same line length → no erase in loop)
+    - thread clears the line (\\r\\033[K) right before it exits
+    - __exit__ prints final ✓ / ✗ on the now-blank line
     """
 
-    FRAMES   = ["-", "\\", "|", "/"]
+    FRAMES   = ["|", "/", "-", "\\"]
     INTERVAL = 0.12
 
     def __init__(self, msg: str) -> None:
@@ -42,16 +41,22 @@ class Spinner:
         self._t    = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
+        if not IS_TTY:
+            sys.stdout.write(f"  |  {self.msg}\n")
+            sys.stdout.flush()
+            return
+
         i = 0
         while not self._stop.is_set():
             c = self.FRAMES[i % len(self.FRAMES)]
-            # \r moves to column 0, \033[2K erases the whole line
-            sys.stdout.write(f"\r{ERASE_LINE}  {GREEN}{c}{RESET}  {self.msg}")
+            # \r redraws over the previous frame (same length every time)
+            sys.stdout.write(f"\r  {GREEN}{c}{RESET}  {self.msg}")
             sys.stdout.flush()
             time.sleep(self.INTERVAL)
             i += 1
-        # Clear the spinner line so __exit__ can print cleanly
-        sys.stdout.write(f"\r{ERASE_LINE}")
+
+        # Clear the spinner line so __exit__ can print on a blank line
+        sys.stdout.write("\r\033[K")
         sys.stdout.flush()
 
     def __enter__(self) -> "Spinner":
@@ -60,7 +65,7 @@ class Spinner:
 
     def __exit__(self, exc_type, *_) -> None:
         self._stop.set()
-        self._t.join()           # wait for thread to clear its line
+        self._t.join()    # wait until thread has cleared the line
         if exc_type:
             print(f"  {RED}✗{RESET}  {self.msg}")
         else:
@@ -72,18 +77,17 @@ def print_summary(version: str, bin_dir: str) -> None:
     W    = 44
     line = "─" * W
 
-    def row(text: str, style: str = "") -> str:
-        # ljust pads to exactly W chars; slice prevents overflow
+    def row(text: str = "", style: str = "") -> str:
         padded = text[:W].ljust(W)
         return f"  {GREEN}│{RESET}  {style}{padded}{RESET}{GREEN}│{RESET}"
 
     print()
     print(f"  {GREEN}╭{line}╮{RESET}")
     print(row(f"opensmi {version} installed", BOLD))
-    print(row(""))
+    print(row())
     print(row(f"CLI  →  {bin_dir}/opensmi"))
     print(row(f"TUI  →  {bin_dir}/opensmi-tui"))
-    print(row(""))
+    print(row())
     print(row("Run: opensmi --help", DIM))
     print(f"  {GREEN}╰{line}╯{RESET}")
     print()

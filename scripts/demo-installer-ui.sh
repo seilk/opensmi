@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# opensmi installer UI demo
+# opensmi installer UI demo  —  spinner + summary card
 # Usage: bash scripts/demo-installer-ui.sh
 
 set -euo pipefail
@@ -15,44 +15,55 @@ if [[ $IS_TTY -eq 1 ]]; then
   C_BOLD=$'\033[1m'
 fi
 
-ERASE_LINE=$'\033[2K'   # clear the entire current line
+# ── Spinner  (Line/Clock: | / - \)  ──────────────────────────────
+# Pattern from tw93/Mole:
+#   - spinner char + message redrawn each frame with \r (same length → no erase needed)
+#   - stop clears the whole line with \r\033[K, caller prints result separately
 
-# ── Spinner (Line/Clock: - \ | /) ────────────────────────────────
-_SPIN_BG=0
-_SPIN_MSG=""
+_SPINNER_PID=""
+_SPINNER_MSG=""
 
 spin_start() {
-  _SPIN_MSG="$1"
+  _SPINNER_MSG="$1"
   local msg="$1"
+
+  if [[ $IS_TTY -eq 0 ]]; then
+    # Non-TTY: print once and return (no animation)
+    printf "  | %s\n" "$msg"
+    return
+  fi
+
   (
-    trap '' INT TERM   # child ignores signals; parent kills it
     i=0
     while true; do
       case $((i % 4)) in
-        0) c='-' ;; 1) c='\\' ;; 2) c='|' ;; 3) c='/' ;;
+        0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\\' ;;
       esac
-      # \033[2K clears entire line, \r moves cursor to column 0
-      printf "\r${ERASE_LINE}  ${C_GREEN}%s${C_RESET}  %s" "$c" "$msg"
+      printf "\r  ${C_GREEN}%s${C_RESET}  %s" "$c" "$msg"
       sleep 0.12
       i=$(( i + 1 ))
     done
   ) &
-  _SPIN_BG=$!
+  _SPINNER_PID=$!
 }
 
-_spin_end() {
-  local icon="$1" color="$2"
-  if [[ $_SPIN_BG -ne 0 ]]; then
-    kill "$_SPIN_BG" 2>/dev/null
-    wait "$_SPIN_BG" 2>/dev/null || true
-    _SPIN_BG=0
+_spin_stop() {
+  if [[ -n "$_SPINNER_PID" ]]; then
+    kill "$_SPINNER_PID" 2>/dev/null || true
+    wait "$_SPINNER_PID" 2>/dev/null || true
+    _SPINNER_PID=""
+    printf "\r\033[K"   # cursor to col-0, erase to end of line
   fi
-  # Clear the line the spinner was on, then print final status
-  printf "\r${ERASE_LINE}  ${color}%s${C_RESET}  %s\n" "$icon" "$_SPIN_MSG"
 }
 
-spin_ok()   { _spin_end "✓" "${C_GREEN}"; }
-spin_fail() { _spin_end "✗" "${C_RED}";   }
+spin_ok()   {
+  _spin_stop
+  printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$_SPINNER_MSG"
+}
+spin_fail() {
+  _spin_stop
+  printf "  ${C_RED}✗${C_RESET}  %s\n" "$_SPINNER_MSG"
+}
 
 # ── Summary Card ──────────────────────────────────────────────────
 print_summary() {
@@ -62,15 +73,13 @@ print_summary() {
   local line
   line="$(printf '─%.0s' $(seq 1 $W))"
 
-  # helper: print one box row, auto-padding content to W chars
   box_row() {
-    local content="$1"
+    local content="${1:-}"
     local style="${2:-}"
-    # printf pads/truncates to exactly W chars
     printf "  ${C_GREEN}│${C_RESET}  ${style}%-${W}s${C_RESET}${C_GREEN}│${C_RESET}\n" "$content"
   }
 
-  echo ""
+  printf "\n"
   printf "  ${C_GREEN}╭%s╮${C_RESET}\n" "$line"
   box_row "opensmi ${version} installed" "${C_BOLD}"
   box_row ""
@@ -79,13 +88,11 @@ print_summary() {
   box_row ""
   box_row "Run: opensmi --help" "${C_DIM}"
   printf "  ${C_GREEN}╰%s╯${C_RESET}\n" "$line"
-  echo ""
+  printf "\n"
 }
 
-# ── Demo run ──────────────────────────────────────────────────────
-echo ""
-printf "  ${C_BOLD}Installing opensmi${C_RESET}  ${C_DIM}(demo)${C_RESET}\n"
-echo ""
+# ── Demo ──────────────────────────────────────────────────────────
+printf "\n  ${C_BOLD}Installing opensmi${C_RESET}  ${C_DIM}(demo)${C_RESET}\n\n"
 
 spin_start "Fetching latest release from GitHub..."
 sleep 1.2
