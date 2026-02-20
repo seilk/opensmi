@@ -358,6 +358,52 @@ async function runOpensmi(
   return { code, stdout, stderr };
 }
 
+function parseSemver(text: string): [number, number, number] | null {
+  const m = text.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function isRemoteNewer(current: string, latest: string): boolean {
+  const a = parseSemver(current);
+  const b = parseSemver(latest);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) {
+    if (b[i] > a[i]) return true;
+    if (b[i] < a[i]) return false;
+  }
+  return false;
+}
+
+async function maybeShowUpdateNotification(): Promise<void> {
+  try {
+    const v = await runOpensmi(["--version"]);
+    if (v.code !== 0) return;
+    const currentMatch = v.stdout.match(/\d+\.\d+\.\d+/);
+    if (!currentMatch) return;
+    const current = currentMatch[0];
+
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 1800);
+    const resp = await fetch("https://api.github.com/repos/seilk/opensmi/releases/latest", {
+      headers: { "accept": "application/vnd.github+json" },
+      signal: ctrl.signal,
+    });
+    clearTimeout(timeout);
+    if (!resp.ok) return;
+    const data = await resp.json() as any;
+    const latestRaw = String(data?.tag_name || "");
+    const latest = latestRaw.replace(/^v/, "");
+    if (!latest) return;
+
+    if (isRemoteNewer(current, latest)) {
+      setStatus(`Update available: v${latest}  → run: opensmi update`, 3000);
+    }
+  } catch {
+    // quiet fail (offline/firewall/etc.)
+  }
+}
+
 function setLaunchError(msg: string): void {
   tuiLog("ERROR", `launch error: ${msg}`);
   launchErrorMsg = msg;
@@ -5107,6 +5153,9 @@ async function main() {
   await watchRunningJobs();
   bootLoading = false;
   render();
+
+  // One-shot update hint (bottom-right toast, auto-hide)
+  void maybeShowUpdateNotification();
 
   // Auto-refresh every 10s
   // Dispatch + watchdog run on ALL tabs (jobs shouldn't stall because user is on setup)
