@@ -3,7 +3,7 @@
   <p align="center">에이전트·데몬 없이 동작하는 멀티노드 GPU 할당 관리자 (SSH + nvidia-smi only)</p>
   <p align="center">
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-    <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-blue.svg">
+    <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
     <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
     <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-informational.svg">
   </p>
@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/seilk/opensmi/main/scripts/install.
 
 바이너리는 `~/.local/bin`에 설치됩니다. 인스톨러가 현재 셸(zsh/bash/fish)을 자동 감지해 정확한 PATH 설정 방법을 안내하며, 터미널에서 직접 실행할 경우 자동으로 추가할지 물어봅니다.
 
-**요구사항:** macOS 또는 Linux · Python 3.8+ · GPU 노드에 `nvidia-smi`가 있고 SSH 접속 가능
+**요구사항:** macOS 또는 Linux · Python 3.9+ · GPU 노드에 `nvidia-smi`가 있고 SSH 접속 가능
 
 ### 업데이트
 
