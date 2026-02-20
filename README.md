@@ -107,14 +107,23 @@ The top bar shows: **cluster name · user@hostname · GPUs used/total · Violati
 |-----|-----|-------------|
 | Dashboard | `1` | Live GPU grid — who's using what, per node |
 | Node Detail | `2` | Per-GPU memory, utilization, process list |
-| Runner | `3` / `l` | Launch GPU workloads with auto-selection |
-| Jobs | `4` | Track queued, running, and finished jobs |
-| Allocations | `5` | View and manage GPU→user assignments |
-| Setup | `6` | Per-node env config (conda, venv, work dir) |
+| Jobs | `3` | Track queued, running, and finished jobs |
+| Allocations | `4` | View and manage GPU→user assignments |
+| Setup | `5` | Per-node env config (conda, venv, work dir) |
+
+The **Command Runner** is a persistent pane at the bottom of the screen (not a tab). Focus it with `Ctrl+X ↓`.
 
 ### Command Runner
 
-Press `l` or `Ctrl+R` to open. Launches GPU workloads with automatic GPU selection and orchestration.
+The runner pane sits at the bottom of the TUI at all times. Use `Ctrl+X ↓` to focus it.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+X ↓` | Focus runner pane |
+| `Ctrl+X F` | Fold / unfold runner pane |
+| `Enter` | Start editing the command field |
+| `Ctrl+X Enter` | Execute |
+| `Esc` | Unfocus runner |
 
 **Execution modes** (`Tab` to toggle):
 - `direct` — background process, output captured
