@@ -2108,18 +2108,35 @@ function renderDashboard() {
 
   // Table header (dynamic GPU columns)
   const gpuCols = gpuIndicesForSnapshot(snapshot);
-  const colW = [10, ...gpuCols.map(() => 16), 8];
+
+  // Dynamic column widths: scale proportionally with terminal width.
+  // GPU cells and Free cells are given explicit Box widths to prevent the
+  // last column from absorbing leftover flex space.
+  const termWidth = process.stdout.columns || 80;
+  const minNodeW = 10;
+  const minGpuW  = 16;
+  const freeW    = 8;
+  const padLeft  = 1; // paddingLeft on each row
+  const totalMin = padLeft + minNodeW + gpuCols.length * minGpuW + freeW;
+  const extra    = Math.max(0, termWidth - totalMin);
+  const gpuBonus  = gpuCols.length > 0 ? Math.floor(extra * 0.65 / gpuCols.length) : 0;
+  const nodeBonus = Math.min(14, Math.floor(extra * 0.25));
+  const nodeW = minNodeW + nodeBonus;
+  const gpuW  = minGpuW + gpuBonus;
+  const colW  = [nodeW, ...gpuCols.map(() => gpuW), freeW];
+
   const tableHeader = Box(
     {
       flexDirection: "row",
       paddingLeft: 1,
+      width: "100%",
       backgroundColor: C.bgAlt,
     },
-    Text({ content: "Node".padEnd(colW[0]!), fg: C.textDim }),
+    Box({ width: colW[0]! }, Text({ content: "Node".padEnd(colW[0]!), fg: C.textDim })),
     ...gpuCols.map((gi, j) =>
-      Text({ content: `GPU ${gi}`.padEnd(colW[1 + j]!), fg: C.textDim })
+      Box({ width: colW[1 + j]! }, Text({ content: `GPU ${gi}`.padEnd(colW[1 + j]!), fg: C.textDim }))
     ),
-    Text({ content: "Free".padEnd(colW[colW.length - 1]!), fg: C.textDim })
+    Box({ width: colW[colW.length - 1]! }, Text({ content: "Free".padEnd(colW[colW.length - 1]!), fg: C.textDim }))
   );
 
   // Table rows
@@ -2136,7 +2153,7 @@ function renderDashboard() {
           width: "100%",
           position: "relative",
         },
-        Text({ content: n.node_alias.padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text }),
+        Box({ width: colW[0]! }, Text({ content: n.node_alias.padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text })),
         Text({ content: `ERROR: ${n.error}`.slice(0, 60), fg: C.red }),
         // Click anywhere on the row to jump to detail.
         Box({
@@ -2321,15 +2338,19 @@ function renderDashboard() {
         width: "100%",
         position: "relative",
       },
-      Text({
-        content: (isSelected ? "▸ " : "  ").slice(0, 2) + n.node_alias.padEnd(colW[0]! - 2),
-        fg: isSelected ? "#ffffff" : C.cyan,
-      }),
+      Box({ width: colW[0]! },
+        Text({
+          content: (isSelected ? "▸ " : "  ").slice(0, 2) + n.node_alias.padEnd(colW[0]! - 2),
+          fg: isSelected ? "#ffffff" : C.cyan,
+        })
+      ),
       ...gpuCells,
-      Text({
-        content: `${free}/${n.gpus.length}`.padEnd(colW[colW.length - 1]!),
-        fg: free > 0 ? C.green : C.yellow,
-      }),
+      Box({ width: colW[colW.length - 1]! },
+        Text({
+          content: `${free}/${n.gpus.length}`.padEnd(colW[colW.length - 1]!),
+          fg: free > 0 ? C.green : C.yellow,
+        })
+      ),
       // Click anywhere on the row to jump to detail (only when not runner focused)
       !runnerFocused ? Box({
         position: "absolute",
