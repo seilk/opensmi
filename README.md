@@ -293,6 +293,11 @@ Keep your real `opensmi.json` private — it's gitignored by default.
 | `OPENSMI_STATE_DIR` | Override state directory (useful for NFS/shared home) |
 | `OPENSMI_PYTHON` | Override Python interpreter |
 | `OPENSMI_GITHUB_TOKEN` | GitHub token to avoid API rate limits during update |
+| `OPENSMI_BIN_DIR` | Override install directory (default: `~/.local/bin`) |
+| `OPENSMI_LOG_DIR` | Override log directory |
+| `OPENSMI_LOG_LEVEL` | Log verbosity: `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
+| `OPENSMI_REPO` | Override GitHub repo for update (default: `seilk/opensmi`) |
+| `OPENSMI_TUI_BIN` | Override TUI binary path |
 
 ---
 
