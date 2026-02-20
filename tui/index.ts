@@ -1541,6 +1541,12 @@ function gpuIndicesForNode(node: NodeSnapshot | null | undefined): number[] {
   return [...set].sort((a, b) => a - b);
 }
 
+/** Truncate text to fit within `width` chars, appending "…" if needed. */
+function truncateText(text: string, width: number): string {
+  if (text.length <= width) return text;
+  return text.slice(0, Math.max(1, width - 1)) + "…";
+}
+
 function getAllocation(nodeAlias: string, gpuIdx: number): Allocation | null {
   const a = allocations.find(
     (a) => a.node_alias === nodeAlias && a.gpu_index === gpuIdx
@@ -2119,8 +2125,10 @@ function renderDashboard() {
   const padLeft  = 1; // paddingLeft on each row
   const totalMin = padLeft + minNodeW + gpuCols.length * minGpuW + freeW;
   const extra    = Math.max(0, termWidth - totalMin);
-  const gpuBonus  = gpuCols.length > 0 ? Math.floor(extra * 0.65 / gpuCols.length) : 0;
+  // Node gets up to 14 extra chars (capped; wider names are truncated anyway).
+  // GPU columns absorb all remaining extra space to show more username detail.
   const nodeBonus = Math.min(14, Math.floor(extra * 0.25));
+  const gpuBonus  = gpuCols.length > 0 ? Math.floor((extra - nodeBonus) / gpuCols.length) : 0;
   const nodeW = minNodeW + nodeBonus;
   const gpuW  = minGpuW + gpuBonus;
   const colW  = [nodeW, ...gpuCols.map(() => gpuW), freeW];
@@ -2153,7 +2161,7 @@ function renderDashboard() {
           width: "100%",
           position: "relative",
         },
-        Box({ width: colW[0]! }, Text({ content: n.node_alias.padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text })),
+        Box({ width: colW[0]! }, Text({ content: truncateText(n.node_alias, colW[0]!).padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text })),
         Text({ content: `ERROR: ${n.error}`.slice(0, 60), fg: C.red }),
         // Click anywhere on the row to jump to detail.
         Box({
@@ -2340,7 +2348,7 @@ function renderDashboard() {
       },
       Box({ width: colW[0]! },
         Text({
-          content: (isSelected ? "▸ " : "  ").slice(0, 2) + n.node_alias.padEnd(colW[0]! - 2),
+          content: (isSelected ? "▸ " : "  ").slice(0, 2) + truncateText(n.node_alias, colW[0]! - 2).padEnd(colW[0]! - 2),
           fg: isSelected ? "#ffffff" : C.cyan,
         })
       ),
@@ -4860,6 +4868,9 @@ async function main() {
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
   });
+
+  // Trigger full re-render on terminal resize so colW is recomputed.
+  renderer.on("resize", () => requestRender?.());
 
   // Mouse drag selection → auto-copy (OSC52)
   renderer.on("selection", (sel: any) => {
