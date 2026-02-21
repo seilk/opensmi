@@ -2191,6 +2191,7 @@ function renderDashboard() {
   const nodeW = minNodeW + nodeBonus;
   const gpuW  = minGpuW + gpuBonus;
   const colW  = [nodeW, ...gpuCols.map(() => gpuW), freeW];
+  const errorW = Math.max(10, termWidth - padLeft - colW[0]!);
 
   const tableHeader = Box(
     {
@@ -2221,7 +2222,7 @@ function renderDashboard() {
           position: "relative",
         },
         Box({ width: colW[0]! }, Text({ content: truncateText(n.node_alias, colW[0]!).padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text })),
-        Text({ content: `ERROR: ${n.error}`.slice(0, 60), fg: C.red }),
+        Box({ width: errorW }, Text({ content: truncateText(`ERROR: ${n.error}`, errorW).padEnd(errorW), fg: C.red })),
         // Click anywhere on the row to jump to detail.
         Box({
           position: "absolute",
@@ -2407,7 +2408,7 @@ function renderDashboard() {
       },
       Box({ width: colW[0]! },
         Text({
-          content: (isSelected ? "▸ " : "  ").slice(0, 2) + truncateText(n.node_alias, colW[0]! - 2).padEnd(colW[0]! - 2),
+          content: truncateText(n.node_alias, colW[0]!).padEnd(colW[0]!),
           fg: isSelected ? "#ffffff" : C.cyan,
         })
       ),
