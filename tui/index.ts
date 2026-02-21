@@ -2122,8 +2122,11 @@ function renderLoadingBadge() {
   const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
   const text = "opensmi: I'm syncing GPU state...";
-  const textW = Math.max(0, badgeW - 4); // one space + 3-char glyph
-  const padded = text.length >= textW ? text.slice(0, textW) : text.padEnd(textW, " ");
+  const textMax = Math.max(0, badgeW - 4); // one space + 3-char glyph
+  const textClamped = text.length >= textMax ? text.slice(0, textMax) : text;
+  const gap = " ";
+  const tailPadW = Math.max(0, badgeW - (textClamped.length + gap.length + glyph.length));
+  const tailPad = " ".repeat(tailPadW);
 
   return Box(
     {
@@ -2136,8 +2139,9 @@ function renderLoadingBadge() {
       backgroundColor: C.bg,
       zIndex: 10_000,
     },
-    Text({ content: `${padded} `, fg: C.blue }),
-    Text({ content: glyph, fg: tick % 2 === 0 ? C.cyan : C.blue })
+    Text({ content: `${textClamped}${gap}`, fg: C.blue }),
+    Text({ content: glyph, fg: tick % 2 === 0 ? C.cyan : C.blue }),
+    Text({ content: tailPad, fg: C.blue })
   );
 }
 
