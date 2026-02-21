@@ -2123,7 +2123,11 @@ function renderLoadingBadge() {
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
   const text = "opensmi: I’m coordinating with your GPUs...";
   const textMax = Math.max(0, badgeW - 4); // one space + 3-char glyph
-  const textClamped = text.length >= textMax ? text.slice(0, textMax) : text;
+  const textClamped = (() => {
+    if (text.length <= textMax) return text;
+    if (textMax <= 3) return text.slice(0, textMax);
+    return `${text.slice(0, textMax - 3)}...`;
+  })();
   const gap = " ";
   const tailPadW = Math.max(0, badgeW - (textClamped.length + gap.length + glyph.length));
   const tailPad = " ".repeat(tailPadW);
