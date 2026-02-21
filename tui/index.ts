@@ -5155,6 +5155,11 @@ async function main() {
   } catch {}
 
   // Initial load
+  // Keep loading spinner animated while bootLoading is true.
+  const bootSpinInterval = setInterval(() => {
+    if (bootLoading) render();
+  }, 80);
+
   await Promise.all([
     loadAdminStatus(),
     pollCluster(),
@@ -5165,6 +5170,7 @@ async function main() {
   await dispatchQueuedJobs();
   await watchRunningJobs();
   bootLoading = false;
+  clearInterval(bootSpinInterval);
   render();
 
   // One-shot update hint (bottom-right toast, auto-hide)
