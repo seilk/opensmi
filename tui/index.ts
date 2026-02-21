@@ -2118,22 +2118,16 @@ function renderLoadingBadge() {
   // Match installer spinner design (Line/Clock: | / - \)
   const spin = ["|", "/", "-", "\\"];
   const frame = spin[Math.floor(Date.now() / 60) % spin.length] || "|";
-  const msg = `  ${frame}  opensmi: I'm syncing GPU state...`;
+  const msg = `${frame} opensmi: I'm syncing GPU state...`;
 
   return Box(
     {
       position: "absolute",
       left: 1,
       top: 0,
-      paddingLeft: 1,
-      paddingRight: 1,
-      backgroundColor: C.bgAlt,
-      borderStyle: "rounded",
-      borderColor: C.border,
       zIndex: 10_000,
     },
-    Text({ content: msg.slice(0, 5), fg: C.green }),
-    Text({ content: msg.slice(5), fg: C.textDim })
+    Text({ content: msg, fg: C.textDim })
   );
 }
 
