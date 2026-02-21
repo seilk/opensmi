@@ -2117,10 +2117,16 @@ function renderLoadingBadge() {
 
   // Match installer spinner design (Line/Clock: | / - \)
   const spin = ["|", "/", "-", "\\"];
-  const frame = spin[Math.floor(Date.now() / 60) % spin.length] || "|";
+  const tick = Math.floor(Date.now() / 80);
+  const frame = spin[tick % spin.length] || "|";
   const badgeW = 44;
-  const msg = `${frame} opensmi: syncing GPU state...`;
-  const line = msg.length >= badgeW ? msg.slice(0, badgeW) : msg.padEnd(badgeW, " ");
+
+  // Subtle flowing tail (fixed width, no reflow)
+  const flowFrames = ["░░▒▓█▓▒░", "░▒▓█▓▒░░", "▒▓█▓▒░░░", "▓█▓▒░░░▒", "█▓▒░░░▒▓", "▓▒░░░▒▓█", "▒░░░▒▓█▓", "░░░▒▓█▓▒"];
+  const flow = flowFrames[tick % flowFrames.length] || "░░▒▓█▓▒░";
+  const prefixW = Math.max(0, badgeW - flow.length);
+  const prefix = `${frame} opensmi: syncing GPU state`;
+  const left = prefix.length >= prefixW ? prefix.slice(0, prefixW) : prefix.padEnd(prefixW, " ");
 
   return Box(
     {
@@ -2129,10 +2135,12 @@ function renderLoadingBadge() {
       top: 0,
       width: badgeW,
       height: 1,
+      flexDirection: "row",
       backgroundColor: C.bg,
       zIndex: 10_000,
     },
-    Text({ content: line, fg: C.textDim })
+    Text({ content: left, fg: C.textDim }),
+    Text({ content: flow, fg: tick % 2 === 0 ? C.blue : C.cyan })
   );
 }
 
