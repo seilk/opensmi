@@ -2115,18 +2115,15 @@ async function checkSudoForNode(nodeAlias: string): Promise<void> {
 function renderLoadingBadge() {
   if (!bootLoading && snapshot) return null;
 
-  // Match installer spinner design (Line/Clock: | / - \)
-  const spin = ["|", "/", "-", "\\"];
   const tick = Math.floor(Date.now() / 80);
-  const frame = spin[tick % spin.length] || "|";
   const badgeW = 44;
 
-  // Subtle flowing tail (fixed width, no reflow)
-  const flowFrames = ["░░▒▓█▓▒░", "░▒▓█▓▒░░", "▒▓█▓▒░░░", "▓█▓▒░░░▒", "█▓▒░░░▒▓", "▓▒░░░▒▓█", "▒░░░▒▓█▓", "░░░▒▓█▓▒"];
-  const flow = flowFrames[tick % flowFrames.length] || "░░▒▓█▓▒░";
-  const prefixW = Math.max(0, badgeW - flow.length);
-  const prefix = `${frame} opensmi: syncing GPU state`;
-  const left = prefix.length >= prefixW ? prefix.slice(0, prefixW) : prefix.padEnd(prefixW, " ");
+  // Flowing glyph at spinner position (no spinner bar)
+  const flowGlyphs = ["░", "▒", "▓", "█", "▓", "▒"];
+  const glyph = flowGlyphs[tick % flowGlyphs.length] || "░";
+  const text = "opensmi: I'm syncing GPU state...";
+  const textW = Math.max(0, badgeW - 2); // glyph + one space
+  const padded = text.length >= textW ? text.slice(0, textW) : text.padEnd(textW, " ");
 
   return Box(
     {
@@ -2139,8 +2136,8 @@ function renderLoadingBadge() {
       backgroundColor: C.bg,
       zIndex: 10_000,
     },
-    Text({ content: left, fg: C.textDim }),
-    Text({ content: flow, fg: tick % 2 === 0 ? C.blue : C.cyan })
+    Text({ content: `${glyph} `, fg: tick % 2 === 0 ? C.cyan : C.blue }),
+    Text({ content: padded, fg: C.blue })
   );
 }
 
