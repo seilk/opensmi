@@ -2116,12 +2116,17 @@ function renderLoadingBadge() {
   if (!bootLoading && snapshot) return null;
 
   const tick = Math.floor(Date.now() / 80);
-  const badgeW = 44;
 
-  // Flowing glyph at spinner position (3-char, still fixed-width)
+  // Flowing glyph at spinner position (3-char)
   const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
   const text = "opensmi: I’m coordinating with your GPUs...";
+
+  // Prefer showing full message when terminal width allows.
+  const termW = process.stdout.columns || 80;
+  const maxBadgeW = Math.max(20, termW - 2);
+  const minNeededW = text.length + 1 + glyph.length;
+  const badgeW = Math.min(maxBadgeW, Math.max(44, minNeededW));
   const textMax = Math.max(0, badgeW - 4); // one space + 3-char glyph
   const textClamped = (() => {
     if (text.length <= textMax) return text;
