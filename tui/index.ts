@@ -2121,7 +2121,7 @@ function renderLoadingBadge() {
   // Flowing glyph at spinner position (3-char, still fixed-width)
   const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
-  const text = " opensmi: I'm syncing GPU state...";
+  const text = "opensmi: I'm syncing GPU state...";
   const textW = Math.max(0, badgeW - 4); // 3-char glyph + one space
   const padded = text.length >= textW ? text.slice(0, textW) : text.padEnd(textW, " ");
 
