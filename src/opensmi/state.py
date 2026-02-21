@@ -55,8 +55,7 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
     Priority:
       1) CLI flag --config
       2) env OPENSMI_CONFIG
-      3) <repo_root>/opensmi.json (if in a repo checkout)
-      4) <state_dir>/opensmi.json
+      3) <state_dir>/opensmi.json
     """
     if cli_config:
         return Path(cli_config).expanduser().resolve()
@@ -64,10 +63,6 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
     env = os.environ.get(ENV_CONFIG_PATH)
     if env:
         return Path(env).expanduser().resolve()
-
-    repo = find_repo_root()
-    if repo:
-        return (repo / DEFAULT_CONFIG_NAME).resolve()
 
     return config_path(state_dir)
 

@@ -265,7 +265,6 @@ async function loadAdminStatus(): Promise<void> {
   try {
     const candidates = [
       process.env.OPENSMI_CONFIG,
-      BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
       `${getStateDir()}/opensmi.json`,
     ].filter(Boolean) as string[];
 
@@ -3701,7 +3700,6 @@ async function loadSetupNodes(): Promise<void> {
 
   const configPaths = [
     process.env.OPENSMI_CONFIG,
-    BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
     `${getStateDir()}/opensmi.json`,
   ].filter(Boolean) as string[];
 
@@ -3743,7 +3741,6 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
   // Write directly to opensmi.json — no CLI dependency.
   const configPaths = [
     process.env.OPENSMI_CONFIG,
-    BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
     `${getStateDir()}/opensmi.json`,
   ].filter(Boolean) as string[];
 
@@ -3831,7 +3828,6 @@ function renderSetupView() {
     rows.push(Text({ content: `  Config search paths:`, fg: C.textDim }));
     const paths = [
       process.env.OPENSMI_CONFIG,
-      BASE_DIR ? `${BASE_DIR}/opensmi.json` : undefined,
       `${getStateDir()}/opensmi.json`,
     ].filter(Boolean) as string[];
     for (const p of paths) {

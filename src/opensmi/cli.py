@@ -547,7 +547,7 @@ def _cmd_poll(args: argparse.Namespace) -> int:
     if not cfg_path.exists():
         print(
             f"Config not found: {cfg_path}\n"
-            f"Run: opensmi init (writes ./opensmi.json in a repo checkout, or ~/.opensmi/opensmi.json when installed)\n"
+            f"Run: opensmi init (writes ~/.opensmi/opensmi.json by default)\n"
             f"Tip: override with --config or OPENSMI_CONFIG",
             file=sys.stderr,
         )
@@ -1713,7 +1713,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--config",
         default=None,
-        help="Config path (default: ./opensmi.json in a repo checkout, else <state-dir>/opensmi.json; override with OPENSMI_CONFIG)",
+        help="Config path (default: ~/.opensmi/opensmi.json; override with OPENSMI_CONFIG)",
     )
     p.add_argument(
         "--experimental-slurm",
