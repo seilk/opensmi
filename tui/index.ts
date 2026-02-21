@@ -2121,7 +2121,7 @@ function renderLoadingBadge() {
   // Flowing glyph at spinner position (3-char, still fixed-width)
   const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
-  const text = "opensmi: I’m coordinating with your GPUs.";
+  const text = "opensmi: I’m coordinating with your GPUs...";
   const textMax = Math.max(0, badgeW - 4); // one space + 3-char glyph
   const textClamped = text.length >= textMax ? text.slice(0, textMax) : text;
   const gap = " ";
@@ -2146,7 +2146,7 @@ function renderLoadingBadge() {
 }
 
 function renderDashboard() {
-  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "opensmi: I’m coordinating with your GPUs." }));
+  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "opensmi: I’m coordinating with your GPUs..." }));
 
   const totalGpus = snapshot.nodes.reduce((s, n) => s + n.gpus.length, 0);
   const usedGpus = snapshot.nodes.reduce((s, n) => {
