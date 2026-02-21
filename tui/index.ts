@@ -2118,11 +2118,11 @@ function renderLoadingBadge() {
   const tick = Math.floor(Date.now() / 80);
   const badgeW = 44;
 
-  // Flowing glyph at spinner position (no spinner bar)
-  const flowGlyphs = ["░", "▒", "▓", "█", "▓", "▒"];
-  const glyph = flowGlyphs[tick % flowGlyphs.length] || "░";
+  // Flowing glyph at spinner position (longer, still fixed-width)
+  const flowGlyphs = ["░▒", "▒▓", "▓█", "█▓", "▓▒", "▒░"];
+  const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒";
   const text = "opensmi: I'm syncing GPU state...";
-  const textW = Math.max(0, badgeW - 2); // glyph + one space
+  const textW = Math.max(0, badgeW - 3); // 2-char glyph + one space
   const padded = text.length >= textW ? text.slice(0, textW) : text.padEnd(textW, " ");
 
   return Box(
