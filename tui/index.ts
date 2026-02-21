@@ -2115,7 +2115,15 @@ async function checkSudoForNode(nodeAlias: string): Promise<void> {
 function renderLoadingBadge() {
   if (!bootLoading && snapshot) return null;
 
-  const msg = bootLoading ? "Loading..." : "Loading...";
+  const unicodeOk = /utf-?8/i.test(
+    `${process.env.LC_ALL || ""} ${process.env.LC_CTYPE || ""} ${process.env.LANG || ""}`
+  );
+  const spin = unicodeOk
+    ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    : ["|", "/", "-", "\\"];
+  const frame = spin[Math.floor(Date.now() / 80) % spin.length] || "|";
+  const msg = `${frame} opensmi: I'm syncing GPU state...`;
+
   return Box(
     {
       position: "absolute",
@@ -2133,7 +2141,7 @@ function renderLoadingBadge() {
 }
 
 function renderDashboard() {
-  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "Loading..." }));
+  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "opensmi: I'm syncing GPU state..." }));
 
   const totalGpus = snapshot.nodes.reduce((s, n) => s + n.gpus.length, 0);
   const usedGpus = snapshot.nodes.reduce((s, n) => {
