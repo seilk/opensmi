@@ -2115,14 +2115,10 @@ async function checkSudoForNode(nodeAlias: string): Promise<void> {
 function renderLoadingBadge() {
   if (!bootLoading && snapshot) return null;
 
-  const unicodeOk = /utf-?8/i.test(
-    `${process.env.LC_ALL || ""} ${process.env.LC_CTYPE || ""} ${process.env.LANG || ""}`
-  );
-  const spin = unicodeOk
-    ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    : ["|", "/", "-", "\\"];
-  const frame = spin[Math.floor(Date.now() / 80) % spin.length] || "|";
-  const msg = `${frame} opensmi: I'm syncing GPU state...`;
+  // Match installer spinner design (Line/Clock: | / - \)
+  const spin = ["|", "/", "-", "\\"];
+  const frame = spin[Math.floor(Date.now() / 60) % spin.length] || "|";
+  const msg = `  ${frame}  opensmi: I'm syncing GPU state...`;
 
   return Box(
     {
@@ -2136,7 +2132,8 @@ function renderLoadingBadge() {
       borderColor: C.border,
       zIndex: 10_000,
     },
-    Text({ content: msg, fg: C.textDim })
+    Text({ content: msg.slice(0, 5), fg: C.green }),
+    Text({ content: msg.slice(5), fg: C.textDim })
   );
 }
 
