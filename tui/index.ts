@@ -1280,6 +1280,7 @@ async function updateJobInStore(job: Job): Promise<void> {
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
 from opensmi.jobs import Job, load_jobs, save_jobs, upsert_job
+from opensmi.jobs import cleanup_tmux_artifacts_for_sessions
 from opensmi.state import get_state_dir
 
 with open("${tmpFile}", "r") as f:
@@ -1287,6 +1288,8 @@ with open("${tmpFile}", "r") as f:
 
 state_dir = get_state_dir()
 jobs = load_jobs(state_dir)
+existing = next((j for j in jobs if j.id == job_data["id"]), None)
+previous_sessions = list(getattr(existing, "tmux_sessions", []) or [])
 
 job = Job(
     id=job_data["id"],
@@ -1310,6 +1313,15 @@ job = Job(
     tags=job_data["tags"],
     queue_mode=job_data["queue_mode"],
 )
+
+new_sessions = set(job.tmux_sessions)
+removed_sessions = [s for s in previous_sessions if s not in new_sessions]
+if removed_sessions:
+    cleanup_tmux_artifacts_for_sessions(removed_sessions)
+
+if job.status in ("done", "failed", "cancelled") and job.tmux_sessions:
+    cleanup_tmux_artifacts_for_sessions(job.tmux_sessions)
+    job.tmux_sessions = []
 
 jobs = upsert_job(jobs, job)
 save_jobs(state_dir, jobs)
@@ -4464,7 +4476,7 @@ async function updateImmediateJob(
     const updateScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
-from opensmi.jobs import load_jobs, save_jobs, get_job, upsert_job
+from opensmi.jobs import load_jobs, save_jobs, get_job, upsert_job, cleanup_tmux_artifacts_for_sessions
 from opensmi.state import get_state_dir
 from datetime import datetime, timezone
 
@@ -4476,8 +4488,15 @@ jobs = load_jobs(state_dir)
 job = get_job(jobs, update_data["job_id"])
 
 if job:
+    previous_sessions = list(job.tmux_sessions or [])
     job.status = update_data["status"]
     job.tmux_sessions = update_data["tmux_sessions"]
+    removed_sessions = [s for s in previous_sessions if s not in set(job.tmux_sessions)]
+    if removed_sessions:
+        cleanup_tmux_artifacts_for_sessions(removed_sessions)
+    if job.status in ("done", "failed", "cancelled") and job.tmux_sessions:
+        cleanup_tmux_artifacts_for_sessions(job.tmux_sessions)
+        job.tmux_sessions = []
     if update_data["status"] in ("done", "failed"):
         job.finished_at = datetime.now(timezone.utc).isoformat()
     if update_data["error"]:

@@ -14,6 +14,7 @@ from opensmi.jobs import (
     Job,
     cancel_job,
     check_job_alive,
+    cleanup_tmux_artifacts_for_sessions,
     cleanup_old_jobs,
     get_job,
     load_jobs,
@@ -162,12 +163,21 @@ class TestPhase4JobLifecycle(unittest.TestCase):
             proc.wait = AsyncMock(return_value=0)
             return proc
 
-        with patch("asyncio.create_subprocess_exec", new=mock_subprocess):
+        with (
+            patch("asyncio.create_subprocess_exec", new=mock_subprocess),
+            patch("opensmi.jobs.cleanup_tmux_artifacts_for_sessions") as mock_cleanup,
+        ):
             success = asyncio.run(cancel_job(job, cfg))
 
         self.assertTrue(success)
         self.assertEqual(job.status, "cancelled")
+        self.assertEqual(job.tmux_sessions, [])
         self.assertIsNotNone(job.finished_at)
+        mock_cleanup.assert_called_once_with(["opensmi-test1-gpu01"])
+
+    def test_cleanup_tmux_artifacts_for_sessions_is_safe(self):
+        cleanup_tmux_artifacts_for_sessions([])
+        cleanup_tmux_artifacts_for_sessions(["opensmi-job-1", "weird:session#name"])
 
     def test_retry_job_creates_new_job(self):
         """Phase 4-B: Retry creates new job with queued status"""

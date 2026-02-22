@@ -31,6 +31,7 @@ from .executor import (
     run_preflight_checks,
 )
 from .state import (
+    atomic_write_text,
     ensure_state_dir,
     get_state_dir,
     latest_snapshot_path,
@@ -43,6 +44,7 @@ from .jobs import (
     Job,
     cancel_job,
     check_job_alive,
+    cleanup_tmux_artifacts_for_sessions,
     cleanup_old_jobs,
     get_job,
     load_jobs,
@@ -182,11 +184,11 @@ def _ob_c(code: str) -> str:
     return f"\033[{code}m" if sys.stdout.isatty() else ""
 
 
-_OB_GREEN  = _ob_c("32")
+_OB_GREEN = _ob_c("32")
 _OB_YELLOW = _ob_c("33")
-_OB_BOLD   = _ob_c("1")
-_OB_DIM    = _ob_c("2")
-_OB_RESET  = _ob_c("0")
+_OB_BOLD = _ob_c("1")
+_OB_DIM = _ob_c("2")
+_OB_RESET = _ob_c("0")
 
 
 def _ob_box_row(text: str, W: int = 44, style: str = "") -> str:
@@ -206,13 +208,17 @@ def _ob_prompt(label: str, hint: str, default: str) -> str:
 def _ob_ssh_test(address: str, user: str, timeout: int = 5) -> bool:
     """Return True if SSH echo succeeds within timeout."""
     import subprocess
+
     try:
         r = subprocess.run(
             [
                 "ssh",
-                "-o", "ConnectTimeout=5",
-                "-o", "BatchMode=yes",
-                "-o", "StrictHostKeyChecking=no",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
                 f"{user}@{address}",
                 "true",
             ],
@@ -267,11 +273,13 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
 
     # ── cluster label ──────────────────────────────────────────────────────
-    raw = input(_ob_prompt(
-        "Cluster label",
-        "Shown in the dashboard header — any name you like.",
-        "GPU-Cluster",
-    )).strip()
+    raw = input(
+        _ob_prompt(
+            "Cluster label",
+            "Shown in the dashboard header — any name you like.",
+            "GPU-Cluster",
+        )
+    ).strip()
     cluster_name = raw or "GPU-Cluster"
 
     # ── node count ─────────────────────────────────────────────────────────
@@ -293,22 +301,33 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
 
     # ── nodes ──────────────────────────────────────────────────────────────
     nodes: list[dict] = []
-    print(f"\n  {_OB_BOLD}Add GPU nodes{_OB_RESET}  {_OB_DIM}({n_nodes} total){_OB_RESET}\n")
+    print(
+        f"\n  {_OB_BOLD}Add GPU nodes{_OB_RESET}  {_OB_DIM}({n_nodes} total){_OB_RESET}\n"
+    )
 
     for idx in range(1, n_nodes + 1):
         default_alias = f"GPU-{idx:02d}"
-        print(f"  {_OB_DIM}── Node #{idx} ──────────────────────────────────{_OB_RESET}")
+        print(
+            f"  {_OB_DIM}── Node #{idx} ──────────────────────────────────{_OB_RESET}"
+        )
         while True:
-            alias   = input(_ob_prompt("  Alias",   "", default_alias)).strip() or default_alias
+            alias = (
+                input(_ob_prompt("  Alias", "", default_alias)).strip() or default_alias
+            )
             address = input(_ob_prompt("  Address", "IP or hostname", "")).strip()
             if not address:
                 print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Address is required.")
                 continue
             default_user = os.environ.get("USER", "ubuntu")
-            user = input(_ob_prompt("  SSH user", "", default_user)).strip() or default_user
+            user = (
+                input(_ob_prompt("  SSH user", "", default_user)).strip()
+                or default_user
+            )
 
             # SSH connectivity test
-            sys.stdout.write(f"  {_OB_DIM}Testing SSH ({user}@{address})...{_OB_RESET}  ")
+            sys.stdout.write(
+                f"  {_OB_DIM}Testing SSH ({user}@{address})...{_OB_RESET}  "
+            )
             sys.stdout.flush()
             ok = _ob_ssh_test(address, user)
             if ok:
@@ -317,9 +336,11 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                 break
             else:
                 print(f"{_OB_YELLOW}⚠ unreachable{_OB_RESET}")
-                raw_cont = input(
-                    f"  {_OB_DIM}Continue anyway?{_OB_RESET} [y/N]: "
-                ).strip().lower()
+                raw_cont = (
+                    input(f"  {_OB_DIM}Continue anyway?{_OB_RESET} [y/N]: ")
+                    .strip()
+                    .lower()
+                )
                 if raw_cont == "y":
                     nodes.append({"alias": alias, "address": address, "user": user})
                     break
@@ -333,11 +354,16 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
 
     # ── admin ──────────────────────────────────────────────────────────────
     default_admin = nodes[0].get("user", os.environ.get("USER", "admin"))
-    admin = input(_ob_prompt(
-        "Admin username",
-        "SSH user who manages the cluster.",
-        default_admin,
-    )).strip() or default_admin
+    admin = (
+        input(
+            _ob_prompt(
+                "Admin username",
+                "SSH user who manages the cluster.",
+                default_admin,
+            )
+        ).strip()
+        or default_admin
+    )
 
     # ── write config ───────────────────────────────────────────────────────
     data = {
@@ -352,9 +378,7 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         },
     }
 
-    cfg_path.write_text(
-        _json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
-    )
+    atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
 
     # ── done card ──────────────────────────────────────────────────────────
     print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
@@ -453,9 +477,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
         },
     }
 
-    cfg_path.write_text(
-        _json.dumps(data, indent=2, sort_keys=False) + "\n", encoding="utf-8"
-    )
+    atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
     print(f"\n✅ Config written: {cfg_path}")
     print(f"Next: opensmi poll")
     return 0
@@ -539,6 +561,7 @@ def _render_dashboard(cluster_snap) -> str:
 
 def _cmd_poll(args: argparse.Namespace) -> int:
     from .logging import get_logger
+
     log = get_logger("cli.poll")
     state_dir = get_state_dir(args.state_dir)
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
@@ -565,10 +588,10 @@ def _cmd_poll(args: argparse.Namespace) -> int:
     if args.write_latest:
         ensure_state_dir(state_dir)
         out_path = latest_snapshot_path(state_dir)
-        out_path.write_text(
+        atomic_write_text(
+            out_path,
             json.dumps(snapshot_to_jsonable(cluster_snap), indent=2, sort_keys=False)
             + "\n",
-            encoding="utf-8",
         )
 
     return 0
@@ -1090,10 +1113,17 @@ def _cmd_job_list(args: argparse.Namespace) -> int:
 
 def _cmd_job_submit(args: argparse.Namespace) -> int:
     from .logging import get_logger
+
     log = get_logger("cli.job")
     state_dir = get_state_dir(args.state_dir)
     ensure_state_dir(state_dir)
-    log.info("job submit — command=%s node=%s gpus=%s queue=%s", args.command, getattr(args, 'node', None), getattr(args, 'gpus', None), getattr(args, 'queue', False))
+    log.info(
+        "job submit — command=%s node=%s gpus=%s queue=%s",
+        args.command,
+        getattr(args, "node", None),
+        getattr(args, "gpus", None),
+        getattr(args, "queue", False),
+    )
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
     cfg = load_config(cfg_path)
 
@@ -1158,6 +1188,8 @@ def _cmd_job_submit(args: argparse.Namespace) -> int:
             if session:
                 job.tmux_sessions = [session]
         else:
+            if session:
+                cleanup_tmux_artifacts_for_sessions([session])
             job.status = "failed"
             job.error = result.stderr or "Execution failed"
             job.finished_at = datetime.now(timezone.utc).isoformat()
@@ -1287,6 +1319,8 @@ def _cmd_job_delete(args: argparse.Namespace) -> int:
         print(f"Job {args.job_id} not found", file=sys.stderr)
         return 1
 
+    cleanup_tmux_artifacts_for_sessions(job.tmux_sessions)
+
     jobs = [j for j in jobs if j.id != args.job_id]
     save_jobs(state_dir, jobs)
 
@@ -1380,11 +1414,17 @@ def _cmd_node_env(args: argparse.Namespace) -> int:
         return 1
 
     # If any setter flags provided, update
-    if args.env_manager is not None or args.env_name is not None or args.work_dir is not None:
+    if (
+        args.env_manager is not None
+        or args.env_name is not None
+        or args.work_dir is not None
+    ):
         ok = update_node_env(
             cfg_path,
             alias=args.node,
-            env_manager=args.env_manager if args.env_manager is not None else node.env_manager,
+            env_manager=args.env_manager
+            if args.env_manager is not None
+            else node.env_manager,
             env_name=args.env_name if args.env_name is not None else node.env_name,
             work_dir=args.work_dir if args.work_dir is not None else node.work_dir,
         )
@@ -1604,8 +1644,14 @@ def _cmd_log(args: argparse.Namespace) -> int:
 
 def _cmd_exec(args: argparse.Namespace) -> int:
     from .logging import get_logger
+
     log = get_logger("cli.exec")
-    log.info("exec — node=%s command=%s mode=%s", getattr(args, 'node', None), getattr(args, 'command', None), getattr(args, 'mode', None))
+    log.info(
+        "exec — node=%s command=%s mode=%s",
+        getattr(args, "node", None),
+        getattr(args, "command", None),
+        getattr(args, "mode", None),
+    )
     state_dir = get_state_dir(args.state_dir)
     ensure_state_dir(state_dir)
     cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
@@ -1667,8 +1713,7 @@ def _cmd_exec(args: argparse.Namespace) -> int:
     session = None
     if args.mode == "tmux":
         raw_session = (
-            str(args.session or "").strip()
-            or f"opensmi-{args.node}-{int(time.time())}"
+            str(args.session or "").strip() or f"opensmi-{args.node}-{int(time.time())}"
         )
         # Sanitize: # and other special chars break SSH remote commands
         session = raw_session.replace("#", "-").replace(":", "-").replace(".", "-")
@@ -1724,12 +1769,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = p.add_subparsers(dest="cmd", required=False)
 
-    sp_init = sub.add_parser(
-        "init", help="[deprecated] Use 'opensmi onboard' instead"
+    sp_init = sub.add_parser("init", help="[deprecated] Use 'opensmi onboard' instead")
+    sp_init.add_argument(
+        "--force", action="store_true", help="Overwrite existing config"
     )
-    sp_init.add_argument("--force", action="store_true", help="Overwrite existing config")
     sp_init.add_argument("--wizard", action="store_true", help="[deprecated] ignored")
-    sp_init.add_argument("--defaults", action="store_true", help="Non-interactive: write defaults")
+    sp_init.add_argument(
+        "--defaults", action="store_true", help="Non-interactive: write defaults"
+    )
     sp_init.add_argument("--nodes", type=int, default=None, help="Number of nodes")
     sp_init.add_argument(
         "--from-ssh-config",
@@ -1781,7 +1828,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_as = alloc_sub.add_parser("set", help="Assign a GPU to a user")
     sp_as.add_argument("node", help="Node alias (e.g. 'GPU-01')")
     sp_as.add_argument("gpu", type=int, help="GPU index (0-3)")
-    sp_as.add_argument("user", help="Linux username (or '*' for everyone; 'none' is normalized to '*')")
+    sp_as.add_argument(
+        "user", help="Linux username (or '*' for everyone; 'none' is normalized to '*')"
+    )
     sp_as.add_argument("--by", default=None, help="Admin performing the action")
     sp_as.add_argument("--notes", default=None, help="Optional note")
     sp_as.set_defaults(func=_cmd_alloc_set)
@@ -2044,9 +2093,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp_un.set_defaults(func=_cmd_uninstall)
 
     # ── node-env: get/set per-node environment config ─────────────
-    sp_ne = sub.add_parser("node-env", help="Get or set per-node env config (env_manager, env_name, work_dir)")
+    sp_ne = sub.add_parser(
+        "node-env",
+        help="Get or set per-node env config (env_manager, env_name, work_dir)",
+    )
     sp_ne.add_argument("node", help="Node alias")
-    sp_ne.add_argument("--env-manager", default=None, help="conda | miniconda | micromamba | venv | (empty to clear)")
+    sp_ne.add_argument(
+        "--env-manager",
+        default=None,
+        help="conda | miniconda | micromamba | venv | (empty to clear)",
+    )
     sp_ne.add_argument("--env-name", default=None, help="Virtual env name")
     sp_ne.add_argument("--work-dir", default=None, help="Remote working directory")
     sp_ne.add_argument("--json", dest="json", action="store_true", default=False)
@@ -2126,7 +2182,9 @@ def main(argv: Optional[list] = None) -> None:
 
     # --- Slurm beta wire-up (opt-in only) ---
     experimental_slurm = getattr(args, "experimental_slurm", False)
-    config_mode: str | None = None  # loaded later if needed; precedence check here uses env+cli only
+    config_mode: str | None = (
+        None  # loaded later if needed; precedence check here uses env+cli only
+    )
 
     resolved = resolve_mode(
         cli_experimental_slurm=bool(experimental_slurm),

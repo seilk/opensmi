@@ -18,6 +18,7 @@ from .models import ClusterConfig, NodeConfig
 from .state import ensure_state_dir
 
 JOBS_FILENAME = "jobs.json"
+_SESSION_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_\-]")
 
 
 @dataclass
@@ -50,7 +51,9 @@ class Job:
     max_retries: int = 3
     tags: List[str] = field(default_factory=list)  # User-defined tags
     queue_mode: str = "immediate"  # "immediate" | "queued"
-    slurm_meta: Optional[Dict[str, object]] = None  # [BETA] Slurm entitlement snapshot at submit time
+    slurm_meta: Optional[Dict[str, object]] = (
+        None  # [BETA] Slurm entitlement snapshot at submit time
+    )
 
     @staticmethod
     def new_id() -> str:
@@ -81,6 +84,7 @@ def _lock_jobs_file(state_dir: Path) -> Iterator[None]:
 
     try:
         import fcntl
+
         with open(lock_path, "w") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
@@ -196,9 +200,7 @@ def _find_tmux_binary() -> str:
     return "tmux"  # fallback, let OS raise if truly missing
 
 
-async def check_gpu_liveness(
-    job: Job, cfg: ClusterConfig
-) -> dict[str, bool]:
+async def check_gpu_liveness(job: Job, cfg: ClusterConfig) -> dict[str, bool]:
     """Check which of the job's tmux sessions have live remote processes.
 
     Each tmux session writes a PID file on the remote node at
@@ -209,6 +211,7 @@ async def check_gpu_liveness(
     """
     from .sshutil import ssh_run
     from .logging import get_logger
+
     log = get_logger(__name__)
 
     result: dict[str, bool] = {}
@@ -238,8 +241,12 @@ async def check_gpu_liveness(
             session_gpu.setdefault(session_name, []).append((node_alias, gpu_idx))
     else:
         # Mismatch — best effort positional
-        log.warning("watchdog: job %s session count (%d) != gpu count (%d), best-effort mapping",
-                     job.id, len(job.tmux_sessions), len(job.gpus))
+        log.warning(
+            "watchdog: job %s session count (%d) != gpu count (%d), best-effort mapping",
+            job.id,
+            len(job.tmux_sessions),
+            len(job.gpus),
+        )
         for i, session_name in enumerate(job.tmux_sessions):
             if i < len(job.gpus):
                 node_alias, gpu_idx = job.gpus[i]
@@ -267,14 +274,16 @@ async def check_gpu_liveness(
         checks = []
         for session_name, gpu_idx in checks_list:
             # Sanitize session name for safe use in SSH remote commands
-            safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', session_name)
+            safe_session = re.sub(r"[^a-zA-Z0-9_\-]", "-", session_name)
             pid_file = f"/tmp/opensmi-{safe_session}.pid"
             checks.append(
-                f'if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null; '
+                f"if [ -f {pid_file} ] && kill -0 $(cat {pid_file}) 2>/dev/null; "
                 f'then echo "ALIVE:{gpu_idx}"; fi'
             )
         check_script = "; ".join(checks)
-        log.debug("watchdog: job %s node %s script: %s", job.id, node_alias, check_script)
+        log.debug(
+            "watchdog: job %s node %s script: %s", job.id, node_alias, check_script
+        )
 
         try:
             # Pass script via stdin to avoid remote shell (zsh/etc) parsing issues
@@ -284,7 +293,13 @@ async def check_gpu_liveness(
                 stdin_bytes=check_script.encode("utf-8"),
                 timeout_s=8,
             )
-            log.debug("watchdog: job %s node %s rc=%d stdout=%r", job.id, node_alias, rc, stdout.strip())
+            log.debug(
+                "watchdog: job %s node %s rc=%d stdout=%r",
+                job.id,
+                node_alias,
+                rc,
+                stdout.strip(),
+            )
 
             for line in stdout.strip().splitlines():
                 line = line.strip()
@@ -303,7 +318,10 @@ async def check_gpu_liveness(
     # This catches DataParallel/multiprocessing cases where the parent PID exits
     # but child processes keep running on GPUs.
     if not any(result.values()) and job.gpus:
-        log.info("watchdog: PID check says all dead for job %s, verifying with nvidia-smi", job.id)
+        log.info(
+            "watchdog: PID check says all dead for job %s, verifying with nvidia-smi",
+            job.id,
+        )
         # Group GPUs by node
         node_gpus: dict[str, list[int]] = {}
         for node_alias, gpu_idx in job.gpus:
@@ -321,8 +339,8 @@ async def check_gpu_liveness(
             # Query nvidia-smi for compute processes on specific GPUs
             gpu_ids = ",".join(str(g) for g in gpu_indices)
             nvsmi_script = (
-                f'nvidia-smi --id={gpu_ids} '
-                f'--query-compute-apps=gpu_uuid,pid '
+                f"nvidia-smi --id={gpu_ids} "
+                f"--query-compute-apps=gpu_uuid,pid "
                 f'--format=csv,noheader,nounits 2>/dev/null && echo "__OK__"'
             )
             try:
@@ -333,18 +351,27 @@ async def check_gpu_liveness(
                     timeout_s=10,
                 )
                 if rc == 0 and "__OK__" in stdout:
-                    lines = [l.strip() for l in stdout.strip().splitlines()
-                             if l.strip() and l.strip() != "__OK__"]
+                    lines = [
+                        l.strip()
+                        for l in stdout.strip().splitlines()
+                        if l.strip() and l.strip() != "__OK__"
+                    ]
                     if lines:
                         # There are active compute processes on our GPUs
-                        log.info("watchdog: nvidia-smi found %d active process(es) on job %s GPUs — overriding PID death", len(lines), job.id)
+                        log.info(
+                            "watchdog: nvidia-smi found %d active process(es) on job %s GPUs — overriding PID death",
+                            len(lines),
+                            job.id,
+                        )
                         for gpu_idx in gpu_indices:
                             key = f"{node_alias}:{gpu_idx}"
                             if key in result:
                                 result[key] = True
             except Exception:
                 # nvidia-smi check failed — don't override PID result
-                log.warning("watchdog: nvidia-smi fallback failed for node %s", node_alias)
+                log.warning(
+                    "watchdog: nvidia-smi fallback failed for node %s", node_alias
+                )
 
     return result
 
@@ -398,6 +425,25 @@ def _extract_node_from_session(session_name: str, job: Job) -> Optional[str]:
     return job.gpus[0][0] if job.gpus else None
 
 
+def cleanup_tmux_artifacts_for_sessions(sessions: List[str]) -> None:
+    if not sessions:
+        return
+    wrapper_dir = Path.home() / ".opensmi" / "tmp"
+    if not wrapper_dir.exists():
+        return
+
+    for session in sessions:
+        if not session:
+            continue
+        safe_session = _SESSION_SANITIZE_RE.sub("-", session)
+        for suffix in (".sh", ".json"):
+            path = wrapper_dir / f"tmux-{safe_session}{suffix}"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+
 async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
     """Cancel a running or queued job.
 
@@ -416,6 +462,8 @@ async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
 
     # Queued jobs can be cancelled immediately
     if job.status == "queued":
+        cleanup_tmux_artifacts_for_sessions(job.tmux_sessions)
+        job.tmux_sessions = []
         job.status = "cancelled"
         job.finished_at = datetime.now(timezone.utc).isoformat()
         return True
@@ -425,13 +473,19 @@ async def cancel_job(job: Job, cfg: ClusterConfig) -> bool:
     for session in job.tmux_sessions:
         try:
             proc = await asyncio.create_subprocess_exec(
-                tmux_bin, "kill-session", "-t", session,
+                tmux_bin,
+                "kill-session",
+                "-t",
+                session,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(proc.wait(), timeout=5)
         except Exception:
             pass
+
+    cleanup_tmux_artifacts_for_sessions(job.tmux_sessions)
+    job.tmux_sessions = []
 
     job.status = "cancelled"
     job.finished_at = datetime.now(timezone.utc).isoformat()
