@@ -11,18 +11,79 @@ import base64
 import os
 import re
 import shlex
+import subprocess
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from .models import (
     GPUEnvConfig,
+    NodeConfig,
     NodeTarget,
     PreflightCheck,
     PreflightCheckType,
     PreflightResult,
     RemoteExecutionContext,
 )
-from .sshutil import RemoteExecResult, _ssh_base_cmd, is_local_node, ssh_exec_remote, ssh_run
+from .state import atomic_write_text
+from .sshutil import (
+    RemoteExecResult,
+    _ssh_base_cmd,
+    is_local_node,
+    ssh_exec_remote,
+    ssh_run,
+)
+
+
+_TMUX_TMP_ARTIFACT_RE = re.compile(r"^tmux-(?P<session>.+)\.(?:sh|json)$")
+
+
+def _active_tmux_sessions() -> set[str]:
+    tmux_bin = _find_tmux_binary()
+    if not tmux_bin:
+        return set()
+    try:
+        out = subprocess.check_output(
+            [tmux_bin, "list-sessions", "-F", "#S"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return set()
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _cleanup_stale_tmux_artifacts(
+    wrapper_dir: str,
+    *,
+    keep_sessions: set[str],
+    max_age_s: int = 24 * 60 * 60,
+) -> None:
+    if not os.path.isdir(wrapper_dir):
+        return
+
+    active_sessions = _active_tmux_sessions()
+    now = time.time()
+
+    for entry in os.scandir(wrapper_dir):
+        if not entry.is_file():
+            continue
+        m = _TMUX_TMP_ARTIFACT_RE.match(entry.name)
+        if not m:
+            continue
+
+        session_name = m.group("session")
+        if session_name in keep_sessions or session_name in active_sessions:
+            continue
+
+        try:
+            if now - entry.stat().st_mtime < max_age_s:
+                continue
+            os.unlink(entry.path)
+        except OSError:
+            continue
 
 
 def _build_env_setup(node: "NodeConfig") -> str:
@@ -276,20 +337,26 @@ async def route_command_to_target(
             env = dict(os.environ)
             env.update({k: str(v) for k, v in context.env_vars.items()})
             proc = await asyncio.create_subprocess_exec(
-                "bash", "-c", command,
+                "bash",
+                "-c",
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=context.timeout_s,
+                    proc.communicate(),
+                    timeout=context.timeout_s,
                 )
             except asyncio.TimeoutError:
                 proc.kill()
                 return RemoteExecResult(
-                    exit_code=1, stdout="", stderr=f"local exec timed out after {context.timeout_s}s",
-                    node_alias=node.alias, command=context.command,
+                    exit_code=1,
+                    stdout="",
+                    stderr=f"local exec timed out after {context.timeout_s}s",
+                    node_alias=node.alias,
+                    command=context.command,
                 )
             return RemoteExecResult(
                 exit_code=int(proc.returncode or 0),
@@ -328,39 +395,52 @@ async def route_command_to_target(
             remote_command = f"{env_setup}{context.command}"
 
         # Sanitize session name for safe use in file paths, tmux, and remote shell
-        safe_session = re.sub(r'[^a-zA-Z0-9_\-]', '-', context.tmux_session)
+        safe_session = re.sub(r"[^a-zA-Z0-9_\-]", "-", context.tmux_session)
+        wrapper_dir = os.path.join(os.path.expanduser("~"), ".opensmi", "tmp")
+        os.makedirs(wrapper_dir, exist_ok=True)
+        _cleanup_stale_tmux_artifacts(wrapper_dir, keep_sessions={safe_session})
 
         # Local node fast-path: skip SSH wrapper entirely, run directly in tmux.
         if is_local_node(node):
             pid_file = f"/tmp/opensmi-{safe_session}.pid"
             local_command = (
-                f'echo $$ > {pid_file}; '
-                f'trap "rm -f {pid_file}" EXIT; '
-                f'{remote_command}'
+                f'echo $$ > {pid_file}; trap "rm -f {pid_file}" EXIT; {remote_command}'
             )
-            wrapper_dir = os.path.join(os.path.expanduser("~"), ".opensmi", "tmp")
-            os.makedirs(wrapper_dir, exist_ok=True)
             wrapper_path = os.path.join(wrapper_dir, f"tmux-{safe_session}.sh")
-            with open(wrapper_path, "w") as _f:
-                _f.write("#!/usr/bin/env bash\n")
-                _f.write(local_command + "\n")
-                _f.write(f'\necho\necho "--- Job finished (press Enter to close) ---"\n')
-                _f.write("read -r _ignore 2>/dev/null || true\n")
+            wrapper_content = (
+                "#!/usr/bin/env bash\n"
+                + f"trap 'rm -f {shlex.quote(wrapper_path)}' EXIT\n"
+                + local_command
+                + "\n"
+                + '\necho\necho "--- Job finished (press Enter to close) ---"\n'
+                + "read -r _ignore 2>/dev/null || true\n"
+            )
+            atomic_write_text(Path(wrapper_path), wrapper_content)
             os.chmod(wrapper_path, 0o755)
 
             tmux_bin = _find_tmux_binary() or "tmux"
             proc = await asyncio.create_subprocess_exec(
-                tmux_bin, "new-session", "-d", "-s", safe_session, wrapper_path,
+                tmux_bin,
+                "new-session",
+                "-d",
+                "-s",
+                safe_session,
+                wrapper_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=context.timeout_s)
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=context.timeout_s
+                )
             except asyncio.TimeoutError:
                 proc.kill()
                 return RemoteExecResult(
-                    exit_code=1, stdout="", stderr=f"local tmux creation timed out after {context.timeout_s}s",
-                    node_alias=node.alias, command=context.command,
+                    exit_code=1,
+                    stdout="",
+                    stderr=f"local tmux creation timed out after {context.timeout_s}s",
+                    node_alias=node.alias,
+                    command=context.command,
                 )
             return RemoteExecResult(
                 exit_code=int(proc.returncode or 0),
@@ -376,15 +456,11 @@ async def route_command_to_target(
         # 3. Clean up PID file on exit (normal or error)
         pid_file = f"/tmp/opensmi-{safe_session}.pid"
         wrapped_command = (
-            f'echo $$ > {pid_file}; '
-            f'trap "rm -f {pid_file}" EXIT; '
-            f'{remote_command}'
+            f'echo $$ > {pid_file}; trap "rm -f {pid_file}" EXIT; {remote_command}'
         )
 
         # Base64 encode the remote command to avoid nested quoting issues
-        payload_b64 = base64.b64encode(
-            wrapped_command.encode("utf-8")
-        ).decode("ascii")
+        payload_b64 = base64.b64encode(wrapped_command.encode("utf-8")).decode("ascii")
 
         # Build the SSH base command string
         ssh_target = f"{node.user}@{node.address}"
@@ -398,16 +474,11 @@ async def route_command_to_target(
         # in the shell script. Instead we write a JSON config file and a
         # generic launcher that reads it. The only dynamic shell content is
         # the path to the JSON file.
-        wrapper_dir = os.path.join(
-            os.path.expanduser("~"), ".opensmi", "tmp"
-        )
-        os.makedirs(wrapper_dir, exist_ok=True)
-        wrapper_path = os.path.join(
-            wrapper_dir, f"tmux-{safe_session}.sh"
-        )
+        wrapper_path = os.path.join(wrapper_dir, f"tmux-{safe_session}.sh")
 
         # 1) Write job config as JSON (no shell escaping needed)
         import json as _json
+
         job_config = {
             "node_alias": node.alias,
             "ssh_target": ssh_target,
@@ -416,16 +487,13 @@ async def route_command_to_target(
             "command_preview": context.command[:120],
             "remote_pid_file": pid_file,
         }
-        config_path = os.path.join(
-            wrapper_dir, f"tmux-{safe_session}.json"
-        )
-        with open(config_path, "w") as f:
-            _json.dump(job_config, f)
+        config_path = os.path.join(wrapper_dir, f"tmux-{safe_session}.json")
+        atomic_write_text(Path(config_path), _json.dumps(job_config))
 
         # 2) Launcher: a Python script that reads the JSON config.
         #    Zero shell quoting — Python handles everything natively.
         wrapper_script = f"""#!/usr/bin/env python3
-import json, subprocess, sys, shlex
+import json, os, subprocess, sys, shlex
 
 with open("{config_path}") as f:
     cfg = json.load(f)
@@ -446,11 +514,15 @@ try:
     input()
 except (EOFError, KeyboardInterrupt):
     pass
+for _p in ({config_path!r}, {wrapper_path!r}):
+    try:
+        os.unlink(_p)
+    except OSError:
+        pass
 sys.exit(rc)
 """
 
-        with open(wrapper_path, "w") as f:
-            f.write(wrapper_script)
+        atomic_write_text(Path(wrapper_path), wrapper_script)
         os.chmod(wrapper_path, 0o755)
 
         # Create local tmux session running the wrapper script
@@ -471,7 +543,8 @@ sys.exit(rc)
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=context.timeout_s,
+                proc.communicate(),
+                timeout=context.timeout_s,
             )
         except asyncio.TimeoutError:
             proc.kill()

@@ -1,8 +1,12 @@
 import asyncio
+import os
+import tempfile
+import time
 import unittest
-from unittest.mock import AsyncMock, mock_open, patch
+from unittest.mock import AsyncMock, patch
 
 from opensmi.executor import (
+    _cleanup_stale_tmux_artifacts,
     inject_cuda_visible_devices,
     route_command_to_target,
     route_commands_one_to_one,
@@ -20,6 +24,52 @@ def _mock_tmux_subprocess():
     mock_proc.returncode = 0
     mock_proc.wait = AsyncMock(return_value=0)
     return mock_proc
+
+
+class TestTmpArtifactCleanup(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_old_file(self, name: str, *, age_s: int = 3600) -> str:
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("x")
+        past = time.time() - age_s
+        os.utime(path, (past, past))
+        return path
+
+    def test_cleanup_removes_stale_non_active_files(self):
+        stale = self._write_old_file("tmux-stale-1.sh")
+        stale_json = self._write_old_file("tmux-stale-1.json")
+
+        with patch("opensmi.executor._active_tmux_sessions", return_value=set()):
+            _cleanup_stale_tmux_artifacts(
+                self.tmpdir, keep_sessions=set(), max_age_s=300
+            )
+
+        self.assertFalse(os.path.exists(stale))
+        self.assertFalse(os.path.exists(stale_json))
+
+    def test_cleanup_keeps_active_keep_and_recent_files(self):
+        active = self._write_old_file("tmux-active-1.sh")
+        kept = self._write_old_file("tmux-keep-1.json")
+        recent = self._write_old_file("tmux-recent-1.sh", age_s=20)
+
+        with patch("opensmi.executor._active_tmux_sessions", return_value={"active-1"}):
+            _cleanup_stale_tmux_artifacts(
+                self.tmpdir,
+                keep_sessions={"keep-1"},
+                max_age_s=300,
+            )
+
+        self.assertTrue(os.path.exists(active))
+        self.assertTrue(os.path.exists(kept))
+        self.assertTrue(os.path.exists(recent))
 
 
 class TestInjectCudaVisibleDevices(unittest.TestCase):
@@ -255,11 +305,16 @@ class TestRouteCommandToTarget(unittest.TestCase):
     def test_route_tmux_mode(self):
         """Tmux mode creates a LOCAL tmux session with SSH wrapper script."""
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ) as mock_subproc, patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ) as mock_subproc,
+            patch("opensmi.executor.atomic_write_text") as mock_atomic_write,
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             context = RemoteExecutionContext(
                 target=self.target,
                 command="python train.py",
@@ -277,6 +332,64 @@ class TestRouteCommandToTarget(unittest.TestCase):
             self.assertIn("new-session", call_args)
             self.assertIn("-d", call_args)
             self.assertIn("session-123", call_args)
+            self.assertGreaterEqual(mock_atomic_write.call_count, 2)
+
+    def test_route_tmux_mode_wrapper_script_cleans_artifacts(self):
+        mock_proc = _mock_tmux_subprocess()
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch("opensmi.executor.atomic_write_text") as mock_atomic_write,
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
+            context = RemoteExecutionContext(
+                target=self.target,
+                command="python train.py",
+                env_vars={"CUDA_VISIBLE_DEVICES": "0,1"},
+                execution_mode="tmux",
+                tmux_session="session-cleanup",
+            )
+
+            result = asyncio.run(route_command_to_target(context))
+
+            self.assertTrue(result.success)
+            script_bodies = [call.args[1] for call in mock_atomic_write.call_args_list]
+            self.assertTrue(any("os.unlink(_p)" in body for body in script_bodies))
+
+    def test_route_tmux_local_wrapper_has_exit_cleanup_trap(self):
+        mock_proc = _mock_tmux_subprocess()
+        local_node = NodeConfig(alias="local", address="127.0.0.1", user="testuser")
+        local_target = NodeTarget(
+            node_alias="local",
+            gpu_indices=[0],
+            node_config=local_node,
+        )
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch("opensmi.executor.atomic_write_text") as mock_atomic_write,
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
+            context = RemoteExecutionContext(
+                target=local_target,
+                command="python train.py",
+                execution_mode="tmux",
+                tmux_session="local-cleanup",
+            )
+
+            result = asyncio.run(route_command_to_target(context))
+
+            self.assertTrue(result.success)
+            wrapper_body = mock_atomic_write.call_args_list[0].args[1]
+            self.assertIn("trap 'rm -f", wrapper_body)
 
     def test_route_missing_node_config(self):
         target_no_config = NodeTarget(
@@ -455,11 +568,16 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
     def test_tmux_mode_wraps_command_with_env_vars(self):
         """Test tmux mode creates local session with wrapper script."""
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ) as mock_subproc, patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ) as mock_subproc,
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             target = NodeTarget(
                 node_alias="gpu01",
                 gpu_indices=[0],
@@ -485,11 +603,16 @@ class TestRemoteExecutionIntegration(unittest.TestCase):
     def test_tmux_mode_without_env_vars(self):
         """Test tmux mode works correctly without environment variables."""
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ) as mock_subproc, patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ) as mock_subproc,
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             target = NodeTarget(
                 node_alias="gpu01",
                 gpu_indices=[],
@@ -1036,11 +1159,16 @@ class TestOneToOneExecution(unittest.TestCase):
 
     def test_one_to_one_tmux_mode(self):
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ), patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             contexts = [
                 RemoteExecutionContext(
                     target=NodeTarget("gpu01", [0], self.node_config_01),
@@ -1073,14 +1201,21 @@ class TestOneToOneExecution(unittest.TestCase):
             node_alias="gpu01",
             command="python eval.py",
         )
-        with patch(
-            "opensmi.executor.ssh_exec_remote", new_callable=AsyncMock,
-            return_value=direct_result,
-        ), patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ), patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "opensmi.executor.ssh_exec_remote",
+                new_callable=AsyncMock,
+                return_value=direct_result,
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             contexts = [
                 RemoteExecutionContext(
                     target=NodeTarget("gpu01", [2], self.node_config_01),
@@ -1559,11 +1694,16 @@ class TestMultiNodeExecution(unittest.TestCase):
     def test_multi_node_tmux_execution(self):
         """P1.6: Verify tmux mode works correctly across multiple nodes."""
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ), patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ),
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             contexts = [
                 RemoteExecutionContext(
                     target=NodeTarget("gpu01", [0], self.node_config_01),
@@ -2050,11 +2190,16 @@ class TestMultiNodeExecution(unittest.TestCase):
     def test_one_to_one_tmux_with_custom_session_names(self):
         """P1.5: Verify tmux mode respects custom session names for each command."""
         mock_proc = _mock_tmux_subprocess()
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
-        ) as mock_subproc, patch("builtins.open", mock_open()), \
-             patch("os.makedirs"), patch("os.chmod"):
-
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=mock_proc,
+            ) as mock_subproc,
+            patch("opensmi.executor.atomic_write_text"),
+            patch("os.makedirs"),
+            patch("os.chmod"),
+        ):
             contexts = [
                 RemoteExecutionContext(
                     target=NodeTarget("gpu01", [0], self.node_config_01),
