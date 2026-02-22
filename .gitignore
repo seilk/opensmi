@@ -28,6 +28,7 @@ config.json
 
 # IDE / coding-agent
 .cursor/
+.opencode/
 CLAUDE.md
 
 # Ralph runtime artifacts
