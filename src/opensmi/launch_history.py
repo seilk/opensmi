@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from opensmi.state import ensure_state_dir, get_state_dir
+from opensmi.state import atomic_write_text, ensure_state_dir
 
 LAUNCH_HISTORY_FILENAME = "launch_history.json"
 
@@ -48,8 +48,7 @@ def save_history(state_dir: Path, history: Dict[str, Dict[int, str]]) -> None:
         for node_alias, gpu_dict in history.items()
     }
 
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(serializable, f, indent=2)
+    atomic_write_text(path, json.dumps(serializable, indent=2))
 
 
 def update_history(

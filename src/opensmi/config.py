@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .models import ClusterConfig, NodeConfig
+from .state import atomic_write_text
 
 
 def default_config_data() -> Dict[str, Any]:
@@ -71,7 +72,9 @@ def load_config(path: Path) -> ClusterConfig:
     )
 
 
-def update_node_env(path: Path, alias: str, env_manager: str, env_name: str, work_dir: str) -> bool:
+def update_node_env(
+    path: Path, alias: str, env_manager: str, env_name: str, work_dir: str
+) -> bool:
     """Update a node's env_manager, env_name, and work_dir in the config file.
 
     Preserves all other fields in the JSON. Returns True on success.
@@ -91,10 +94,7 @@ def update_node_env(path: Path, alias: str, env_manager: str, env_name: str, wor
                 raw_node["work_dir"] = work_dir
             elif "work_dir" in raw_node:
                 del raw_node["work_dir"]
-            path.write_text(
-                json.dumps(data, indent=2, sort_keys=False) + "\n",
-                encoding="utf-8",
-            )
+            atomic_write_text(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
             return True
     return False
 
@@ -103,7 +103,6 @@ def save_default_config(path: Path, *, force: bool = False) -> None:
     if path.exists() and not force:
         return
 
-    path.write_text(
-        json.dumps(default_config_data(), indent=2, sort_keys=False) + "\n",
-        encoding="utf-8",
+    atomic_write_text(
+        path, json.dumps(default_config_data(), indent=2, sort_keys=False) + "\n"
     )
