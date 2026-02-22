@@ -36,6 +36,7 @@ def find_violations(
 ) -> List[Violation]:
     policy = dict(config.policy or {})
     all_token = str(policy.get("all_users_token", "*"))
+    require_allocation = bool(policy.get("require_allocation", True))
 
     alloc_map = _alloc_lookup(allocs)
 
@@ -56,8 +57,24 @@ def find_violations(
             alloc = alloc_map.get((node.node_alias, int(gpu_index)))
 
             if alloc is None:
-                # Default-open policy: before explicit admin allocation,
-                # treat GPU as open-to-all.
+                if not require_allocation:
+                    # Default-open policy: before explicit admin allocation,
+                    # treat GPU as open-to-all.
+                    continue
+
+                for u in users:
+                    out.append(
+                        Violation(
+                            node_alias=node.node_alias,
+                            gpu_index=int(gpu_index),
+                            gpu_uuid=gpu_uuid,
+                            user=u,
+                            pids=_pids_for_user(
+                                node.processes, gpu_uuid=gpu_uuid, user=u
+                            ),
+                            reason="UNALLOCATED_IN_USE",
+                        )
+                    )
                 continue
 
             if alloc.target == all_token:
@@ -73,7 +90,9 @@ def find_violations(
                             gpu_index=int(gpu_index),
                             gpu_uuid=gpu_uuid,
                             user=u,
-                            pids=_pids_for_user(node.processes, gpu_uuid=gpu_uuid, user=u),
+                            pids=_pids_for_user(
+                                node.processes, gpu_uuid=gpu_uuid, user=u
+                            ),
                             reason="WRONG_USER",
                             expected=alloc.target,
                         )

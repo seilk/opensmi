@@ -25,18 +25,19 @@ def _local_addresses() -> Set[str]:
 
     try:
         import netifaces  # type: ignore
+
         for iface in netifaces.interfaces():
             for family in (netifaces.AF_INET, netifaces.AF_INET6):
                 for link in netifaces.ifaddresses(iface).get(family, []):
                     addr = link.get("addr", "")
                     if addr:
-                        addrs.add(addr.split("%")[0])  # strip IPv6 zone id
+                        addrs.add(str(addr).split("%")[0])  # strip IPv6 zone id
     except ImportError:
         # netifaces not available — fall back to socket
         try:
             hostname = socket.gethostname()
             for _, _, _, _, sockaddr in socket.getaddrinfo(hostname, None):
-                addrs.add(sockaddr[0])
+                addrs.add(str(sockaddr[0]))
         except Exception:
             pass
 
@@ -52,14 +53,25 @@ def is_local_node(node: "NodeConfig") -> bool:
     """
     return node.address in _local_addresses()
 
+
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+_RETRYABLE_SSH_ERROR_PATTERNS = (
+    "timeout",
+    "connection refused",
+    "connection timed out",
+    "no route to host",
+    "network is unreachable",
+    "connection reset by peer",
+    "connection closed by remote host",
+    "kex_exchange_identification",
+)
 
 
 def _validate_env_vars(env_vars: Dict[str, str]) -> None:
     for k in env_vars.keys():
         if not _ENV_KEY_RE.match(str(k)):
             raise ValueError(f"Invalid env var key: {k!r}")
-
 
 
 class SSHRunError(RuntimeError):
@@ -152,14 +164,7 @@ async def ssh_run_with_retry(
             err_msg = str(e).lower()
 
             is_retryable = any(
-                keyword in err_msg
-                for keyword in [
-                    "timeout",
-                    "connection refused",
-                    "connection timed out",
-                    "no route to host",
-                    "network is unreachable",
-                ]
+                keyword in err_msg for keyword in _RETRYABLE_SSH_ERROR_PATTERNS
             )
 
             if not is_retryable:

@@ -1,6 +1,13 @@
 import unittest
 
-from opensmi.models import ClusterConfig, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot, ClusterSnapshot
+from opensmi.models import (
+    ClusterConfig,
+    GPUInfo,
+    GPUProcess,
+    NodeConfig,
+    NodeSnapshot,
+    ClusterSnapshot,
+)
 from opensmi.allocations import Allocation
 from opensmi.violations import find_violations
 
@@ -14,9 +21,17 @@ class TestViolations(unittest.TestCase):
         )
 
         node = NodeSnapshot(node_alias="GPU-01", address="10.0.0.1")
-        node.gpus = [GPUInfo(index=0, uuid="GPU-uuid0", name="A6000", memory_total_mib=49140)]
+        node.gpus = [
+            GPUInfo(index=0, uuid="GPU-uuid0", name="A6000", memory_total_mib=49140)
+        ]
         node.processes = [
-            GPUProcess(gpu_uuid="GPU-uuid0", pid=111, process_name="python", used_memory_mib=10, user="bob")
+            GPUProcess(
+                gpu_uuid="GPU-uuid0",
+                pid=111,
+                process_name="python",
+                used_memory_mib=10,
+                user="bob",
+            )
         ]
 
         snap = ClusterSnapshot(cluster_name="X", timestamp="t", nodes=[node])
@@ -57,6 +72,12 @@ class TestViolations(unittest.TestCase):
         self.assertEqual(len(viols), 1)
         self.assertEqual(viols[0].reason, "WRONG_USER")
         self.assertEqual(viols[0].expected, "alice")
+
+    def test_unallocated_allowed_when_policy_disabled(self):
+        cfg, snap = self._base()
+        cfg.policy["require_allocation"] = False
+        viols = find_violations(cfg, snap, allocs=[])
+        self.assertEqual(viols, [])
 
 
 if __name__ == "__main__":

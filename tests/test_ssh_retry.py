@@ -91,6 +91,9 @@ class TestSSHRetry(unittest.TestCase):
             "Connection timed out",
             "No route to host",
             "Network is unreachable",
+            "Connection reset by peer",
+            "Connection closed by remote host",
+            "kex_exchange_identification: Connection closed by remote host",
         ]
 
         for error_msg in retryable_errors:
@@ -126,12 +129,15 @@ class TestIsLocalNode(unittest.TestCase):
 
     def test_localhost_is_local(self):
         from opensmi.sshutil import is_local_node
+
         self.assertTrue(is_local_node(self._make_node("localhost")))
 
     def test_loopback_ip_is_local(self):
         from opensmi.sshutil import is_local_node
+
         self.assertTrue(is_local_node(self._make_node("127.0.0.1")))
 
     def test_remote_ip_is_not_local(self):
         from opensmi.sshutil import is_local_node
+
         self.assertFalse(is_local_node(self._make_node("10.0.0.99")))
