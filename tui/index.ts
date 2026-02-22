@@ -256,6 +256,14 @@ let jobDetailLogSession: string = "";        // Which tmux session we're viewing
 let jobDetailLogScroll = 0;           // Scroll offset in log view
 let jobsLastLoadTime = 0;
 
+function runnerPaneTopRow(): number {
+  const termRows = process.stdout.rows || 40;
+  const paneRows = runnerPaneFolded
+    ? 3
+    : Math.max(3, Math.floor(termRows * 0.4));
+  return Math.max(0, termRows - paneRows);
+}
+
 function getStateDir(): string {
   const homedir = process.env.HOME || "~";
   return process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
@@ -3956,7 +3964,8 @@ function renderRunnerPane() {
       paddingLeft: 1,
       paddingRight: 1,
       backgroundColor: C.bgAlt,
-      onMouseDown: () => {
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
         if (runnerInputTyping) return; // Don't toggle while typing
         if (runnerFocused) {
           runnerFocused = false;
@@ -4053,10 +4062,12 @@ function renderRunnerPane() {
             height: "100%",
             zIndex: 1, // Low zIndex to allow text selection
             onMouseDown: (e: any) => {
+              e?.stopPropagation?.();
               runnerMouseDownTime = Date.now();
               runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
             },
             onMouseUp: (e: any) => {
+              e?.stopPropagation?.();
               const elapsed = Date.now() - runnerMouseDownTime;
               const moved = runnerMouseDownPos && (
                 Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
@@ -4126,11 +4137,13 @@ function renderRunnerPane() {
               height: "100%",
               zIndex: 1, // Low zIndex to allow text selection
               onMouseDown: (e: any) => {
+                e?.stopPropagation?.();
                 // Track mousedown for drag detection
                 runnerMouseDownTime = Date.now();
                 runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
               },
               onMouseUp: (e: any) => {
+                e?.stopPropagation?.();
                 // Check if this was a drag (long press or moved)
                 const elapsed = Date.now() - runnerMouseDownTime;
                 const moved = runnerMouseDownPos && (
@@ -4196,10 +4209,12 @@ function renderRunnerPane() {
             height: "100%",
             zIndex: 1, // Low zIndex to allow text selection
             onMouseDown: (e: any) => {
+              e?.stopPropagation?.();
               runnerMouseDownTime = Date.now();
               runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
             },
             onMouseUp: (e: any) => {
+              e?.stopPropagation?.();
               const elapsed = Date.now() - runnerMouseDownTime;
               const moved = runnerMouseDownPos && (
                 Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
@@ -4263,6 +4278,14 @@ function renderRunnerPane() {
       gap: 0,
       zIndex: 1000,
       onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        if (runnerInputTyping) return;
+        if (runnerFocused) {
+          runnerFocused = false;
+          runnerInputTyping = false;
+          requestRender?.();
+          return;
+        }
         if (!runnerFocused) {
           e?.preventDefault?.();
           runnerFocused = true;
@@ -5086,7 +5109,23 @@ async function main() {
     const loading = renderLoadingBadge();
     const tabSwitcher = renderTabSwitcher();
     const root = Box(
-      { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+      {
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        backgroundColor: C.bg,
+        onMouseDown: (e: any) => {
+          if (!runnerFocused || runnerInputTyping) return;
+          if (screen !== "dashboard" && screen !== "my-gpu-view") return;
+          const y = Number(e?.clientY ?? -1);
+          if (!Number.isFinite(y)) return;
+          if (y < runnerPaneTopRow()) {
+            runnerFocused = false;
+            runnerInputTyping = false;
+            requestRender?.();
+          }
+        },
+      },
       newNode,
       ...(toast ? [toast] : []),
       ...(loading ? [loading] : []),
