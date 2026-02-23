@@ -5792,13 +5792,21 @@ async function main() {
       
       // === DASHBOARD FOCUS MODE (default) ===
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
-        if (snapshot && selectedNodeIdx > 0) {
-          selectedNodeIdx--;
+        if (snapshot && snapshot.nodes.length > 0) {
+          if (selectedNodeIdx <= 0) {
+            selectedNodeIdx = snapshot.nodes.length - 1;
+          } else {
+            selectedNodeIdx--;
+          }
           render();
         }
       } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
-        if (snapshot && selectedNodeIdx < snapshot.nodes.length - 1) {
-          selectedNodeIdx++;
+        if (snapshot && snapshot.nodes.length > 0) {
+          if (selectedNodeIdx >= snapshot.nodes.length - 1) {
+            selectedNodeIdx = 0;
+          } else {
+            selectedNodeIdx++;
+          }
           render();
         }
       } else if (key.name === "return") {
