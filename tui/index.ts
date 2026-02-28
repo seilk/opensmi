@@ -130,6 +130,7 @@ interface Job {
 
 // ── State ──────────────────────────────────────────────────────────
 
+let appVersion = ""; // populated at startup via opensmi --version
 let snapshot: ClusterSnapshot | null = null;
 let extraSnapshots: (ClusterSnapshot | null)[] = [];
 let extraPollErrors: string[] = [];
@@ -2410,10 +2411,10 @@ function renderDashboard() {
       backgroundColor: C.bgAlt,
     },
     Text({
-      content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))} ${fg(C.textDim)("· opensmi")}`,
+      content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
     }),
     Text({
-      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}  ${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
     })
   );
 
@@ -2734,8 +2735,8 @@ function renderDashboard() {
           : (runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
               : (runnerPaneFolded
-                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[[ ]]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
-                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[[ ]]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
+                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
+                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
       })
     )
   );
@@ -6620,6 +6621,13 @@ async function main() {
 
   await loadClusterTabsFromConfig();
 
+  // Read version for header display
+  try {
+    const vr = await runOpensmi(["--version"]);
+    const m = vr.stdout.match(/\d+\.\d+\.\d+/);
+    if (m) appVersion = m[0];
+  } catch {}
+
   await Promise.all([
     loadAdminStatus(),
     pollAllClusters(),
@@ -6760,41 +6768,6 @@ async function main() {
       clearInterval(refreshInterval);
       renderer.destroy();
       process.exit(0);
-    }
-
-    if (key.sequence === "[" || key.name === "[") {
-      const tabs = buildDashboardTabs();
-      const total = tabs.length;
-      if (total > 1) {
-        activeClusterTabIdx = (activeClusterTabIdx - 1 + total) % total;
-        slurmSelectedIdx = 0;
-        slurmScrollOff = 0;
-        slurmSortKey = "none";
-        slurmRunPopup = null;
-        const nextTab = tabs[activeClusterTabIdx] ?? null;
-        if (nextTab?.type === "slurm" && !slurmSnapshots[nextTab.idx]?.nodes?.length) {
-          await loadSlurmData();
-        }
-      }
-      render();
-      return;
-    }
-    if (key.sequence === "]" || key.name === "]") {
-      const tabs = buildDashboardTabs();
-      const total = tabs.length;
-      if (total > 1) {
-        activeClusterTabIdx = (activeClusterTabIdx + 1) % total;
-        slurmSelectedIdx = 0;
-        slurmScrollOff = 0;
-        slurmSortKey = "none";
-        slurmRunPopup = null;
-        const nextTab = tabs[activeClusterTabIdx] ?? null;
-        if (nextTab?.type === "slurm" && !slurmSnapshots[nextTab.idx]?.nodes?.length) {
-          await loadSlurmData();
-        }
-      }
-      render();
-      return;
     }
 
     if (screen === "dashboard" || screen === "my-gpu-view") {
