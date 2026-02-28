@@ -3942,32 +3942,67 @@ function renderSlurmClusterTab(slurmIdx: number) {
     Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
   );
 
+  // Sort nodes
+  const sortedNodes = [...nodes].sort((a, b) => {
+    switch (slurmSortKey) {
+      case "name":      return a.name.localeCompare(b.name);
+      case "partition": return (a.partition || "").localeCompare(b.partition || "");
+      case "free_asc":  return a.gpu_free - b.gpu_free;
+      case "free_desc": return b.gpu_free - a.gpu_free;
+      default:          return 0;
+    }
+  });
+
   // Column widths
   const nodeW = 12;
-  const partW = 14;
-  const freeW = 5;
+  // Dynamic partition width: fit longest name, min 12, max 22
+  const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
+  const partW = Math.min(22, Math.max(12, maxPartLen + 1));
+  const freeW = 6;
   // Clamp max GPU columns to fit screen — prefer showing user names legibly
   const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
   const gpuW = maxDisplayGpus > 0
     ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
     : 8;
 
-  // Table header
+  // Sort indicator helper
+  const sortArrow = (col: SlurmSortKey, altCol?: SlurmSortKey) => {
+    if (slurmSortKey === col || slurmSortKey === altCol) return fg(C.blue)(" ▲");
+    if (col === "free_asc" && slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
+    return fg(C.textDim)(" ·");
+  };
+
+  // Table header with clickable sort columns
   const gpuHeaders = Array.from({ length: maxDisplayGpus }, (_, i) =>
     Box({ width: gpuW }, Text({ content: `GPU${i}`.padEnd(gpuW), fg: C.textDim }))
   );
-  // If maxGpus > maxDisplayGpus, show truncation indicator
   const moreGpusHdr = maxGpus > maxDisplayGpus
     ? Box({ width: 4 }, Text({ content: `+${maxGpus - maxDisplayGpus}`, fg: C.textDim }))
     : null;
 
   const tableHdr = Box(
     { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
-    Box({ width: nodeW }, Text({ content: "Node".padEnd(nodeW), fg: C.textDim })),
-    Box({ width: partW }, Text({ content: "Partition".padEnd(partW), fg: C.textDim })),
+    Box(
+      { width: nodeW, onMouseDown: () => { slurmSortKey = slurmSortKey === "name" ? "none" : "name"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Node".padEnd(nodeW - 2)}${sortArrow("name")}`, fg: C.textDim }),
+    ),
+    Box(
+      { width: partW, onMouseDown: () => { slurmSortKey = slurmSortKey === "partition" ? "none" : "partition"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Partition".padEnd(partW - 2)}${sortArrow("partition")}`, fg: C.textDim }),
+    ),
     ...gpuHeaders,
     ...(moreGpusHdr ? [moreGpusHdr] : []),
-    Box({ width: freeW }, Text({ content: "Free".padEnd(freeW), fg: C.textDim })),
+    Box(
+      {
+        width: freeW,
+        onMouseDown: () => {
+          slurmSortKey = slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
+          slurmScrollOff = 0;
+          _renderHook?.();
+        },
+      },
+      Text({ content: t`${"Free".padEnd(freeW - 2)}${slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
+    ),
   );
 
   const stateIcon: Record<string, string> = {
@@ -3979,14 +4014,14 @@ function renderSlurmClusterTab(slurmIdx: number) {
   const visibleRows = Math.max(1, termHeight - 6);
 
   // Clamp scroll offset (non-destructive: only reduce, never over-clamp on small lists)
-  const maxScroll = Math.max(0, nodes.length - visibleRows);
+  const maxScroll = Math.max(0, sortedNodes.length - visibleRows);
   if (slurmScrollOff > maxScroll) slurmScrollOff = maxScroll;
   if (slurmScrollOff < 0) slurmScrollOff = 0;
 
   // Build all node rows first, then slice for scroll
   const allNodeRows: any[] = [];
-  for (let ni = 0; ni < nodes.length; ni++) {
-    const snode = nodes[ni]!;
+  for (let ni = 0; ni < sortedNodes.length; ni++) {
+    const snode = sortedNodes[ni]!;
     const isSelected = ni === slurmSelectedIdx;
     const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
 
@@ -4030,8 +4065,8 @@ function renderSlurmClusterTab(slurmIdx: number) {
   const nodeRows = allNodeRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
 
   // Scroll indicator
-  const scrollInfo = nodes.length > visibleRows
-    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, nodes.length)}/${nodes.length}]`
+  const scrollInfo = sortedNodes.length > visibleRows
+    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, sortedNodes.length)}/${sortedNodes.length}]`
     : "";
 
   // User summary
@@ -4149,6 +4184,8 @@ let slurmLoading = false;
 let slurmError: string | null = null;
 let slurmSelectedIdx = 0;
 let slurmScrollOff = 0;
+type SlurmSortKey = "none" | "name" | "partition" | "free_asc" | "free_desc";
+let slurmSortKey: SlurmSortKey = "none";
 
 // Module-level render hook, set inside main()
 let _renderHook: (() => void) | null = null;
@@ -6191,6 +6228,7 @@ async function main() {
           clusterTabIdx = (clusterTabIdx + 1) % clusterTabCount;
           slurmSelectedIdx = 0;
           slurmScrollOff = 0;
+          slurmSortKey = "none";
           // Load slurm data if switching to slurm tab for first time
           if (clusterTabIdx > 0 && slurmSnapshots.length > 0 && !slurmSnapshots[clusterTabIdx - 1]?.nodes?.length) {
             await loadSlurmData();
