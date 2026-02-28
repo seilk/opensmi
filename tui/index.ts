@@ -3994,8 +3994,8 @@ function renderSlurmClusterTab(slurmIdx: number) {
       const slot = snode.gpus?.[gi];
       if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
       if (slot.user === "???") {
-        // Non-Slurm / unattributed usage — show in red
-        return Box({ width: gpuW }, Text({ content: "???".padEnd(gpuW), fg: C.red }));
+        // Occupied but owner unidentifiable (Slurm visibility/policy limit)
+        return Box({ width: gpuW }, Text({ content: "👤".padEnd(gpuW), fg: C.yellow }));
       }
       if (slot.user) {
         const label = slot.user.length > gpuW - 1 ? slot.user.slice(0, gpuW - 2) + "…" : slot.user;
@@ -4041,7 +4041,10 @@ function renderSlurmClusterTab(slurmIdx: number) {
       if (sg.user) userCounts[sg.user] = (userCounts[sg.user] || 0) + 1;
     }
   }
-  const userParts = Object.entries(userCounts).sort((a, b) => b[1] - a[1]).map(([u, c]) => `${u}:${c}`).join("  ");
+  const userParts = Object.entries(userCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([u, c]) => u === "???" ? `👤:${c}` : `${u}:${c}`)
+    .join("  ");
 
   const footer = Box(
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
