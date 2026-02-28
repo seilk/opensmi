@@ -25,7 +25,7 @@ from .models import (
     PreflightCheckType,
     RemoteExecutionContext,
 )
-from .config import load_config, save_default_config
+from .config import load_all_clusters, load_config, save_default_config
 from .sshutil import SSHRunError, ssh_bash_script, ssh_run
 from .executor import (
     inject_cuda_visible_devices,
@@ -1004,7 +1004,16 @@ def _cmd_poll(args: argparse.Namespace) -> int:
         )
         return 2
 
-    cfg = load_config(cfg_path)
+    clusters = load_all_clusters(cfg_path)
+    cluster_idx = int(getattr(args, "cluster_idx", 0) or 0)
+    if cluster_idx < 0 or cluster_idx >= len(clusters):
+        print(
+            f"Invalid --cluster-idx {cluster_idx}; expected 0..{len(clusters) - 1}",
+            file=sys.stderr,
+        )
+        return 2
+
+    cfg = clusters[cluster_idx]
 
     cluster_snap = asyncio.run(poll_cluster(cfg, timeout_s=int(args.timeout)))
 
@@ -1022,6 +1031,32 @@ def _cmd_poll(args: argparse.Namespace) -> int:
             + "\n",
         )
 
+    return 0
+
+
+def _cmd_clusters_list(args: argparse.Namespace) -> int:
+    state_dir = get_state_dir(args.state_dir)
+    cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+
+    if not cfg_path.exists():
+        print(
+            f"Config not found: {cfg_path}\n"
+            f"Run: opensmi init\n"
+            f"Tip: override with --config or OPENSMI_CONFIG",
+            file=sys.stderr,
+        )
+        return 2
+
+    clusters = load_all_clusters(cfg_path)
+    payload = [
+        {"cluster_name": c.cluster_name, "node_count": len(c.nodes)} for c in clusters
+    ]
+
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=False))
+    else:
+        for c in payload:
+            print(f"{c['cluster_name']}\t{c['node_count']}")
     return 0
 
 
@@ -2244,7 +2279,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write <state-dir>/latest_snapshot.json",
     )
+    sp_poll.add_argument(
+        "--cluster-idx",
+        default=0,
+        type=int,
+        help="Cluster index from config (default: 0)",
+    )
     sp_poll.set_defaults(func=_cmd_poll)
+
+    sp_clusters = sub.add_parser("clusters", help="Cluster config helpers")
+    clusters_sub = sp_clusters.add_subparsers(dest="clusters_cmd", required=True)
+    sp_clusters_list = clusters_sub.add_parser("list", help="List configured clusters")
+    sp_clusters_list.add_argument("--json", action="store_true", help="Print JSON")
+    sp_clusters_list.set_defaults(func=_cmd_clusters_list)
 
     # ── alloc ──
     sp_alloc = sub.add_parser("alloc", help="Manage GPU allocations")
