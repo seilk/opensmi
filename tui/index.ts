@@ -3888,6 +3888,7 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
     gpuCount: 1,
     editMode: false,
     cmdOverride: null,
+    cursorPos: 0,
     copyStatus: "idle",
     errorMsg: "",
     fullCmdForFallback: "",
@@ -3956,6 +3957,7 @@ function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null 
 
 // Wrap a string into lines of maxWidth characters
 function wrapText(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [text];
   if (text.length <= maxWidth) return [text];
   const lines: string[] = [];
   let remaining = text;
@@ -3965,6 +3967,14 @@ function wrapText(text: string, maxWidth: number): string[] {
   }
   if (remaining.length > 0) lines.push(remaining);
   return lines;
+}
+
+// Wrap text and insert a visible cursor `|` at cursorPos for edit mode rendering
+function wrapTextWithCursor(text: string, cursorPos: number, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [text];
+  const clampedPos = Math.max(0, Math.min(cursorPos, text.length));
+  const withCursor = text.slice(0, clampedPos) + "|" + text.slice(clampedPos);
+  return wrapText(withCursor, maxWidth);
 }
 
 function renderSrunPopup(popup: SlurmRunPopup): any {
@@ -4024,10 +4034,8 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   )));
 
   if (popup.editMode) {
-    // Show command with cursor at end, wrapped
-    const cmdWithCursor = cmd + "|";
     const wrapW = innerW - 2; // "▶ " prefix
-    const wrapped = wrapText(cmdWithCursor, wrapW);
+    const wrapped = wrapTextWithCursor(cmd, popup.cursorPos, wrapW);
     for (let i = 0; i < wrapped.length; i++) {
       rows.push(line(Box({ flexDirection: "row" },
         Text({ content: i === 0 ? "▶ " : "  ", fg: C.cyan }),
@@ -4673,6 +4681,7 @@ interface SlurmRunPopup {
   // command edit
   editMode: boolean;
   cmdOverride: string | null; // null = use auto-generated command
+  cursorPos: number;           // cursor index in cmdOverride (or auto cmd)
   // copy ui state
   copyStatus: "idle" | "ok" | "fail" | "stale";
   errorMsg: string;
@@ -6674,24 +6683,41 @@ async function main() {
 
         // --- Edit mode: raw text input ---
         if (popup.editMode) {
-          if (key.name === "escape") {
+          const cur = popup.cmdOverride ?? srunCommand(popup);
+          const pos = Math.max(0, Math.min(popup.cursorPos, cur.length));
+          if (key.name === "escape" || key.name === "return") {
             // Exit edit mode (keep changes)
             popup.editMode = false;
             popup.copyStatus = "idle";
             _renderHook?.();
-          } else if (key.name === "return") {
-            // Confirm edit, exit edit mode
-            popup.editMode = false;
-            popup.copyStatus = "idle";
+          } else if (key.name === "left") {
+            popup.cursorPos = Math.max(0, pos - 1);
+            _renderHook?.();
+          } else if (key.name === "right") {
+            popup.cursorPos = Math.min(cur.length, pos + 1);
+            _renderHook?.();
+          } else if (key.name === "home" || (key.ctrl && key.sequence === "\x01")) {
+            popup.cursorPos = 0;
+            _renderHook?.();
+          } else if (key.name === "end" || (key.ctrl && key.sequence === "\x05")) {
+            popup.cursorPos = cur.length;
             _renderHook?.();
           } else if (key.name === "backspace" || key.sequence === "\x7f") {
-            const cur = popup.cmdOverride ?? srunCommand(popup);
-            popup.cmdOverride = cur.slice(0, -1);
-            popup.copyStatus = "idle";
-            _renderHook?.();
+            if (pos > 0) {
+              popup.cmdOverride = cur.slice(0, pos - 1) + cur.slice(pos);
+              popup.cursorPos = pos - 1;
+              popup.copyStatus = "idle";
+              _renderHook?.();
+            }
+          } else if (key.name === "delete") {
+            if (pos < cur.length) {
+              popup.cmdOverride = cur.slice(0, pos) + cur.slice(pos + 1);
+              popup.copyStatus = "idle";
+              _renderHook?.();
+            }
           } else if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1) {
-            const cur = popup.cmdOverride ?? srunCommand(popup);
-            popup.cmdOverride = cur + key.sequence;
+            popup.cmdOverride = cur.slice(0, pos) + key.sequence + cur.slice(pos);
+            popup.cursorPos = pos + 1;
             popup.copyStatus = "idle";
             _renderHook?.();
           }
@@ -6725,6 +6751,7 @@ async function main() {
           if (popup.jobSubmitStatus === "idle" || popup.jobSubmitStatus === "running") {
             if (popup.cmdOverride === null) popup.cmdOverride = srunCommand(popup);
             popup.editMode = true;
+            popup.cursorPos = popup.cmdOverride.length;
             popup.copyStatus = "idle";
             _renderHook?.();
           }
