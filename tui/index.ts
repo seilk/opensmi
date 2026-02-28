@@ -137,7 +137,7 @@ let lastPollTime = "";
 let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
-let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "my-gpu-view" | "jobs" | "setup" = "dashboard";
+let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "my-gpu-view" | "jobs" | "setup" | "slurm" = "dashboard";
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -2536,102 +2536,6 @@ function renderDashboard() {
     )
   );
 
-  // ── Slurm cluster tables ──
-  const slurmRows: any[] = [];
-  for (const ssnap of slurmSnapshots) {
-    if (!ssnap.nodes || ssnap.nodes.length === 0) continue;
-
-    const sTotalGpus = ssnap.nodes.reduce((s: number, n: any) => s + n.gpu_total, 0);
-    const sUsedGpus = ssnap.nodes.reduce((s: number, n: any) => s + n.gpu_used, 0);
-    const sMaxGpus = ssnap.nodes.reduce((m: number, n: any) => Math.max(m, n.gpu_total), 0);
-
-    // Slurm header
-    slurmRows.push(
-      Box(
-        { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, paddingTop: 1, backgroundColor: C.bgAlt },
-        Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name || "Slurm"))} ${fg(C.textDim)("· slurm")}` }),
-        Text({ content: t`GPUs: ${fg(sUsedGpus > 0 ? C.green : C.textDim)(`${sUsedGpus}`)}/${sTotalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
-      )
-    );
-
-    // Slurm GPU column widths
-    const sNodeW = 12;
-    const sPartW = 16;
-    const sFreeW = 6;
-    const termW = process.stdout.columns || 80;
-    const sGpuW = Math.max(10, Math.floor((termW - sNodeW - sPartW - sFreeW - 3) / Math.max(sMaxGpus, 1)));
-
-    // Slurm table header
-    const sGpuHeaders = Array.from({ length: sMaxGpus }, (_, i) =>
-      Box({ width: sGpuW }, Text({ content: `GPU${i}`.padEnd(sGpuW), fg: C.textDim }))
-    );
-    slurmRows.push(
-      Box(
-        { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
-        Box({ width: sNodeW }, Text({ content: "Node".padEnd(sNodeW), fg: C.textDim })),
-        Box({ width: sPartW }, Text({ content: "Partition".padEnd(sPartW), fg: C.textDim })),
-        ...sGpuHeaders,
-        Box({ width: sFreeW }, Text({ content: "Free".padEnd(sFreeW), fg: C.textDim })),
-      )
-    );
-
-    // Slurm node rows
-    const stateIcon: Record<string, string> = {
-      idle: "🟢", mixed: "🟡", allocated: "🔴", down: "⚫", drain: "⚫", drained: "⚫",
-    };
-
-    for (const snode of ssnap.nodes) {
-      const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
-      const sgpuCells = Array.from({ length: sMaxGpus }, (_, gi) => {
-        const slot = snode.gpus?.[gi];
-        if (!slot) return Box({ width: sGpuW }, Text({ content: "".padEnd(sGpuW), fg: C.textDim }));
-        if (slot.user) {
-          const label = slot.user.length > sGpuW - 1
-            ? slot.user.slice(0, sGpuW - 2) + "…"
-            : slot.user;
-          return Box({ width: sGpuW }, Text({ content: label.padEnd(sGpuW), fg: C.yellow }));
-        }
-        return Box({ width: sGpuW }, Text({ content: "·".padEnd(sGpuW), fg: C.textDim }));
-      });
-
-      slurmRows.push(
-        Box(
-          { flexDirection: "row", paddingLeft: 1, width: "100%" },
-          Box({ width: sNodeW }, Text({ content: `${icon}${snode.name}`.slice(0, sNodeW).padEnd(sNodeW), fg: C.text })),
-          Box({ width: sPartW }, Text({ content: (snode.partition || "").slice(0, sPartW - 1).padEnd(sPartW), fg: C.textDim })),
-          ...sgpuCells,
-          Box({ width: sFreeW }, Text({
-            content: `${snode.gpu_free}`.padEnd(sFreeW),
-            fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
-          })),
-        )
-      );
-    }
-
-    // Per-user summary for this Slurm cluster
-    const sUserCounts: Record<string, number> = {};
-    for (const sn of ssnap.nodes) {
-      for (const sg of (sn.gpus || [])) {
-        if (sg.user) sUserCounts[sg.user] = (sUserCounts[sg.user] || 0) + 1;
-      }
-    }
-    const sUserParts = Object.entries(sUserCounts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([u, c]) => `${u}:${c}`)
-      .join("  ");
-    if (sUserParts) {
-      slurmRows.push(
-        Box({ paddingLeft: 1 }, Text({ content: t`${fg(C.textDim)("Users:")} ${sUserParts}` }))
-      );
-    }
-
-    if (ssnap.errors?.length) {
-      slurmRows.push(
-        Box({ paddingLeft: 1 }, Text({ content: t`⚠ ${ssnap.errors.join("; ")}`, fg: C.red }))
-      );
-    }
-  }
-
   return Box(
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
@@ -2639,7 +2543,6 @@ function renderDashboard() {
       header,
       tableHeader,
       ...rows,
-      ...slurmRows,
       footer
     ),
     renderRunnerPane()
@@ -4027,6 +3930,184 @@ async function loadSlurmData(): Promise<void> {
 }
 
 
+// ── Slurm Tab (dedicated, Dashboard-style) ──────────────────────
+
+let slurmSelectedIdx = 0;
+let slurmScrollOff = 0;
+
+function renderSlurmTab() {
+  if (slurmLoading && slurmSnapshots.length === 0) {
+    return Box(
+      { flexDirection: "column", paddingLeft: 1, width: "100%", height: "100%", backgroundColor: C.bg },
+      Text({ content: t`${bold(fg(C.blue)("Slurm GPU Overview"))} — Loading...`, fg: C.text }),
+    );
+  }
+
+  if (slurmError && slurmSnapshots.length === 0) {
+    return Box(
+      { flexDirection: "column", paddingLeft: 1, width: "100%", height: "100%", backgroundColor: C.bg },
+      Text({ content: t`${bold("Slurm GPU Overview")} — Error`, fg: C.red }),
+      Text({ content: slurmError, fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "Press 'r' to retry. Needs slurm_clusters in opensmi.json.", fg: C.textDim }),
+    );
+  }
+
+  if (slurmSnapshots.length === 0) {
+    return Box(
+      { flexDirection: "column", paddingLeft: 1, width: "100%", height: "100%", backgroundColor: C.bg },
+      Text({ content: t`${bold("Slurm GPU Overview")}`, fg: C.text }),
+      Text({ content: "No slurm_clusters configured. Add to opensmi.json and press 'r'.", fg: C.textDim }),
+    );
+  }
+
+  // Flatten all nodes across all Slurm clusters into one list
+  interface FlatSlurmNode {
+    clusterName: string;
+    node: SlurmNodeInfo;
+    isClusterHeader: boolean;
+  }
+
+  const flatNodes: FlatSlurmNode[] = [];
+  let totalGpus = 0, totalUsed = 0;
+  const globalUserCounts: Record<string, number> = {};
+
+  for (const ssnap of slurmSnapshots) {
+    for (const sn of (ssnap.nodes || [])) {
+      flatNodes.push({ clusterName: ssnap.cluster_name, node: sn, isClusterHeader: false });
+      totalGpus += sn.gpu_total;
+      totalUsed += sn.gpu_used;
+      for (const sg of (sn.gpus || [])) {
+        if (sg.user) globalUserCounts[sg.user] = (globalUserCounts[sg.user] || 0) + 1;
+      }
+    }
+  }
+
+  // Mark first node of each cluster as header
+  let prevCluster = "";
+  for (const fn of flatNodes) {
+    if (fn.clusterName !== prevCluster) {
+      fn.isClusterHeader = true;
+      prevCluster = fn.clusterName;
+    }
+  }
+
+  const termWidth = process.stdout.columns || 80;
+  const termHeight = process.stdout.rows || 24;
+  const maxGpus = flatNodes.reduce((m, fn) => Math.max(m, fn.node.gpu_total), 0);
+
+  // Column widths
+  const nodeW = 12;
+  const partW = 16;
+  const freeW = 6;
+  const gpuW = Math.max(10, Math.floor((termWidth - nodeW - partW - freeW - 3) / Math.max(maxGpus, 1)));
+
+  const stateIcon: Record<string, string> = {
+    idle: "🟢", mixed: "🟡", allocated: "🔴", down: "⚫", drain: "⚫", drained: "⚫",
+  };
+
+  // Header bar
+  const headerBar = Box(
+    { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
+    Text({ content: t`${bold(fg(C.blue)("Slurm GPU Overview"))}` }),
+    Text({ content: t`GPUs: ${fg(C.green)(`${totalUsed}`)}/${totalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
+  );
+
+  // Table header
+  const gpuHeaders = Array.from({ length: maxGpus }, (_, i) =>
+    Box({ width: gpuW }, Text({ content: `GPU${i}`.padEnd(gpuW), fg: C.textDim }))
+  );
+  const tableHdr = Box(
+    { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
+    Box({ width: nodeW }, Text({ content: "Node".padEnd(nodeW), fg: C.textDim })),
+    Box({ width: partW }, Text({ content: "Partition".padEnd(partW), fg: C.textDim })),
+    ...gpuHeaders,
+    Box({ width: freeW }, Text({ content: "Free".padEnd(freeW), fg: C.textDim })),
+  );
+
+  // Build all rows
+  const allRows: any[] = [];
+  for (let fi = 0; fi < flatNodes.length; fi++) {
+    const fn = flatNodes[fi]!;
+    const snode = fn.node;
+    const isSelected = fi === slurmSelectedIdx;
+
+    // Cluster separator
+    if (fn.isClusterHeader) {
+      allRows.push(
+        Box(
+          { paddingLeft: 1, paddingTop: fi > 0 ? 1 : 0, backgroundColor: C.bgAlt, width: "100%" },
+          Text({ content: t`${bold(fg(C.cyan)(fn.clusterName))}` }),
+        )
+      );
+    }
+
+    const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
+    const gpuCells = Array.from({ length: maxGpus }, (_, gi) => {
+      const slot = snode.gpus?.[gi];
+      if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
+      if (slot.user) {
+        const label = slot.user.length > gpuW - 1
+          ? slot.user.slice(0, gpuW - 2) + "…"
+          : slot.user;
+        return Box({ width: gpuW }, Text({ content: label.padEnd(gpuW), fg: C.yellow }));
+      }
+      return Box({ width: gpuW }, Text({ content: "·".padEnd(gpuW), fg: C.textDim }));
+    });
+
+    allRows.push(
+      Box(
+        { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined },
+        Box({ width: nodeW }, Text({ content: `${icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: isSelected ? "#ffffff" : C.text })),
+        Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
+        ...gpuCells,
+        Box({ width: freeW }, Text({
+          content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
+          fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
+        })),
+      )
+    );
+  }
+
+  // Scroll
+  const headerLines = 3;
+  const footerLines = 4;
+  const visibleRows = Math.max(1, termHeight - headerLines - footerLines);
+  const scrolledRows = allRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
+
+  // Footer
+  const userParts = Object.entries(globalUserCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([u, c]) => `${u}:${c}`)
+    .join("  ");
+
+  const slurmFooter = Box(
+    { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
+    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}` }),
+    Text({ content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " " }),
+    Text({ content: t`${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Dashboard` }),
+  );
+
+  // Error display
+  const errorRows: any[] = [];
+  for (const ssnap of slurmSnapshots) {
+    if (ssnap.errors?.length) {
+      errorRows.push(
+        Box({ paddingLeft: 1 }, Text({ content: t`⚠ ${ssnap.cluster_name}: ${ssnap.errors.join("; ")}`, fg: C.red }))
+      );
+    }
+  }
+
+  return Box(
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+    headerBar,
+    tableHdr,
+    ...scrolledRows,
+    ...errorRows,
+    slurmFooter,
+  );
+}
+
 function renderSetupView() {
   tuiLog("INFO", `renderSetupView called: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
   const rows: any[] = [];
@@ -5338,7 +5419,7 @@ async function main() {
     shortcut: "d",
     render: renderDashboard,
     onEnter: async () => {
-      await Promise.all([pollCluster(), loadAllocations(), loadSlurmData()]);
+      await Promise.all([pollCluster(), loadAllocations()]);
     },
   });
 
@@ -5375,6 +5456,16 @@ async function main() {
     onEnter: async () => {
       await loadMyGpuViewState();
       await Promise.all([pollCluster(), loadAllocations()]);
+    },
+  });
+
+  tabRegistry.register({
+    id: "slurm",
+    label: "Slurm",
+    shortcut: "l",
+    render: renderSlurmTab,
+    onEnter: async () => {
+      await loadSlurmData();
     },
   });
 
@@ -5987,7 +6078,7 @@ async function main() {
         if (node) void checkSudoForNode(node.node_alias);
         render();
       } else if (key.name === "r") {
-        await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true), loadSlurmData()]);
+        await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
         render();
       } else if (key.name === "?" || key.name === "h") {
         await navigateToTab("help");
@@ -6454,6 +6545,26 @@ async function main() {
             render();
           }
         }
+      }
+    } else if (screen === "slurm") {
+      // Count total flat nodes for bounds
+      const flatCount = slurmSnapshots.reduce((s, ss) => s + (ss.nodes?.length || 0), 0);
+      const sVisRows = Math.max(1, (process.stdout.rows || 24) - 7);
+
+      if (key.name === "up" || key.name === "k") {
+        if (slurmSelectedIdx > 0) slurmSelectedIdx--;
+        if (slurmSelectedIdx < slurmScrollOff) slurmScrollOff = slurmSelectedIdx;
+        render();
+      } else if (key.name === "down" || key.name === "j") {
+        if (slurmSelectedIdx < flatCount - 1) slurmSelectedIdx++;
+        if (slurmSelectedIdx >= slurmScrollOff + sVisRows) slurmScrollOff = slurmSelectedIdx - sVisRows + 1;
+        render();
+      } else if (key.sequence === "r" || key.sequence === "R") {
+        await loadSlurmData();
+        render();
+      } else if (key.name === "escape") {
+        await navigateToTab("dashboard");
+        render();
       }
     } else if (screen === "setup") {
       if (setupEditingField) {
