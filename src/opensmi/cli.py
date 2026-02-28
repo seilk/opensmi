@@ -801,17 +801,17 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
         return 1
 
     # ── admin ──────────────────────────────────────────────────────────────
-    default_admin = nodes[0].get("user", os.environ.get("USER", "admin"))
-    admin = (
+    _admin_raw = (
         input(
             _ob_prompt(
                 "Admin username",
-                "SSH user who manages the cluster.",
-                default_admin,
+                "SSH user who manages the cluster. Enter 'idk' to skip.",
+                "idk",
             )
         ).strip()
-        or default_admin
+        or "idk"
     )
+    admin: Optional[str] = None if _admin_raw.lower() == "idk" else _admin_raw
 
     raw_verify = (
         input(
@@ -857,7 +857,7 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
     data = {
         "cluster_name": cluster_name,
         "nodes": config_nodes,
-        "admins": {"master": admin, "members": [admin]},
+        "admins": {"master": admin, "members": ([admin] if admin else [])},
         "users": [],
         "policy": {
             "require_allocation": True,
@@ -875,6 +875,7 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
     print(_ob_box_row("", W))
     print(_ob_box_row("Next steps:", W, _OB_DIM))
     print(_ob_box_row("  opensmi poll          # verify SSH + GPUs", W))
+    print(_ob_box_row("  opensmi                # launch TUI", W))
     print(_ob_box_row("  opensmi alloc seed    # seed from live usage", W))
     print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
 
@@ -1279,6 +1280,7 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     print(_ob_box_row("", W))
     print(_ob_box_row("Next steps:", W, _OB_DIM))
     print(_ob_box_row("  opensmi poll          # verify SSH + GPUs", W))
+    print(_ob_box_row("  opensmi                # launch TUI", W))
     print(_ob_box_row("  opensmi alloc seed    # seed from live usage", W))
     print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
     return 0
@@ -1308,7 +1310,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
         print(f"  {alias} → {user}@{addr}:{port}")
         nodes.append(_host_to_config_node(h))
 
-    admin = nodes[0].get("user", "admin") if nodes else "admin"
+    admin: Optional[str] = None
 
     data = {
         "clusters": [
@@ -1319,7 +1321,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
         ],
         "admins": {
             "master": admin,
-            "members": [admin],
+            "members": [],
             "remote_sudo_groups": ["sudo", "wheel"],
         },
         "users": [],
@@ -1333,7 +1335,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
 
     atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
     print(f"\n✅ Config written: {cfg_path}")
-    print(f"Next: opensmi poll")
+    print(f"Next: Run  opensmi poll  or just  opensmi  to launch the TUI.")
     return 0
 
 
