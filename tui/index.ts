@@ -3957,18 +3957,39 @@ function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null 
   return node ? node.gpu_free : null;
 }
 
-// Wrap a string into lines of maxWidth characters
+// Strip ANSI escape codes for display-width calculation only
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+// Wrap a string into lines based on ANSI-stripped display width (raw string preserved per line)
 function wrapText(text: string, maxWidth: number): string[] {
   if (maxWidth <= 0) return [text];
-  if (text.length <= maxWidth) return [text];
+  const displayLen = stripAnsi(text).length;
+  if (displayLen <= maxWidth) return [text];
+  // Split by display characters, tracking raw offsets
   const lines: string[] = [];
-  let remaining = text;
-  while (remaining.length > maxWidth) {
-    lines.push(remaining.slice(0, maxWidth));
-    remaining = remaining.slice(maxWidth);
+  let rawIdx = 0;
+  let displayCount = 0;
+  let lineStart = 0;
+  while (rawIdx < text.length) {
+    // Skip ANSI sequences (don't count toward display width)
+    const ansiMatch = text.slice(rawIdx).match(/^\x1b\[[0-9;]*[A-Za-z]/);
+    if (ansiMatch) {
+      rawIdx += ansiMatch[0].length;
+      continue;
+    }
+    displayCount++;
+    rawIdx++;
+    if (displayCount >= maxWidth) {
+      lines.push(text.slice(lineStart, rawIdx));
+      lineStart = rawIdx;
+      displayCount = 0;
+    }
   }
-  if (remaining.length > 0) lines.push(remaining);
-  return lines;
+  if (lineStart < text.length) lines.push(text.slice(lineStart));
+  return lines.length > 0 ? lines : [text];
 }
 
 // Wrap text and insert a visible cursor `|` at cursorPos for edit mode rendering
@@ -4075,8 +4096,9 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     rows.push(line(Text({ content: "" })));
   }
 
-  // Capacity warning
-  rows.push(line(Text({ content: t`${fg(C.textDim)("⚠ Capacity is real-time and may change.")}` })));
+  // Submit note + capacity warning
+  rows.push(line(Text({ content: t`${fg(C.textDim)("ℹ  Reserves GPUs only — run workload after ssh attach.")}` })));
+  rows.push(line(Text({ content: t`${fg(C.textDim)("⚠  Capacity is real-time and may change.")}` })));
   rows.push(line(Text({ content: "" })));
 
   // Job submit status / result
@@ -4098,6 +4120,13 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
       rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
       rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
       rows.push(line(Text({ content: `export CUDA_VISIBLE_DEVICES=${popup.gpuIdxList}`, fg: C.text })));
+      rows.push(line(Text({ content: `# then run: python train.py  (or your workload)`, fg: C.textDim })));
+    } else {
+      rows.push(line(Text({ content: t`${fg(C.yellow)("GPU IDX   : unavailable (check scontrol manually)")}` })));
+      rows.push(line(Text({ content: "" })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
+      rows.push(line(Text({ content: `# check: scontrol -d show job ${popup.jobId} | grep IDX`, fg: C.textDim })));
     }
     rows.push(line(Text({ content: "" })));
   } else if (popup.jobSubmitStatus === "error") {
@@ -4253,13 +4282,21 @@ async function cancelSlurmJob() {
        `squeue -h -j ${popup.jobId} -o %u`],
       { stdout: "pipe", stderr: "pipe" }
     );
+    const ownerExit = await ownerProc.exited;
     const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
-    await ownerProc.exited;
     const expectedUser = popup.sshUser || "";
+    if (ownerExit !== 0 || (!jobOwner && expectedUser)) {
+      // squeue lookup failed (permissions issue or transient error) — block for safety
+      tuiLog("WARNING", `cancelSlurmJob: owner lookup failed (exit=${ownerExit} jobOwner="${jobOwner}") — blocking scancel`);
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = `Owner check unavailable (squeue exit ${ownerExit}); cancel blocked for safety. Run: scancel ${popup.jobId}`;
+      _renderHook?.();
+      return;
+    }
     if (jobOwner && expectedUser && jobOwner !== expectedUser) {
       tuiLog("WARNING", `cancelSlurmJob: ownership mismatch — job ${popup.jobId} owner="${jobOwner}" expected="${expectedUser}", refusing scancel`);
       popup.jobSubmitStatus = "error";
-      popup.jobErrorMsg = `Ownership mismatch: job ${popup.jobId} belongs to "${jobOwner}", not "${expectedUser}"`;
+      popup.jobErrorMsg = `Job ${popup.jobId} owned by "${jobOwner}"; cancel denied.`;
       _renderHook?.();
       return;
     }
