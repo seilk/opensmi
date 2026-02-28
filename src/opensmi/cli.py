@@ -1930,8 +1930,8 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
         import json as _json
         state_dir = get_state_dir(args.state_dir)
         cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
-        cfg = load_config(cfg_path)
-        names = [sc.name for sc in (cfg.slurm_clusters or [])]
+        data = _json.loads(cfg_path.read_text(encoding="utf-8"))
+        names = [sc.get("name", "Slurm Cluster") for sc in data.get("slurm_clusters", [])]
         print(_json.dumps(names))
         return 0
 
