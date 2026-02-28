@@ -52,6 +52,8 @@ class SlurmClusterSnapshot:
     timestamp: str = ""
     nodes: List[SlurmNodeInfo] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    login_node: Optional[str] = None
+    ssh_user: str = ""
 
 
 # ── Shell helpers ───────────────────────────────────────────────────
@@ -198,6 +200,8 @@ def collect_slurm_snapshot(
     snap = SlurmClusterSnapshot(
         timestamp=datetime.now(_KST).isoformat(timespec="seconds"),
         cluster_name=cluster_name,
+        login_node=login_node,
+        ssh_user=ssh_user,
     )
 
     def run_cmd(cmd: List[str]) -> str:
