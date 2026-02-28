@@ -4143,15 +4143,10 @@ async function submitJobToSlurm() {
 
   try {
     // 1. sbatch sleep infinity
-    const sbatchArgs = [
-      "sbatch",
-      `--partition=${popup.partition}`,
-      `--nodelist=${popup.nodeName}`,
-      `--gres=gpu:${popup.gpuCount}`,
-      "--wrap", "sleep infinity",
-    ];
+    // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
-    const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, ...sbatchArgs];
+    const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount} --wrap 'sleep infinity'`;
+    const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, remoteCmd];
 
     const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
     const sbatchOut = await new Response(sbatchProc.stdout).text();
