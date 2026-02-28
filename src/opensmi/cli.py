@@ -1937,14 +1937,27 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
 
     # If --all, load from config
     if getattr(args, "show_all", False):
+        import json as _json
         state_dir = get_state_dir(args.state_dir)
         cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
-        cfg = load_config(cfg_path)
-        if not cfg.slurm_clusters:
+        # Read slurm_clusters from root JSON (works for both legacy and clusters[] format)
+        raw_data = _json.loads(cfg_path.read_text(encoding="utf-8"))
+        raw_slurm = raw_data.get("slurm_clusters", [])
+        if not raw_slurm:
             print("No slurm_clusters configured in opensmi.json", file=sys.stderr)
             return 1
+        from .models import SlurmClusterConfig
+        slurm_clusters = [
+            SlurmClusterConfig(
+                name=str(sc.get("name", "Slurm Cluster")),
+                login_node=str(sc["login_node"]),
+                user=str(sc.get("user", "")),
+                port=int(sc.get("port", 22)),
+            )
+            for sc in raw_slurm
+        ]
         results = []
-        for sc in cfg.slurm_clusters:
+        for sc in slurm_clusters:
             snap = collect_slurm_snapshot(
                 partition_filter=args.partition,
                 node_filter=args.node,
