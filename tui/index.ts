@@ -131,6 +131,7 @@ interface Job {
 // ── State ──────────────────────────────────────────────────────────
 
 let appVersion = ""; // populated at startup via opensmi --version
+let latestVersion = ""; // populated after update check; non-empty = update available
 let snapshot: ClusterSnapshot | null = null;
 let extraSnapshots: (ClusterSnapshot | null)[] = [];
 let extraPollErrors: string[] = [];
@@ -458,7 +459,9 @@ async function maybeShowUpdateNotification(): Promise<void> {
     if (!latest) return;
 
     if (isRemoteNewer(current, latest)) {
+      latestVersion = latest;
       setStatus(`Update available: v${latest}  → run: opensmi update`, 3000);
+      requestRender?.();
     }
   } catch {
     // quiet fail (offline/firewall/etc.)
@@ -1777,7 +1780,11 @@ function renderDashboardTabBar() {
     ),
     Box(
       { backgroundColor: C.bgAlt, paddingLeft: 1, paddingRight: 1 },
-      Text({ content: t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}` }),
+      Text({
+        content: latestVersion
+          ? t`${fg(C.yellow)(`opensmi@${appVersion} → ${latestVersion} ↑`)}` 
+          : t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
+      }),
     ),
   );
 }
