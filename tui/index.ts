@@ -3895,9 +3895,16 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
     jobId: "",
     gpuIdxList: "",
     jobErrorMsg: "",
+    jobAbortRequested: false,
+    qosList: [],
+    qosIdx: 0,
   };
   tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
   _renderHook?.();
+  // Async fetch QoS list for this partition
+  if (snap?.login_node) {
+    fetchQosForPartition(snap.login_node, snap.ssh_user || "", node.partition || "");
+  }
 }
 
 function closeSrunPopup() {
@@ -3947,6 +3954,19 @@ function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null 
   return node ? node.gpu_free : null;
 }
 
+// Wrap a string into lines of maxWidth characters
+function wrapText(text: string, maxWidth: number): string[] {
+  if (text.length <= maxWidth) return [text];
+  const lines: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxWidth) {
+    lines.push(remaining.slice(0, maxWidth));
+    remaining = remaining.slice(maxWidth);
+  }
+  if (remaining.length > 0) lines.push(remaining);
+  return lines;
+}
+
 function renderSrunPopup(popup: SlurmRunPopup): any {
   const autoCmd = srunCommand(popup);
   const cmd = popup.cmdOverride !== null ? popup.cmdOverride : autoCmd;
@@ -3956,8 +3976,10 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   const gpuInvalid = !isEdited && (popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
     || !Number.isInteger(popup.gpuCount));
   const canCopy = !gpuInvalid && !isStale && !(isEdited && cmd.trim() === "");
+  const busy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling" || popup.jobSubmitStatus === "cancelling";
 
-  const w = Math.min(58, (process.stdout.columns || 80) - 4);
+  const w = Math.min(62, (process.stdout.columns || 80) - 4);
+  const innerW = w - 2; // padding 1 each side
 
   const line = (content: any) => Box({ width: w, paddingLeft: 1, paddingRight: 1 }, content);
 
@@ -3975,42 +3997,65 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     // GPU count input
     line(Box({ flexDirection: "row" },
       Text({ content: t`${fg(C.textDim)("GPUs      :")} ` }),
-      Text({
-        content: `[${popup.gpuCount}]`,
-        fg: gpuInvalid ? C.red : C.green,
-      }),
-      Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}`, fg: C.textDim }),
+      Text({ content: `[${popup.gpuCount}]`, fg: gpuInvalid ? C.red : C.green }),
+      Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}` }),
     )),
-    line(Text({ content: "" })),
-    // Command preview / edit
-    line(Box({ flexDirection: "row" },
-      Text({ content: t`${fg(C.textDim)("Command:")}` }),
-      isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
-      popup.editMode ? Text({ content: t`  ${fg(C.cyan)("(editing — Esc to exit)")}` }) : Text({ content: t`  ${fg(C.textDim)("(e to edit, r to reset)")}` }),
-    )),
-    popup.editMode
-      ? line(Box({ flexDirection: "row" },
-          Text({ content: "▶ ", fg: C.cyan }),
-          Text({ content: cmd + "█", fg: C.cyan }),
-        ))
-      : line(Text({ content: cmd, fg: canCopy ? C.text : C.red })),
-    line(Text({ content: "" })),
   ];
 
-  // Error / status
+  // QoS selector (only if list available)
+  if (popup.qosList.length > 0) {
+    const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
+    rows.push(line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("QoS       :")} ` }),
+      Text({ content: `[${qosLabel}]`, fg: C.cyan }),
+      Text({ content: t`  ${fg(C.textDim)("Q to cycle")}` }),
+    )));
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Command preview / edit (with line wrap)
+  rows.push(line(Box({ flexDirection: "row" },
+    Text({ content: t`${fg(C.textDim)("Command:")}` }),
+    isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
+    popup.editMode
+      ? Text({ content: t`  ${fg(C.cyan)("editing — Enter/Esc to confirm")}` })
+      : Text({ content: t`  ${fg(C.textDim)("e: edit  r: reset")}` }),
+  )));
+
+  if (popup.editMode) {
+    // Show command with cursor at end, wrapped
+    const cmdWithCursor = cmd + "|";
+    const wrapW = innerW - 2; // "▶ " prefix
+    const wrapped = wrapText(cmdWithCursor, wrapW);
+    for (let i = 0; i < wrapped.length; i++) {
+      rows.push(line(Box({ flexDirection: "row" },
+        Text({ content: i === 0 ? "▶ " : "  ", fg: C.cyan }),
+        Text({ content: wrapped[i]!, fg: C.cyan }),
+      )));
+    }
+  } else {
+    const wrapW = innerW;
+    const wrapped = wrapText(cmd, wrapW);
+    for (const wline of wrapped) {
+      rows.push(line(Text({ content: wline, fg: canCopy ? C.text : C.red })));
+    }
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Copy status
   if (isStale) {
     rows.push(line(Text({ content: t`${fg(C.red)("⚠ " + popup.errorMsg)}` })));
     rows.push(line(Text({ content: "" })));
   }
-
-  // Fallback command
   if (popup.copyStatus === "fail" && popup.fullCmdForFallback) {
-    rows.push(line(Text({ content: t`${fg(C.yellow)("Clipboard unavailable. Copy manually:")}` })));
-    rows.push(line(Text({ content: popup.fullCmdForFallback, fg: C.text })));
+    rows.push(line(Text({ content: t`${fg(C.yellow)("Clipboard unavailable — copy manually:")}` })));
+    for (const wl of wrapText(popup.fullCmdForFallback, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.text })));
+    }
     rows.push(line(Text({ content: "" })));
   }
-
-  // Copy success
   if (popup.copyStatus === "ok") {
     rows.push(line(Text({ content: t`${fg(C.green)("✓ Copied to clipboard!")}` })));
     rows.push(line(Text({ content: "" })));
@@ -4022,10 +4067,13 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
 
   // Job submit status / result
   if (popup.jobSubmitStatus === "submitting") {
-    rows.push(line(Text({ content: t`${fg(C.cyan)("⟳ Submitting job...")}` })));
+    rows.push(line(Text({ content: t`${fg(C.cyan)("⟳ Submitting job...")}  ${fg(C.textDim)("Esc to abort")}` })));
     rows.push(line(Text({ content: "" })));
   } else if (popup.jobSubmitStatus === "polling") {
-    rows.push(line(Text({ content: t`${fg(C.cyan)(`⟳ Waiting for job ${popup.jobId} to start...`)}` })));
+    rows.push(line(Text({ content: t`${fg(C.cyan)(`⟳ Waiting for job ${popup.jobId} to start...`)}  ${fg(C.textDim)("Esc to abort")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "cancelling") {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling job...")}` })));
     rows.push(line(Text({ content: "" })));
   } else if (popup.jobSubmitStatus === "running") {
     rows.push(line(Text({ content: t`${fg(C.green)(`✓ Job ${popup.jobId} is RUNNING`)}` })));
@@ -4033,38 +4081,54 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     if (popup.gpuIdxList) {
       rows.push(line(Text({ content: t`${fg(C.textDim)("GPU IDX   :")} ${fg(C.green)(popup.gpuIdxList)}` })));
       rows.push(line(Text({ content: "" })));
-      rows.push(line(Text({ content: t`${fg(C.textDim)("Run in your terminal:")}` })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
       rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
       rows.push(line(Text({ content: `export CUDA_VISIBLE_DEVICES=${popup.gpuIdxList}`, fg: C.text })));
     }
     rows.push(line(Text({ content: "" })));
-    rows.push(line(Text({ content: t`${fg(C.yellow)(`scancel ${popup.jobId}  ← run when done`)}` })));
-    rows.push(line(Text({ content: "" })));
   } else if (popup.jobSubmitStatus === "error") {
-    rows.push(line(Text({ content: t`${fg(C.red)(`✗ ${popup.jobErrorMsg}`)}` })));
+    for (const wl of wrapText(`✗ ${popup.jobErrorMsg}`, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.red })));
+    }
     rows.push(line(Text({ content: "" })));
   }
 
   // Action bar
-  const canSubmit = !popup.editMode && !!popup.loginNode && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
-  const submitBusy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling";
+  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
+  const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
+  const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
+
   rows.push(line(Box({ flexDirection: "row" },
     Box({
       paddingLeft: 1, paddingRight: 1,
-      backgroundColor: canCopy && !popup.editMode ? C.blue : C.bgAlt,
-      onMouseDown: canCopy && !popup.editMode ? async () => { await submitSrunPopup(); } : undefined,
-    }, Text({ content: "C: Copy cmd", fg: canCopy && !popup.editMode ? "#ffffff" : C.textDim })),
+      backgroundColor: canCopy && !popup.editMode && !busy ? C.blue : C.bgAlt,
+      onMouseDown: canCopy && !popup.editMode && !busy ? async () => { await submitSrunPopup(); } : undefined,
+    }, Text({ content: "C: Copy", fg: canCopy && !popup.editMode && !busy ? "#ffffff" : C.textDim })),
     Text({ content: "  " }),
-    Box({
-      paddingLeft: 1, paddingRight: 1,
-      backgroundColor: canSubmit ? C.green : C.bgAlt,
-      onMouseDown: canSubmit ? async () => { await submitJobToSlurm(); } : undefined,
-    }, Text({ content: submitBusy ? "Submitting…" : "S: Submit Job", fg: canSubmit ? "#000000" : C.textDim })),
+    canCancel
+      ? Box({
+          paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+          onMouseDown: () => { cancelSlurmJob(); },
+        }, Text({ content: "X: Cancel Job", fg: "#ffffff" }))
+      : canResubmit
+        ? Box({
+            paddingLeft: 1, paddingRight: 1, backgroundColor: C.yellow,
+            onMouseDown: () => { submitJobToSlurm(); },
+          }, Text({ content: "R: Resubmit", fg: "#000000" }))
+        : Box({
+            paddingLeft: 1, paddingRight: 1,
+            backgroundColor: canSubmit ? C.green : C.bgAlt,
+            onMouseDown: canSubmit ? () => { submitJobToSlurm(); } : undefined,
+          }, Text({ content: busy ? "…" : "S: Submit", fg: canSubmit ? "#000000" : C.textDim })),
     Text({ content: "  " }),
     Box({
       paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
-      onMouseDown: () => popup.editMode ? (popup.editMode = false, _renderHook?.()) : closeSrunPopup(),
-    }, Text({ content: popup.editMode ? "Esc: Done" : "Esc: Close", fg: C.textDim })),
+      onMouseDown: () => {
+        if (popup.editMode) { popup.editMode = false; _renderHook?.(); }
+        else if (busy) { popup.jobAbortRequested = true; _renderHook?.(); }
+        else closeSrunPopup();
+      },
+    }, Text({ content: popup.editMode ? "Esc: Done" : busy ? "Esc: Abort" : "Esc: Close", fg: C.textDim })),
   )));
   rows.push(line(Text({ content: "" })));
 
@@ -4122,6 +4186,55 @@ async function submitSrunPopup() {
   _renderHook?.();
 }
 
+async function fetchQosForPartition(loginNode: string, sshUser: string, partition: string) {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  try {
+    const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
+    const proc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `scontrol show partition ${shellQuote(partition)}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    // Parse "AllowQos=normal,high" or "QoS=normal"
+    const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
+    if (m && m[1] !== "N/A" && m[1] !== "(null)") {
+      popup.qosList = m[1]!.split(",").filter(Boolean);
+    }
+    tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
+  } catch (e) {
+    tuiLog("DEBUG", `fetchQos failed: ${e}`);
+  }
+  _renderHook?.();
+}
+
+async function cancelSlurmJob() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  if (!popup.jobId) return;
+  popup.jobSubmitStatus = "cancelling";
+  _renderHook?.();
+  try {
+    const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+    const proc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `scancel ${popup.jobId}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    await proc.exited;
+    tuiLog("INFO", `scancel ${popup.jobId} done`);
+  } catch (e) {
+    tuiLog("WARNING", `scancel failed: ${e}`);
+  }
+  popup.jobSubmitStatus = "idle";
+  popup.jobId = "";
+  popup.gpuIdxList = "";
+  popup.jobAbortRequested = false;
+  _renderHook?.();
+}
+
 async function submitJobToSlurm() {
   if (!slurmRunPopup) return;
   const popup = slurmRunPopup;
@@ -4137,15 +4250,18 @@ async function submitJobToSlurm() {
   popup.jobId = "";
   popup.gpuIdxList = "";
   popup.jobErrorMsg = "";
+  popup.jobAbortRequested = false;
   _renderHook?.();
 
-  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} login=${popup.loginNode}`);
+  const selectedQos = popup.qosList[popup.qosIdx - 1] || ""; // qosIdx 0 = no QoS
+  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQos || "(default)"} login=${popup.loginNode}`);
 
   try {
     // 1. sbatch sleep infinity
     // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
-    const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount} --wrap 'sleep infinity'`;
+    const qosPart = selectedQos ? ` --qos=${shellQuote(selectedQos)}` : "";
+    const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
     const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, remoteCmd];
 
     const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
@@ -4169,6 +4285,12 @@ async function submitJobToSlurm() {
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000));
       if (!slurmRunPopup) return; // popup closed
+      // Abort requested → scancel and bail
+      if (popup.jobAbortRequested) {
+        tuiLog("INFO", `abort requested for job ${popup.jobId}, cancelling`);
+        await cancelSlurmJob();
+        return;
+      }
       const sqCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
         "squeue", "-j", popup.jobId, "-h", "-o", "%T"];
       const sqProc = Bun.spawn(sqCmd, { stdout: "pipe", stderr: "pipe" });
@@ -4556,10 +4678,14 @@ interface SlurmRunPopup {
   errorMsg: string;
   fullCmdForFallback: string; // set on copy failure
   // job submit state
-  jobSubmitStatus: "idle" | "submitting" | "polling" | "running" | "error";
+  jobSubmitStatus: "idle" | "submitting" | "polling" | "running" | "cancelling" | "error";
   jobId: string;
   gpuIdxList: string;   // e.g. "2,3,5,7"
   jobErrorMsg: string;
+  jobAbortRequested: boolean;
+  // qos
+  qosList: string[];
+  qosIdx: number;       // 0 = no QoS (use partition default)
 }
 let slurmRunPopup: SlurmRunPopup | null = null;
 let _slurmLastClickNode = "";
@@ -6573,17 +6699,37 @@ async function main() {
         }
 
         // --- Normal mode ---
+        const isBusy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling" || popup.jobSubmitStatus === "cancelling";
         if (key.name === "escape") {
-          closeSrunPopup();
+          if (isBusy) {
+            popup.jobAbortRequested = true;
+            render();
+          } else {
+            closeSrunPopup();
+            render();
+          }
+        } else if ((key.sequence === "x" || key.sequence === "X") && popup.jobSubmitStatus === "running" && popup.jobId) {
+          cancelSlurmJob();
           render();
-        } else if (key.sequence === "e" || key.sequence === "E") {
-          // Enter edit mode
-          if (popup.cmdOverride === null) popup.cmdOverride = srunCommand(popup);
-          popup.editMode = true;
-          popup.copyStatus = "idle";
+        } else if ((key.sequence === "r" || key.sequence === "R") && popup.jobSubmitStatus === "error" && popup.loginNode) {
+          // Resubmit
+          popup.jobSubmitStatus = "idle";
+          popup.jobErrorMsg = "";
+          submitJobToSlurm();
+          render();
+        } else if ((key.sequence === "q" || key.sequence === "Q") && popup.qosList.length > 0 && !isBusy) {
+          popup.qosIdx = (popup.qosIdx + 1) % (popup.qosList.length + 1);
           _renderHook?.();
-        } else if (key.sequence === "r" || key.sequence === "R") {
-          // Reset command override
+        } else if (key.sequence === "e" || key.sequence === "E") {
+          // Enter edit mode (only when not in error/resubmit state)
+          if (popup.jobSubmitStatus === "idle" || popup.jobSubmitStatus === "running") {
+            if (popup.cmdOverride === null) popup.cmdOverride = srunCommand(popup);
+            popup.editMode = true;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          }
+        } else if ((key.sequence === "r" || key.sequence === "R") && popup.jobSubmitStatus !== "error") {
+          // Reset command override (only when not in error — error uses R for resubmit above)
           popup.cmdOverride = null;
           popup.editMode = false;
           popup.copyStatus = "idle";
