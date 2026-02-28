@@ -144,9 +144,6 @@ let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
 let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "my-gpu-view" | "jobs" | "setup" = "dashboard";
 
-// Cluster tabs: index 0 = SSH cluster, 1+ = Slurm clusters
-let clusterTabIdx = 0;
-let clusterTabCount = 1; // updated when slurm data loads
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -392,8 +389,6 @@ async function loadClusterTabsFromConfig(): Promise<void> {
         extraSnapshots = extraClusterNames.map(() => null);
         extraPollErrors = extraClusterNames.map(() => "");
         extraSelectedNodeIdx = extraClusterNames.map(() => 0);
-        const totalTabs = extraClusterNames.length + 1;
-        if (activeClusterTabIdx >= totalTabs) activeClusterTabIdx = 0;
       } else {
         extraClusterNames = [];
         extraSnapshots = [];
@@ -410,6 +405,9 @@ async function loadClusterTabsFromConfig(): Promise<void> {
         slurmClusterConfigNames = JSON.parse(slurm.stdout) as string[];
       }
     } catch {}
+
+    const totalTabs = buildDashboardTabs().length;
+    if (totalTabs > 0 && activeClusterTabIdx >= totalTabs) activeClusterTabIdx = 0;
   } catch (e: any) {
     setStatus(`Failed to load clusters: ${e?.message || String(e)}`);
     extraClusterNames = [];
@@ -1713,27 +1711,90 @@ function gpuIndicesForSnapshot(s: ClusterSnapshot | null): number[] {
   return [...set].sort((a, b) => a - b);
 }
 
+function buildDashboardTabs(): DashboardTab[] {
+  const tabs: DashboardTab[] = [];
+
+  const allManualNames = [snapshot?.cluster_name || "Cluster", ...extraClusterNames];
+  allManualNames.forEach((name, i) => {
+    tabs.push({ type: "manual", idx: i, name });
+  });
+
+  const slurmNames = slurmSnapshots.length > 0
+    ? slurmSnapshots.map((s) => s.cluster_name || "Slurm")
+    : slurmClusterConfigNames;
+  slurmNames.forEach((name, i) => {
+    tabs.push({ type: "slurm", idx: i, name });
+  });
+
+  return tabs;
+}
+
+function activeDashboardTab(): DashboardTab | null {
+  const tabs = buildDashboardTabs();
+  if (tabs.length === 0) return null;
+  return tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
+}
+
+function renderDashboardTabBar() {
+  const tabs = buildDashboardTabs();
+  if (tabs.length <= 1) return Box({ height: 0 });
+
+  const tabBoxes = tabs.map((tab, i) => {
+    const isActive = i === activeClusterTabIdx;
+    const label = tab.name.length > 18 ? tab.name.slice(0, 17) + "..." : tab.name;
+    return Box(
+      { backgroundColor: isActive ? C.blue : C.bgAlt, paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: isActive
+          ? t`${bold(fg("#ffffff")(label))}`
+          : t`${fg(C.textDim)(label)}`,
+      }),
+    );
+  });
+
+  return Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0 },
+    ...tabBoxes,
+    Box({ flexGrow: 1, backgroundColor: C.bgAlt }),
+  );
+}
+
+function activeManualTabIdx(): number | null {
+  const tab = activeDashboardTab();
+  if (!tab || tab.type !== "manual") return null;
+  return tab.idx;
+}
+
 function activeDashboardSnapshot(): ClusterSnapshot | null {
-  if (activeClusterTabIdx === 0) return snapshot;
-  return extraSnapshots[activeClusterTabIdx - 1] || null;
+  const manualIdx = activeManualTabIdx();
+  if (manualIdx === null) return null;
+  if (manualIdx === 0) return snapshot;
+  return extraSnapshots[manualIdx - 1] || null;
 }
 
 function activeDashboardPollError(): string {
-  if (activeClusterTabIdx === 0) return pollError;
-  return extraPollErrors[activeClusterTabIdx - 1] || "";
+  const manualIdx = activeManualTabIdx();
+  if (manualIdx === null) return "";
+  if (manualIdx === 0) return pollError;
+  return extraPollErrors[manualIdx - 1] || "";
 }
 
 function activeDashboardSelectedNodeIdx(): number {
-  if (activeClusterTabIdx === 0) return selectedNodeIdx;
-  return extraSelectedNodeIdx[activeClusterTabIdx - 1] || 0;
+  const manualIdx = activeManualTabIdx();
+  if (manualIdx === null) return 0;
+  if (manualIdx === 0) return selectedNodeIdx;
+  return extraSelectedNodeIdx[manualIdx - 1] || 0;
 }
 
 function setActiveDashboardSelectedNodeIdx(nextIdx: number): void {
-  if (activeClusterTabIdx === 0) {
+  const manualIdx = activeManualTabIdx();
+  if (manualIdx === null) return;
+
+  if (manualIdx === 0) {
     selectedNodeIdx = Math.max(0, nextIdx);
     return;
   }
-  const arrIdx = activeClusterTabIdx - 1;
+  const arrIdx = manualIdx - 1;
   while (extraSelectedNodeIdx.length <= arrIdx) extraSelectedNodeIdx.push(0);
   extraSelectedNodeIdx[arrIdx] = Math.max(0, nextIdx);
 }
@@ -2303,13 +2364,13 @@ function renderLoadingBadge() {
 }
 
 function renderDashboard() {
-  // Update cluster tab count (Slurm tabs)
-  clusterTabCount = 1 + slurmSnapshots.length;
-  if (clusterTabIdx >= clusterTabCount) clusterTabIdx = 0;
+  const tabs = buildDashboardTabs();
+  if (tabs.length > 0 && activeClusterTabIdx >= tabs.length) activeClusterTabIdx = 0;
+  const activeTab = tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
+  const unifiedTabBar = renderDashboardTabBar();
 
-  // If showing a Slurm cluster tab, delegate to Slurm renderer
-  if (clusterTabIdx > 0 && slurmSnapshots.length > 0) {
-    return renderSlurmClusterTab(clusterTabIdx - 1);
+  if (activeTab?.type === "slurm") {
+    return renderSlurmClusterTab(activeTab.idx, unifiedTabBar);
   }
 
   const viewSnapshot = activeDashboardSnapshot();
@@ -2338,9 +2399,6 @@ function renderDashboard() {
     }
   }
 
-  // Cluster tab bar
-  const clusterTabBar = renderClusterTabBar();
-
   // Header
   const header = Box(
     {
@@ -2358,30 +2416,6 @@ function renderDashboard() {
       content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
     })
   );
-
-  // Table header (dynamic GPU columns)
-  const allClusterNames = [snapshot?.cluster_name || "Cluster 1", ...extraClusterNames];
-  const hasClusterTabs = extraClusterNames.length > 0;
-  const tabBar = hasClusterTabs
-    ? Box(
-        {
-          width: "100%",
-          flexDirection: "row",
-          paddingLeft: 1,
-          paddingRight: 1,
-          backgroundColor: C.bgAlt,
-          gap: 1,
-        },
-        ...allClusterNames.map((name, i) => {
-          const shortName = name.length > 16 ? `${name.slice(0, 15)}…` : name;
-          const isActive = i === activeClusterTabIdx;
-          return Text({
-            content: isActive ? `[${shortName}]` : ` ${shortName} `,
-            fg: isActive ? C.yellow : C.textDim,
-          });
-        })
-      )
-    : null;
 
   const gpuCols = gpuIndicesForSnapshot(viewSnapshot);
 
@@ -2710,9 +2744,8 @@ function renderDashboard() {
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-      clusterTabBar,
+      unifiedTabBar,
       header,
-      ...(tabBar ? [tabBar] : []),
       tableHeader,
       ...rows,
       footer
@@ -4115,6 +4148,19 @@ function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null 
   return node ? node.gpu_free : null;
 }
 
+function activeSlurmTabIdx(): number | null {
+  const tab = activeDashboardTab();
+  if (!tab || tab.type !== "slurm") return null;
+  return tab.idx;
+}
+
+function slurmTabIdxForPopup(popup: SlurmRunPopup): number | null {
+  const activeIdx = activeSlurmTabIdx();
+  if (activeIdx !== null) return activeIdx;
+  const byName = slurmSnapshots.findIndex((s) => s.cluster_name === popup.clusterName);
+  return byName >= 0 ? byName : null;
+}
+
 // Strip ANSI escape codes for display-width calculation only
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
@@ -4162,7 +4208,8 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   const autoCmd = srunCommand(popup);
   const cmd = popup.cmdOverride !== null ? popup.cmdOverride : autoCmd;
   const isEdited = popup.cmdOverride !== null;
-  const currentFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+  const popupSlurmIdx = slurmTabIdxForPopup(popup);
+  const currentFree = popupSlurmIdx === null ? null : getLatestFreeGpus(popup.nodeName, popupSlurmIdx);
   const isStale = popup.copyStatus === "stale";
   const gpuInvalid = !isEdited && (popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
     || !Number.isInteger(popup.gpuCount));
@@ -4388,7 +4435,8 @@ async function submitSrunPopup() {
 
   if (popup.cmdOverride === null) {
     // Preflight: re-check latest free GPUs (only for auto-generated commands)
-    const latestFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+    const popupSlurmIdx = slurmTabIdxForPopup(popup);
+    const latestFree = popupSlurmIdx === null ? null : getLatestFreeGpus(popup.nodeName, popupSlurmIdx);
     if (latestFree === null) {
       popup.copyStatus = "stale";
       popup.errorMsg = "Node no longer found in cluster data.";
@@ -4796,60 +4844,14 @@ async function submitJobToSlurm() {
   }
 }
 
-// ── Cluster Tab Bar (Chrome-style) ────────────────────────────────
-
-function getClusterTabNames(): string[] {
-  const names: string[] = [snapshot?.cluster_name || "SSH Cluster"];
-  if (slurmSnapshots.length > 0) {
-    for (const ss of slurmSnapshots) {
-      names.push(ss.cluster_name || "Slurm");
-    }
-  } else {
-    // Show placeholder tabs from config even before data loads
-    for (const n of slurmClusterConfigNames) {
-      names.push(n);
-    }
-  }
-  return names;
-}
-
-function renderClusterTabBar() {
-  const names = getClusterTabNames();
-  if (names.length <= 1) {
-    // Only one cluster, no tab bar needed
-    return Box({ height: 0 });
-  }
-
-  const tabs = names.map((name, i) => {
-    const isActive = i === clusterTabIdx;
-    const label = name.length > 18 ? name.slice(0, 17) + "…" : name;
-    return Box(
-      { backgroundColor: isActive ? C.blue : C.bgAlt, paddingLeft: 1, paddingRight: 1 },
-      Text({
-        content: isActive
-          ? t`${bold(fg("#ffffff")(label))}`
-          : t`${fg(C.textDim)(label)}`,
-      }),
-    );
-  });
-
-  return Box(
-    { flexDirection: "row", width: "100%", paddingLeft: 0 },
-    ...tabs,
-    Box({ flexGrow: 1, backgroundColor: C.bgAlt },
-      Text({ content: t`  ${fg(C.textDim)("[Tab] switch")}` }),
-    ),
-  );
-}
-
 // ── Slurm Cluster Tab Renderer ───────────────────────────────────
 
-function renderSlurmClusterTab(slurmIdx: number) {
+function renderSlurmClusterTab(slurmIdx: number, unifiedTabBar?: any) {
   const ssnap = slurmSnapshots[slurmIdx];
   if (!ssnap) {
     return Box(
       { flexDirection: "column", paddingLeft: 1, backgroundColor: C.bg },
-      renderClusterTabBar(),
+      unifiedTabBar || renderDashboardTabBar(),
       Text({ content: "No data for this Slurm cluster.", fg: C.textDim }),
     );
   }
@@ -4862,7 +4864,7 @@ function renderSlurmClusterTab(slurmIdx: number) {
   const termWidth = process.stdout.columns || 80;
 
   // Tab bar
-  const tabBar = renderClusterTabBar();
+  const tabBar = unifiedTabBar || renderDashboardTabBar();
 
   // Header
   const slurmHeader = Box(
@@ -5045,7 +5047,7 @@ function renderSlurmClusterTab(slurmIdx: number) {
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
     Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
+    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
@@ -5141,6 +5143,10 @@ interface SlurmSnapshot {
   login_node: string | null;
   ssh_user: string;
 }
+
+type DashboardTab =
+  | { type: "manual"; idx: number; name: string }
+  | { type: "slurm"; idx: number; name: string };
 
 let slurmSnapshots: SlurmSnapshot[] = [];
 let slurmClusterConfigNames: string[] = []; // populated from config at startup (no SSH)
@@ -6756,15 +6762,37 @@ async function main() {
       process.exit(0);
     }
 
-    if (extraClusterNames.length > 0 && (key.sequence === "[" || key.name === "[")) {
-      const total = extraClusterNames.length + 1;
-      activeClusterTabIdx = (activeClusterTabIdx - 1 + total) % total;
+    if (key.sequence === "[" || key.name === "[") {
+      const tabs = buildDashboardTabs();
+      const total = tabs.length;
+      if (total > 1) {
+        activeClusterTabIdx = (activeClusterTabIdx - 1 + total) % total;
+        slurmSelectedIdx = 0;
+        slurmScrollOff = 0;
+        slurmSortKey = "none";
+        slurmRunPopup = null;
+        const nextTab = tabs[activeClusterTabIdx] ?? null;
+        if (nextTab?.type === "slurm" && !slurmSnapshots[nextTab.idx]?.nodes?.length) {
+          await loadSlurmData();
+        }
+      }
       render();
       return;
     }
-    if (extraClusterNames.length > 0 && (key.sequence === "]" || key.name === "]")) {
-      const total = extraClusterNames.length + 1;
-      activeClusterTabIdx = (activeClusterTabIdx + 1) % total;
+    if (key.sequence === "]" || key.name === "]") {
+      const tabs = buildDashboardTabs();
+      const total = tabs.length;
+      if (total > 1) {
+        activeClusterTabIdx = (activeClusterTabIdx + 1) % total;
+        slurmSelectedIdx = 0;
+        slurmScrollOff = 0;
+        slurmSortKey = "none";
+        slurmRunPopup = null;
+        const nextTab = tabs[activeClusterTabIdx] ?? null;
+        if (nextTab?.type === "slurm" && !slurmSnapshots[nextTab.idx]?.nodes?.length) {
+          await loadSlurmData();
+        }
+      }
       render();
       return;
     }
@@ -7294,9 +7322,12 @@ async function main() {
 
       // === DASHBOARD FOCUS MODE (default) ===
 
+      const dashboardTab = activeDashboardTab();
+      const activeSlurmIdx = dashboardTab?.type === "slurm" ? dashboardTab.idx : null;
+
       // When viewing a Slurm cluster tab, handle navigation for Slurm nodes
-      if (clusterTabIdx > 0 && slurmSnapshots.length > 0) {
-        const sNodes = slurmSnapshots[clusterTabIdx - 1]?.nodes || [];
+      if (activeSlurmIdx !== null && slurmSnapshots.length > 0) {
+        const sNodes = slurmSnapshots[activeSlurmIdx]?.nodes || [];
         if (key.name === "up" || (key.name === "k" && !key.shift)) {
           if (sNodes.length > 0) {
             const visH = Math.max(1, (process.stdout.rows || 24) - 6);
@@ -7323,7 +7354,7 @@ async function main() {
           return;
         } else if (key.name === "return") {
           // Enter on Slurm tab → open srun popup for selected node
-          const snap = slurmSnapshots[clusterTabIdx - 1];
+          const snap = slurmSnapshots[activeSlurmIdx];
           const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
             switch (slurmSortKey) {
               case "name": return a.name.localeCompare(b.name);
@@ -7363,7 +7394,7 @@ async function main() {
           render();
         }
       } else if (key.name === "return") {
-        if (activeClusterTabIdx > 0) {
+        if (dashboardTab?.type === "slurm") {
           render();
           return;
         }
@@ -7373,32 +7404,24 @@ async function main() {
         if (node) void checkSudoForNode(node.node_alias);
         render();
       } else if (key.name === "tab" || key.sequence === "\t") {
-        tuiLog("DEBUG", `cluster tab key: name=${JSON.stringify(key.name)} seq=${JSON.stringify(key.sequence)} shift=${key.shift} slurmCount=${slurmSnapshots.length}`);
-        // Switch to next/prev cluster tab
-        clusterTabCount = 1 + slurmSnapshots.length;
-        if (clusterTabCount > 1) {
-          clusterTabIdx = (clusterTabIdx + 1) % clusterTabCount;
+        const tabs = buildDashboardTabs();
+        const total = tabs.length;
+        if (total > 1) {
+          const delta = key.shift ? -1 : 1;
+          activeClusterTabIdx = (activeClusterTabIdx + delta + total) % total;
           slurmSelectedIdx = 0;
           slurmScrollOff = 0;
           slurmSortKey = "none";
           slurmRunPopup = null;
-          // Load slurm data if switching to slurm tab for first time
-          if (clusterTabIdx > 0 && slurmSnapshots.length > 0 && !slurmSnapshots[clusterTabIdx - 1]?.nodes?.length) {
+
+          const nextTab = tabs[activeClusterTabIdx] ?? null;
+          if (nextTab?.type === "slurm" && !slurmSnapshots[nextTab.idx]?.nodes?.length) {
             await loadSlurmData();
           }
         }
         render();
-      } else if ((key.name === "tab" || key.sequence === "\t") && key.shift) {
-        // Switch to previous cluster tab
-        clusterTabCount = 1 + slurmSnapshots.length;
-        if (clusterTabCount > 1) {
-          clusterTabIdx = (clusterTabIdx - 1 + clusterTabCount) % clusterTabCount;
-          slurmSelectedIdx = 0;
-          slurmScrollOff = 0;
-        }
-        render();
       } else if (key.name === "r") {
-        if (clusterTabIdx > 0) {
+        if (dashboardTab?.type === "slurm") {
           await loadSlurmData();
         } else {
           await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
