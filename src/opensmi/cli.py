@@ -25,7 +25,7 @@ from .models import (
     PreflightCheckType,
     RemoteExecutionContext,
 )
-from .config import load_all_clusters, load_config, save_default_config
+from .config import default_config_data, load_all_clusters, load_config
 from .sshutil import SSHRunError, ssh_bash_script, ssh_run
 from .executor import (
     inject_cuda_visible_devices,
@@ -583,15 +583,29 @@ def _cmd_onboard(args: argparse.Namespace) -> int:
         return _init_from_ssh_config(cfg_path, args.from_ssh_config)
 
     if getattr(args, "defaults", False):
-        save_default_config(cfg_path, force=bool(args.force))
+        import json as _json
+
+        base = default_config_data()
+        cluster = {
+            "cluster_name": str(base.get("cluster_name") or "GPU-Cluster"),
+            "nodes": list(base.get("nodes") or []),
+        }
+        data = {
+            "clusters": [cluster],
+            "admins": dict(base.get("admins") or {}),
+            "users": list(base.get("users") or []),
+            "policy": dict(base.get("policy") or {}),
+            "slurm_clusters": [],
+        }
+        atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
         print(f"Config created: {cfg_path}")
-        print(f"Edit it, then run: opensmi poll")
+        print("Edit it, then run: opensmi poll")
         return 0
 
     return _init_wizard(cfg_path, n_nodes=getattr(args, "nodes", None))
 
 
-def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
+def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     """Interactive onboarding wizard — fancy edition."""
     import json as _json
 
@@ -867,6 +881,409 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
     return 0
 
 
+def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
+    import json as _json
+
+    if n_nodes is not None and int(n_nodes) <= 0:
+        print("--nodes must be a positive integer", file=sys.stderr)
+        return 2
+
+    W = 44
+    line = "─" * W
+    manual_default_nodes = int(n_nodes) if n_nodes is not None else 1
+    current_user = os.environ.get("USER") or "ubuntu"
+
+    def _build_payload(ssh_clusters: list[dict], slurm_clusters: list[dict]) -> dict:
+        return {
+            "clusters": [
+                {
+                    "cluster_name": str(c.get("cluster_name") or "GPU-Cluster"),
+                    "nodes": list(c.get("nodes") or []),
+                }
+                for c in ssh_clusters
+            ],
+            "admins": {
+                "master": current_user,
+                "members": [current_user],
+                "remote_sudo_groups": ["sudo", "wheel"],
+            },
+            "users": [],
+            "policy": {
+                "require_allocation": True,
+                "all_users_token": "*",
+                "enforcement": "detect_only",
+            },
+            "slurm_clusters": list(slurm_clusters),
+        }
+
+    def _parse_host_and_port(raw: str) -> tuple[str, Optional[int]]:
+        text = (raw or "").strip()
+        if not text:
+            return "", None
+        if text.startswith("[") and "]:" in text:
+            host_part, sep, port_part = text.rpartition("]:")
+            if sep and host_part.startswith("[") and port_part.isdigit():
+                port = int(port_part)
+                if port > 0:
+                    return host_part[1:], port
+        if text.count(":") == 1:
+            host_part, port_part = text.rsplit(":", 1)
+            if host_part and port_part.isdigit():
+                port = int(port_part)
+                if port > 0:
+                    return host_part, port
+        return text, None
+
+    def _prompt_nodes_for_cluster(default_count: int) -> list[dict]:
+        mode_raw = (
+            input(
+                _ob_prompt(
+                    "Node setup: (a)uto from ~/.ssh/config  or  (m)anual?",
+                    "",
+                    "a",
+                )
+            )
+            .strip()
+            .lower()
+            or "a"
+        )
+        setup_mode = "manual" if mode_raw.startswith("m") else "auto"
+
+        if setup_mode == "auto":
+            try:
+                ssh_path, discovered = _discover_ssh_config_hosts("~/.ssh/config")
+            except FileNotFoundError:
+                print(
+                    f"  {_OB_YELLOW}⚠{_OB_RESET}  SSH config not found at ~/.ssh/config; switching to manual entry."
+                )
+                discovered = []
+                ssh_path = Path("~/.ssh/config").expanduser()
+
+            if discovered:
+                print(
+                    f"\n  {_OB_BOLD}SSH config hosts{_OB_RESET}  {_OB_DIM}({len(discovered)} found){_OB_RESET}"
+                )
+                for i, host in enumerate(discovered, start=1):
+                    port = int(host.get("port") or 22)
+                    port_str = f":{port}" if port != 22 else ""
+                    print(
+                        f"  {str(i).rjust(2)}. {host['alias']:<16} "
+                        f"{host['user']}@{host['address']}{port_str}"
+                    )
+
+                while True:
+                    raw_sel = input(
+                        _ob_prompt("Select hosts", "all or 1,3-5", "all")
+                    ).strip()
+                    try:
+                        picks = _parse_selection_input(raw_sel, len(discovered))
+                        nodes = [
+                            _host_to_config_node(discovered[idx - 1]) for idx in picks
+                        ]
+                        break
+                    except ValueError:
+                        print(
+                            f"  {_OB_YELLOW}⚠{_OB_RESET}  Invalid selection. Use all or index/range list like 1,3-5."
+                        )
+
+                print(
+                    f"\n  {_OB_DIM}Imported {len(nodes)} node(s) from {ssh_path}.{_OB_RESET}\n"
+                )
+                return nodes
+
+            print(
+                f"  {_OB_YELLOW}⚠{_OB_RESET}  No importable hosts found; switching to manual entry."
+            )
+
+        while True:
+            raw_n = input(
+                _ob_prompt("How many nodes?", "", str(default_count))
+            ).strip() or str(default_count)
+            try:
+                node_count = int(raw_n)
+                if node_count <= 0:
+                    raise ValueError
+                break
+            except ValueError:
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Please enter a positive integer.")
+
+        nodes: list[dict] = []
+        print(
+            f"\n  {_OB_BOLD}Add nodes{_OB_RESET}  {_OB_DIM}({node_count} total){_OB_RESET}\n"
+        )
+        for idx in range(1, node_count + 1):
+            default_alias = f"GPU-{idx:02d}"
+            print(
+                f"  {_OB_DIM}── Node #{idx} ──────────────────────────────────{_OB_RESET}"
+            )
+            while True:
+                alias = (
+                    input(_ob_prompt("Alias", "", default_alias)).strip()
+                    or default_alias
+                )
+                raw_target = input(_ob_prompt("Hostname or IP", "", "")).strip()
+                if not raw_target:
+                    print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Hostname or IP is required.")
+                    continue
+                address, parsed_port = _parse_host_and_port(raw_target)
+                if not address:
+                    print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Hostname or IP is required.")
+                    continue
+                user = (
+                    input(_ob_prompt("SSH user", "", current_user)).strip()
+                    or current_user
+                )
+                node: dict[str, object] = {
+                    "alias": alias,
+                    "address": address,
+                    "user": user,
+                }
+                if parsed_port is not None and parsed_port != 22:
+                    node["port"] = parsed_port
+                nodes.append(node)
+                break
+            print()
+        return nodes
+
+    def _prompt_slurm_cluster(existing: Optional[dict] = None) -> dict:
+        default_name = str((existing or {}).get("name") or "HPC Cluster")
+        default_login = str((existing or {}).get("login_node") or "")
+        default_user = str((existing or {}).get("user") or current_user)
+
+        name = (
+            input(_ob_prompt("Slurm cluster name", "", default_name)).strip()
+            or default_name
+        )
+        mode_raw = (
+            input(
+                _ob_prompt(
+                    "Login node: (s)elect from SSH config  or  (m)anual?",
+                    "",
+                    "s",
+                )
+            )
+            .strip()
+            .lower()
+            or "s"
+        )
+        manual_mode = mode_raw.startswith("m")
+        select_mode = not manual_mode
+
+        login_node = default_login
+        if select_mode:
+            try:
+                _ssh_path, discovered = _discover_ssh_config_hosts("~/.ssh/config")
+            except FileNotFoundError:
+                discovered = []
+
+            if discovered:
+                print(
+                    f"\n  {_OB_BOLD}SSH config hosts{_OB_RESET}  {_OB_DIM}({len(discovered)} found){_OB_RESET}"
+                )
+                for i, host in enumerate(discovered, start=1):
+                    print(f"  {str(i).rjust(2)}. {host['alias']:<16} {host['address']}")
+                while True:
+                    raw_pick = (
+                        input(_ob_prompt("Pick login node", "index", "1")).strip()
+                        or "1"
+                    )
+                    if not raw_pick.isdigit():
+                        print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter a valid index.")
+                        continue
+                    pick = int(raw_pick)
+                    if pick < 1 or pick > len(discovered):
+                        print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Selection out of range.")
+                        continue
+                    login_node = str(discovered[pick - 1]["alias"])
+                    break
+            else:
+                print(
+                    f"  {_OB_YELLOW}⚠{_OB_RESET}  No importable hosts found; switching to manual entry."
+                )
+                manual_mode = True
+
+        if manual_mode:
+            while True:
+                raw_login = (
+                    input(_ob_prompt("Login node hostname", "", default_login)).strip()
+                    or default_login
+                )
+                if raw_login:
+                    login_node = raw_login
+                    break
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Login node is required.")
+
+        user = (
+            input(_ob_prompt("SSH user for login node", "", default_user)).strip()
+            or default_user
+        )
+        return {"name": name, "login_node": login_node, "user": user}
+
+    def _print_review(ssh_clusters: list[dict], slurm_clusters: list[dict]) -> None:
+        print(f"\n  {_OB_BOLD}Final review{_OB_RESET}")
+        print("  SSH Clusters:")
+        for idx, cluster in enumerate(ssh_clusters, start=1):
+            nodes = list(cluster.get("nodes") or [])
+            aliases = [
+                str(n.get("alias") or f"node-{i + 1}") for i, n in enumerate(nodes)
+            ]
+            joined = ", ".join(aliases) if aliases else "(none)"
+            print(
+                f"    {idx}. {cluster.get('cluster_name', f'Cluster-{idx}')} "
+                f"({len(nodes)} nodes: {joined})"
+            )
+        print("  Slurm Clusters:")
+        if not slurm_clusters:
+            print("    (none)")
+        for idx, sc in enumerate(slurm_clusters, start=1):
+            print(
+                f"    {idx}. {sc.get('name', 'Slurm Cluster')}  →  "
+                f"{sc.get('login_node', '')} (user: {sc.get('user', '')})"
+            )
+
+    print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
+    print(_ob_box_row("opensmi onboard", W, _OB_BOLD))
+    print(_ob_box_row("Set up your GPU cluster config.", W, _OB_DIM))
+    print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
+
+    while True:
+        raw_clusters = (
+            input(_ob_prompt("How many SSH clusters?", "", "1")).strip() or "1"
+        )
+        try:
+            cluster_count = int(raw_clusters)
+            if cluster_count <= 0:
+                raise ValueError
+            break
+        except ValueError:
+            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Please enter a positive integer.")
+
+    ssh_clusters: list[dict] = []
+    if cluster_count == 1:
+        name = (
+            input(_ob_prompt("Cluster name", "", "GPU-Cluster")).strip()
+            or "GPU-Cluster"
+        )
+        ssh_clusters.append({"cluster_name": name, "nodes": []})
+    else:
+        for i in range(1, cluster_count + 1):
+            default_name = f"Cluster-{i}"
+            name = (
+                input(_ob_prompt(f"Cluster name #{i}", "", default_name)).strip()
+                or default_name
+            )
+            ssh_clusters.append({"cluster_name": name, "nodes": []})
+
+    for idx, cluster in enumerate(ssh_clusters, start=1):
+        print(f"\n  {_OB_BOLD}Cluster {idx}: {cluster['cluster_name']}{_OB_RESET}")
+        nodes = _prompt_nodes_for_cluster(manual_default_nodes)
+        if not nodes:
+            print(f"{_OB_YELLOW}No nodes added. Aborting.{_OB_RESET}")
+            return 1
+        cluster["nodes"] = nodes
+
+    slurm_clusters: list[dict] = []
+    raw_has_slurm = (
+        input(_ob_prompt("Do you have any Slurm-managed clusters?", "", "N"))
+        .strip()
+        .lower()
+    )
+    if raw_has_slurm in ("y", "yes"):
+        while True:
+            slurm_clusters.append(_prompt_slurm_cluster())
+            raw_more = (
+                input(_ob_prompt("Add another Slurm cluster?", "", "N")).strip().lower()
+            )
+            if raw_more not in ("y", "yes"):
+                break
+
+    while True:
+        _print_review(ssh_clusters, slurm_clusters)
+
+        raw_test = (
+            input(
+                _ob_prompt(
+                    "Test connections now?", "Optional SSH check before save", "N"
+                )
+            )
+            .strip()
+            .lower()
+        )
+        if raw_test in ("y", "yes"):
+            review_nodes: list[dict] = []
+            for cluster in ssh_clusters:
+                review_nodes.extend(list(cluster.get("nodes") or []))
+            if review_nodes:
+                _print_verify_summary(_verify_nodes(review_nodes))
+
+        action = (
+            input(_ob_prompt("Looks good? (c)onfirm / (e)dit / (q)uit", "", "c"))
+            .strip()
+            .lower()
+            or "c"
+        )
+        if action.startswith("q"):
+            print(f"  {_OB_YELLOW}Aborted. No config written.{_OB_RESET}")
+            return 1
+        if action.startswith("c"):
+            break
+        if not action.startswith("e"):
+            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter c, e, or q.")
+            continue
+
+        print(f"\n  {_OB_BOLD}Editable items{_OB_RESET}")
+        editable: list[tuple[str, int]] = []
+        for idx, cluster in enumerate(ssh_clusters, start=1):
+            editable.append(("ssh", idx - 1))
+            print(f"  {len(editable)}. SSH cluster: {cluster['cluster_name']}")
+        for idx, sc in enumerate(slurm_clusters, start=1):
+            editable.append(("slurm", idx - 1))
+            print(
+                f"  {len(editable)}. Slurm cluster: {sc.get('name', 'Slurm Cluster')}"
+            )
+
+        if not editable:
+            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Nothing to edit.")
+            continue
+
+        while True:
+            raw_pick = input(_ob_prompt("Edit which?", "", "1")).strip() or "1"
+            if not raw_pick.isdigit():
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter a valid number.")
+                continue
+            pick = int(raw_pick)
+            if pick < 1 or pick > len(editable):
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Selection out of range.")
+                continue
+            kind, index = editable[pick - 1]
+            if kind == "ssh":
+                current = ssh_clusters[index]
+                current_name = str(current.get("cluster_name") or "GPU-Cluster")
+                new_name = (
+                    input(_ob_prompt("Cluster name", "", current_name)).strip()
+                    or current_name
+                )
+                current["cluster_name"] = new_name
+                default_count = max(1, len(list(current.get("nodes") or [])))
+                current["nodes"] = _prompt_nodes_for_cluster(default_count)
+            else:
+                slurm_clusters[index] = _prompt_slurm_cluster(slurm_clusters[index])
+            break
+
+    data = _build_payload(ssh_clusters, slurm_clusters)
+    atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
+
+    print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
+    print(_ob_box_row("✓  Config saved", W, _OB_BOLD))
+    print(_ob_box_row(f"   {cfg_path}", W, _OB_DIM))
+    print(_ob_box_row("", W))
+    print(_ob_box_row("Next steps:", W, _OB_DIM))
+    print(_ob_box_row("  opensmi poll          # verify SSH + GPUs", W))
+    print(_ob_box_row("  opensmi alloc seed    # seed from live usage", W))
+    print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
+    return 0
+
+
 def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
     """Parse ~/.ssh/config for GPU node entries."""
     import json as _json
@@ -894,15 +1311,24 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
     admin = nodes[0].get("user", "admin") if nodes else "admin"
 
     data = {
-        "cluster_name": "GPU-Cluster",
-        "nodes": nodes,
-        "admins": {"master": admin, "members": [admin]},
+        "clusters": [
+            {
+                "cluster_name": "GPU-Cluster",
+                "nodes": nodes,
+            }
+        ],
+        "admins": {
+            "master": admin,
+            "members": [admin],
+            "remote_sudo_groups": ["sudo", "wheel"],
+        },
         "users": [],
         "policy": {
             "require_allocation": True,
             "all_users_token": "*",
             "enforcement": "detect_only",
         },
+        "slurm_clusters": [],
     }
 
     atomic_write_text(cfg_path, _json.dumps(data, indent=2, sort_keys=False) + "\n")
@@ -1928,16 +2354,20 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
     # If --names-only, just print cluster names from config (no SSH)
     if getattr(args, "names_only", False):
         import json as _json
+
         state_dir = get_state_dir(args.state_dir)
         cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
         data = _json.loads(cfg_path.read_text(encoding="utf-8"))
-        names = [sc.get("name", "Slurm Cluster") for sc in data.get("slurm_clusters", [])]
+        names = [
+            sc.get("name", "Slurm Cluster") for sc in data.get("slurm_clusters", [])
+        ]
         print(_json.dumps(names))
         return 0
 
     # If --all, load from config
     if getattr(args, "show_all", False):
         import json as _json
+
         state_dir = get_state_dir(args.state_dir)
         cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
         # Read slurm_clusters from root JSON (works for both legacy and clusters[] format)
@@ -1947,6 +2377,7 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
             print("No slurm_clusters configured in opensmi.json", file=sys.stderr)
             return 1
         from .models import SlurmClusterConfig
+
         slurm_clusters = [
             SlurmClusterConfig(
                 name=str(sc.get("name", "Slurm Cluster")),
@@ -1970,7 +2401,12 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
             results.append(snap)
         if args.output_json:
             import json as _json
-            print(_json.dumps([json.loads(snapshot_to_json(s)) for s in results], indent=2))
+
+            print(
+                _json.dumps(
+                    [json.loads(snapshot_to_json(s)) for s in results], indent=2
+                )
+            )
         else:
             for snap in results:
                 print(format_table(snap, compact=args.compact))
@@ -2673,33 +3109,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show GPU usage across Slurm-managed nodes (no SSH required)",
     )
     sp_slurm.add_argument(
-        "--partition", "-p", default=None, help="Filter by partition name (substring match)"
+        "--partition",
+        "-p",
+        default=None,
+        help="Filter by partition name (substring match)",
     )
     sp_slurm.add_argument(
         "--node", "-n", default=None, help="Filter by node name (substring match)"
     )
     sp_slurm.add_argument(
-        "--compact", "-c", action="store_true", default=False,
+        "--compact",
+        "-c",
+        action="store_true",
+        default=False,
         help="Compact output: skip individual idle GPU lines for fully idle nodes",
     )
     sp_slurm.add_argument(
-        "--json", dest="output_json", action="store_true", default=False,
+        "--json",
+        dest="output_json",
+        action="store_true",
+        default=False,
         help="Output as JSON",
     )
     sp_slurm.add_argument(
-        "--login-node", default=None,
+        "--login-node",
+        default=None,
         help="SSH alias/address of Slurm login node (runs commands remotely)",
     )
     sp_slurm.add_argument(
-        "--ssh-user", default="",
+        "--ssh-user",
+        default="",
         help="SSH user for login node",
     )
     sp_slurm.add_argument(
-        "--all", dest="show_all", action="store_true", default=False,
+        "--all",
+        dest="show_all",
+        action="store_true",
+        default=False,
         help="Show all configured Slurm clusters from opensmi.json",
     )
     sp_slurm.add_argument(
-        "--names-only", dest="names_only", action="store_true", default=False,
+        "--names-only",
+        dest="names_only",
+        action="store_true",
+        default=False,
         help="Print Slurm cluster names from config as JSON array (no SSH)",
     )
     sp_slurm.set_defaults(func=_cmd_slurm)
