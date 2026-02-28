@@ -1751,7 +1751,7 @@ function renderDashboardTabBar() {
         backgroundColor: isActive ? C.blue : C.bgAlt,
         paddingLeft: 1,
         paddingRight: 1,
-        onClick: async () => {
+        onMouseUp: async () => {
           if (activeClusterTabIdx === i) return;
           activeClusterTabIdx = i;
           slurmSelectedIdx = 0;
