@@ -1756,7 +1756,13 @@ function renderDashboardTabBar() {
   return Box(
     { flexDirection: "row", width: "100%", paddingLeft: 0 },
     ...tabBoxes,
-    Box({ flexGrow: 1, backgroundColor: C.bgAlt }),
+    Box(
+      { flexGrow: 1, backgroundColor: C.bgAlt },
+    ),
+    Box(
+      { backgroundColor: C.bgAlt, paddingLeft: 1, paddingRight: 1 },
+      Text({ content: t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}` }),
+    ),
   );
 }
 
@@ -2414,7 +2420,7 @@ function renderDashboard() {
       content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
     }),
     Text({
-      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}  ${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
     })
   );
 
