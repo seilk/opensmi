@@ -3899,6 +3899,7 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
     jobAbortRequested: false,
     qosList: [],
     qosIdx: 0,
+    qosLoading: !!snap?.login_node,
   };
   tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
   _renderHook?.();
@@ -4012,8 +4013,10 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     )),
   ];
 
-  // QoS selector (only if list available)
-  if (popup.qosList.length > 0) {
+  // QoS selector
+  if (popup.qosLoading) {
+    rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("⟳ loading...")}` })));
+  } else if (popup.qosList.length > 0) {
     const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
     rows.push(line(Box({ flexDirection: "row" },
       Text({ content: t`${fg(C.textDim)("QoS       :")} ` }),
@@ -4102,7 +4105,7 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   }
 
   // Action bar
-  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
+  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
   const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
   const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
 
@@ -4194,6 +4197,11 @@ async function submitSrunPopup() {
   _renderHook?.();
 }
 
+// Strict allowlist: Slurm names are alphanumeric + _ . : - only
+function slurmNameSafe(s: string): boolean {
+  return /^[A-Za-z0-9_.:\-]+$/.test(s);
+}
+
 async function fetchQosForPartition(loginNode: string, sshUser: string, partition: string) {
   if (!slurmRunPopup) return;
   const popup = slurmRunPopup;
@@ -4209,11 +4217,13 @@ async function fetchQosForPartition(loginNode: string, sshUser: string, partitio
     // Parse "AllowQos=normal,high" or "QoS=normal"
     const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
     if (m && m[1] !== "N/A" && m[1] !== "(null)") {
-      popup.qosList = m[1]!.split(",").filter(Boolean);
+      popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
     }
     tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
   } catch (e) {
     tuiLog("DEBUG", `fetchQos failed: ${e}`);
+  } finally {
+    popup.qosLoading = false;
   }
   _renderHook?.();
 }
@@ -4222,11 +4232,19 @@ async function cancelSlurmJob() {
   if (!slurmRunPopup) return;
   const popup = slurmRunPopup;
   if (!popup.jobId) return;
+  // jobId must be purely numeric
+  if (!/^\d+$/.test(popup.jobId)) {
+    tuiLog("WARNING", `cancelSlurmJob: suspicious jobId "${popup.jobId}", aborting`);
+    popup.jobSubmitStatus = "idle";
+    _renderHook?.();
+    return;
+  }
   popup.jobSubmitStatus = "cancelling";
   _renderHook?.();
   try {
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
     const proc = Bun.spawn(
+      // Pass jobId as separate arg (no shell interpolation)
       ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
        `scancel ${popup.jobId}`],
       { stdout: "pipe", stderr: "pipe" }
@@ -4254,6 +4272,30 @@ async function submitJobToSlurm() {
     return;
   }
 
+  // Injection guard: validate all user-controlled Slurm fields
+  const fieldsToValidate: [string, string][] = [
+    ["partition", popup.partition],
+    ["node", popup.nodeName],
+  ];
+  const selectedQosName = popup.qosList[popup.qosIdx - 1] || "";
+  if (selectedQosName) fieldsToValidate.push(["qos", selectedQosName]);
+  for (const [fieldName, value] of fieldsToValidate) {
+    if (!slurmNameSafe(value)) {
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = `Invalid characters in ${fieldName}: "${value}"`;
+      _renderHook?.();
+      return;
+    }
+  }
+
+  // Block submit if QoS is still loading
+  if (popup.qosLoading) {
+    popup.jobSubmitStatus = "error";
+    popup.jobErrorMsg = "QoS list still loading — please wait a moment.";
+    _renderHook?.();
+    return;
+  }
+
   popup.jobSubmitStatus = "submitting";
   popup.jobId = "";
   popup.gpuIdxList = "";
@@ -4261,14 +4303,13 @@ async function submitJobToSlurm() {
   popup.jobAbortRequested = false;
   _renderHook?.();
 
-  const selectedQos = popup.qosList[popup.qosIdx - 1] || ""; // qosIdx 0 = no QoS
-  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQos || "(default)"} login=${popup.loginNode}`);
+  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQosName || "(default)"} login=${popup.loginNode}`);
 
   try {
     // 1. sbatch sleep infinity
     // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
-    const qosPart = selectedQos ? ` --qos=${shellQuote(selectedQos)}` : "";
+    const qosPart = selectedQosName ? ` --qos=${shellQuote(selectedQosName)}` : "";
     const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
     const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, remoteCmd];
 
@@ -4288,17 +4329,22 @@ async function submitJobToSlurm() {
     _renderHook?.();
     tuiLog("INFO", `job submitted: JOBID=${popup.jobId}`);
 
-    // 2. Poll squeue until RUNNING (max 60s, 2s interval)
+    // 2. Poll squeue until RUNNING — 200ms tick × 300 = 60s max; abort responsive
     let running = false;
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000));
+    const TICK_MS = 200;
+    const POLL_EVERY = 10; // query squeue every 10 ticks (2s)
+    let tickCount = 0;
+    let totalTicks = 300;
+    while (tickCount < totalTicks) {
+      await new Promise(r => setTimeout(r, TICK_MS));
       if (!slurmRunPopup) return; // popup closed
-      // Abort requested → scancel and bail
       if (popup.jobAbortRequested) {
         tuiLog("INFO", `abort requested for job ${popup.jobId}, cancelling`);
         await cancelSlurmJob();
         return;
       }
+      tickCount++;
+      if (tickCount % POLL_EVERY !== 0) continue;
       const sqCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
         "squeue", "-j", popup.jobId, "-h", "-o", "%T"];
       const sqProc = Bun.spawn(sqCmd, { stdout: "pipe", stderr: "pipe" });
@@ -4306,9 +4352,10 @@ async function submitJobToSlurm() {
       await sqProc.exited;
       tuiLog("DEBUG", `poll squeue job ${popup.jobId}: state=${sqOut}`);
       if (sqOut === "RUNNING") { running = true; break; }
-      if (sqOut === "" || sqOut === "FAILED" || sqOut === "CANCELLED") {
-        throw new Error(`Job ${popup.jobId} ended unexpectedly (state: ${sqOut || "not found"})`);
+      if (sqOut === "FAILED" || sqOut === "CANCELLED" || sqOut === "TIMEOUT") {
+        throw new Error(`Job ${popup.jobId} ended unexpectedly (state: ${sqOut})`);
       }
+      // empty = job not in queue yet (pending or not found) — keep polling
     }
     if (!running) throw new Error(`Job ${popup.jobId} did not reach RUNNING state within 60s`);
 
@@ -4319,9 +4366,19 @@ async function submitJobToSlurm() {
     const scOut = await new Response(scProc.stdout).text();
     await scProc.exited;
 
-    // Parse "GresUsed=gpu:4(IDX:2,3,5,7)"
-    const idxMatch = scOut.match(/GresUsed=gpu:\d+\(IDX:([0-9,]+)\)/);
-    popup.gpuIdxList = idxMatch ? idxMatch[1]! : "";
+    // Parse all "GresUsed=gpu:N(IDX:a,b,...)" segments, collect & dedupe indices
+    const idxMatches = [...scOut.matchAll(/GresUsed=gpu:\d+\(IDX:([0-9,]+)\)/g)];
+    if (idxMatches.length > 0) {
+      const allIdx = idxMatches
+        .flatMap(m => m[1]!.split(","))
+        .filter(s => /^\d+$/.test(s))
+        .map(Number);
+      const unique = [...new Set(allIdx)].sort((a, b) => a - b);
+      popup.gpuIdxList = unique.join(",");
+    } else {
+      popup.gpuIdxList = ""; // unavailable — don't show false data
+      tuiLog("WARNING", `GresUsed IDX not found in scontrol output for job ${popup.jobId}`);
+    }
     popup.jobSubmitStatus = "running";
     _renderHook?.();
     tuiLog("INFO", `job running: JOBID=${popup.jobId} GPU_IDX=${popup.gpuIdxList}`);
@@ -4695,6 +4752,7 @@ interface SlurmRunPopup {
   // qos
   qosList: string[];
   qosIdx: number;       // 0 = no QoS (use partition default)
+  qosLoading: boolean;  // true while fetching QoS list
 }
 let slurmRunPopup: SlurmRunPopup | null = null;
 let _slurmLastClickNode = "";
