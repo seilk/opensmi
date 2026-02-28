@@ -3993,6 +3993,10 @@ function renderSlurmClusterTab(slurmIdx: number) {
     const gpuCells = Array.from({ length: maxDisplayGpus }, (_, gi) => {
       const slot = snode.gpus?.[gi];
       if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
+      if (slot.user === "???") {
+        // Non-Slurm / unattributed usage — show in red
+        return Box({ width: gpuW }, Text({ content: "???".padEnd(gpuW), fg: C.red }));
+      }
       if (slot.user) {
         const label = slot.user.length > gpuW - 1 ? slot.user.slice(0, gpuW - 2) + "…" : slot.user;
         return Box({ width: gpuW }, Text({ content: label.padEnd(gpuW), fg: C.yellow }));

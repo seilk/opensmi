@@ -232,7 +232,26 @@ def collect_slurm_snapshot(
         snap.errors.append(f"job parsing failed: {e}")
         job_allocs = []
 
-    # 3. Build node objects
+    # 3. Get per-node AllocTRES (allocated GPU count) via sinfo with AllocMem/GRES
+    node_alloc_gpus: Dict[str, int] = {}
+    try:
+        # sinfo -N -o '%N %G' gives Gres, but AllocTRES needs scontrol or sinfo %aTRES
+        sinfo_alloc_raw = run_cmd(["sinfo", "-N", "-o", "'%N %G %a %T %A'"])
+        # Parse via scontrol show node for mixed/allocated nodes
+        mixed_nodes = [n for n, (_, st, _, _) in node_map.items()
+                       if st.lower().rstrip("*") in ("mixed", "allocated")]
+        for mnode in mixed_nodes:
+            try:
+                detail = run_cmd(["scontrol", "show", "node", mnode])
+                m = re.search(r"AllocTRES=.*?gres/gpu=(\d+)", detail)
+                if m:
+                    node_alloc_gpus[mnode] = int(m.group(1))
+            except Exception:
+                pass
+    except Exception as e:
+        snap.errors.append(f"node AllocTRES check failed: {e}")
+
+    # 4. Build node objects
     # Index job allocs by node
     node_jobs: Dict[str, List[_JobGPUAlloc]] = {}
     for ja in job_allocs:
@@ -261,6 +280,24 @@ def collect_slurm_snapshot(
                     slots[idx].job_name = ja.job_name
                     slots[idx].job_state = ja.state
                     slots[idx].job_time = ja.elapsed
+
+        # Check AllocTRES for non-Slurm GPU usage:
+        # If node is mixed/allocated but some GPUs not explained by squeue jobs,
+        # mark remaining occupied slots as "???" (non-Slurm or invisible job).
+        if state.lower().rstrip("*") in ("mixed", "allocated"):
+            alloc_gpus = node_alloc_gpus.get(name, 0)
+            job_claimed = sum(1 for s in slots if s.user is not None)
+            unaccounted = alloc_gpus - job_claimed
+            if unaccounted > 0:
+                # Fill first unaccounted idle slots as unknown
+                filled = 0
+                for slot in slots:
+                    if filled >= unaccounted:
+                        break
+                    if slot.user is None:
+                        slot.user = "???"
+                        slot.job_name = "non-slurm"
+                        filled += 1
 
         snap.nodes.append(SlurmNodeInfo(
             name=name,
