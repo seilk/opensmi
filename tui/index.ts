@@ -3874,6 +3874,192 @@ async function flushSetupChangesToConfig(): Promise<void> {
   }
 }
 
+// ── srun Popup Helpers ───────────────────────────────────────────
+
+function openSrunPopup(node: SlurmNodeInfo, clusterName: string) {
+  slurmRunPopup = {
+    clusterName,
+    nodeName: node.name,
+    partition: node.partition || "",
+    freeGpusAtOpen: node.gpu_free,
+    snapshotTime: new Date().toISOString(),
+    gpuCount: 1,
+    copyStatus: "idle",
+    errorMsg: "",
+    fullCmdForFallback: "",
+  };
+  tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
+  _renderHook?.();
+}
+
+function closeSrunPopup() {
+  slurmRunPopup = null;
+  _renderHook?.();
+}
+
+function srunTokens(popup: SlurmRunPopup): string[] {
+  return ["srun", "-p", popup.partition, "-w", popup.nodeName,
+          "--gres", `gpu:${popup.gpuCount}`, "--pty", "bash"];
+}
+
+function srunCommand(popup: SlurmRunPopup): string {
+  return srunTokens(popup).map(t => /[\s|&;()<>]/.test(t) ? `'${t}'` : t).join(" ");
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  const cmds = [
+    ["pbcopy"],
+    ["xclip", "-selection", "clipboard"],
+    ["xsel", "--clipboard", "--input"],
+    ["wl-copy"],
+  ];
+  for (const [bin, ...args] of cmds) {
+    try {
+      const proc = Bun.spawn([bin!, ...args], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      proc.stdin.write(text);
+      proc.stdin.end();
+      const code = await proc.exited;
+      if (code === 0) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null {
+  const snap = slurmSnapshots[clusterIdx];
+  if (!snap) return null;
+  const node = snap.nodes.find(n => n.name === nodeName);
+  return node ? node.gpu_free : null;
+}
+
+function renderSrunPopup(popup: SlurmRunPopup): any {
+  const cmd = srunCommand(popup);
+  const currentFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+  const isStale = popup.copyStatus === "stale";
+  const gpuInvalid = popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
+    || !Number.isInteger(popup.gpuCount);
+  const canCopy = !gpuInvalid && !isStale;
+
+  const w = Math.min(58, (process.stdout.columns || 80) - 4);
+
+  const line = (content: any) => Box({ width: w, paddingLeft: 1, paddingRight: 1 }, content);
+
+  const rows: any[] = [
+    // Title bar
+    Box({ width: w, backgroundColor: C.blue, paddingLeft: 1 },
+      Text({ content: t`${bold(fg("#ffffff")("srun Job Submit"))} — ${bold(popup.nodeName)}` })
+    ),
+    line(Text({ content: "" })),
+    // Node info (read-only)
+    line(Text({ content: t`${fg(C.textDim)("Partition :")} ${popup.partition}` })),
+    line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })),
+    line(Text({ content: t`${fg(C.textDim)("Free GPUs :")} ${popup.freeGpusAtOpen}${currentFree !== null && currentFree !== popup.freeGpusAtOpen ? fg(C.yellow)(` → now ${currentFree}`) : ""}` })),
+    line(Text({ content: "" })),
+    // GPU count input
+    line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("GPUs      :")} ` }),
+      Text({
+        content: `[${popup.gpuCount}]`,
+        fg: gpuInvalid ? C.red : C.green,
+      }),
+      Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}`, fg: C.textDim }),
+    )),
+    line(Text({ content: "" })),
+    // Command preview
+    line(Text({ content: t`${fg(C.textDim)("Command:")}` })),
+    line(Text({ content: cmd, fg: canCopy ? C.text : C.red })),
+    line(Text({ content: "" })),
+  ];
+
+  // Error / status
+  if (isStale) {
+    rows.push(line(Text({ content: t`${fg(C.red)("⚠ " + popup.errorMsg)}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Fallback command
+  if (popup.copyStatus === "fail" && popup.fullCmdForFallback) {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("Clipboard unavailable. Copy manually:")}` })));
+    rows.push(line(Text({ content: popup.fullCmdForFallback, fg: C.text })));
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Copy success
+  if (popup.copyStatus === "ok") {
+    rows.push(line(Text({ content: t`${fg(C.green)("✓ Copied to clipboard!")}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Capacity warning
+  rows.push(line(Text({ content: t`${fg(C.textDim)("⚠ Capacity is real-time and may change.")}` })));
+  rows.push(line(Text({ content: "" })));
+
+  // Action bar
+  rows.push(line(Box({ flexDirection: "row" },
+    Box({
+      paddingLeft: 1, paddingRight: 1,
+      backgroundColor: canCopy ? C.blue : C.bgAlt,
+      onMouseDown: canCopy ? async () => { await submitSrunPopup(); } : undefined,
+    }, Text({ content: "Enter/C: Copy", fg: canCopy ? "#ffffff" : C.textDim })),
+    Text({ content: "  " }),
+    Box({
+      paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
+      onMouseDown: () => closeSrunPopup(),
+    }, Text({ content: "Esc: Cancel", fg: C.textDim })),
+  )));
+  rows.push(line(Text({ content: "" })));
+
+  // Center popup on screen
+  const termW = process.stdout.columns || 80;
+  const termH = process.stdout.rows || 24;
+  const left = Math.max(0, Math.floor((termW - w) / 2));
+  const top = Math.max(0, Math.floor((termH - rows.length) / 2));
+
+  return Box(
+    { position: "absolute", left, top, width: w, flexDirection: "column", backgroundColor: C.bg, zIndex: 100 },
+    ...rows,
+  );
+}
+
+async function submitSrunPopup() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+
+  // Preflight: re-check latest free GPUs
+  const latestFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+  if (latestFree === null) {
+    popup.copyStatus = "stale";
+    popup.errorMsg = "Node no longer found in cluster data.";
+    _renderHook?.();
+    return;
+  }
+  if (popup.gpuCount > latestFree) {
+    popup.copyStatus = "stale";
+    popup.errorMsg = `Capacity changed: was ${popup.freeGpusAtOpen}, now ${latestFree}. Adjust GPUs and retry.`;
+    _renderHook?.();
+    return;
+  }
+  if (latestFree === 0) {
+    popup.copyStatus = "stale";
+    popup.errorMsg = "No free GPUs available on this node.";
+    _renderHook?.();
+    return;
+  }
+
+  const cmd = srunCommand(popup);
+  tuiLog("INFO", `srun popup submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount}`);
+
+  const ok = await copyToClipboard(cmd);
+  if (ok) {
+    popup.copyStatus = "ok";
+    popup.fullCmdForFallback = "";
+  } else {
+    popup.copyStatus = "fail";
+    popup.fullCmdForFallback = cmd;
+  }
+  _renderHook?.();
+}
+
 // ── Cluster Tab Bar (Chrome-style) ────────────────────────────────
 
 function getClusterTabNames(): string[] {
@@ -4046,9 +4232,25 @@ function renderSlurmClusterTab(slurmIdx: number) {
       ? Box({ width: 4 }, Text({ content: hiddenUsed > 0 ? `+${hiddenUsed}` : "   ", fg: hiddenUsed > 0 ? C.red : C.textDim }))
       : null;
 
+    const capturedNode = snode;
+    const capturedCluster = ssnap;
+    const handleNodeClick = () => {
+      const now = Date.now();
+      if (_slurmLastClickNode === capturedNode.name && now - _slurmLastClickTime < 400) {
+        // Double-click → open popup
+        openSrunPopup(capturedNode, capturedCluster.cluster_name);
+      } else {
+        // Single click → select
+        slurmSelectedIdx = ni;
+        _renderHook?.();
+      }
+      _slurmLastClickNode = capturedNode.name;
+      _slurmLastClickTime = now;
+    };
+
     allNodeRows.push(
       Box(
-        { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined },
+        { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined, onMouseDown: handleNodeClick },
         Box({ width: nodeW }, Text({ content: `${icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: isSelected ? "#ffffff" : C.text })),
         Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
         ...gpuCells,
@@ -4146,7 +4348,8 @@ function renderSlurmClusterTab(slurmIdx: number) {
       footer,
     ),
     ...(scrollbar ? [scrollbar] : []),
-    renderRunnerPane(),
+    // srun popup overlay (no runner pane in Slurm tab)
+    ...(slurmRunPopup ? [renderSrunPopup(slurmRunPopup)] : []),
   );
 }
 
@@ -4186,6 +4389,25 @@ let slurmSelectedIdx = 0;
 let slurmScrollOff = 0;
 type SlurmSortKey = "none" | "name" | "partition" | "free_asc" | "free_desc";
 let slurmSortKey: SlurmSortKey = "none";
+
+// srun popup state
+interface SlurmRunPopup {
+  // snapshot at open time (immutable)
+  clusterName: string;
+  nodeName: string;
+  partition: string;
+  freeGpusAtOpen: number;
+  snapshotTime: string;
+  // user input
+  gpuCount: number;
+  // ui state
+  copyStatus: "idle" | "ok" | "fail" | "stale";
+  errorMsg: string;
+  fullCmdForFallback: string; // set on copy failure
+}
+let slurmRunPopup: SlurmRunPopup | null = null;
+let _slurmLastClickNode = "";
+let _slurmLastClickTime = 0;
 
 // Module-level render hook, set inside main()
 let _renderHook: (() => void) | null = null;
@@ -6164,6 +6386,25 @@ async function main() {
         return;
       }
 
+      // === SLURM POPUP KEY HANDLING ===
+      if (slurmRunPopup) {
+        const popup = slurmRunPopup;
+        if (key.name === "escape") {
+          closeSrunPopup();
+          render();
+        } else if (key.name === "right" || key.sequence === "+") {
+          if (popup.gpuCount < popup.freeGpusAtOpen) { popup.gpuCount++; popup.copyStatus = "idle"; _renderHook?.(); }
+        } else if (key.name === "left" || key.sequence === "-") {
+          if (popup.gpuCount > 1) { popup.gpuCount--; popup.copyStatus = "idle"; _renderHook?.(); }
+        } else if (key.name === "return" || key.sequence === "c" || key.sequence === "C") {
+          if (popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen) {
+            await submitSrunPopup();
+            render();
+          }
+        }
+        return;
+      }
+
       // === DASHBOARD FOCUS MODE (default) ===
 
       // When viewing a Slurm cluster tab, handle navigation for Slurm nodes
@@ -6192,6 +6433,22 @@ async function main() {
             if (slurmSelectedIdx === 0) slurmScrollOff = 0;
             render();
           }
+          return;
+        } else if (key.name === "return") {
+          // Enter on Slurm tab → open srun popup for selected node
+          const snap = slurmSnapshots[clusterTabIdx - 1];
+          const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
+            switch (slurmSortKey) {
+              case "name": return a.name.localeCompare(b.name);
+              case "partition": return (a.partition||"").localeCompare(b.partition||"");
+              case "free_asc": return a.gpu_free - b.gpu_free;
+              case "free_desc": return b.gpu_free - a.gpu_free;
+              default: return 0;
+            }
+          });
+          const node = sortedN[slurmSelectedIdx];
+          if (node && snap) openSrunPopup(node, snap.cluster_name);
+          render();
           return;
         }
       }
@@ -6229,6 +6486,7 @@ async function main() {
           slurmSelectedIdx = 0;
           slurmScrollOff = 0;
           slurmSortKey = "none";
+          slurmRunPopup = null;
           // Load slurm data if switching to slurm tab for first time
           if (clusterTabIdx > 0 && slurmSnapshots.length > 0 && !slurmSnapshots[clusterTabIdx - 1]?.nodes?.length) {
             await loadSlurmData();
