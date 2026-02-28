@@ -2762,9 +2762,11 @@ function renderDashboard() {
 }
 
 function renderDetail() {
-  if (!snapshot) return Text({ content: "No data" });
+  const activeSnap = activeDashboardSnapshot();
+  const activeNodeIdx = activeDashboardSelectedNodeIdx();
+  if (!activeSnap) return Text({ content: "No data" });
 
-  const node = snapshot.nodes[selectedNodeIdx];
+  const node = activeSnap.nodes[activeNodeIdx];
   if (!node) return Text({ content: "No node selected" });
 
   if (node.error) {
@@ -7378,7 +7380,7 @@ async function main() {
           return;
         }
         await navigateToTab("detail");
-        const node = snapshot?.nodes[selectedNodeIdx];
+        const node = activeDashboardSnapshot()?.nodes[activeDashboardSelectedNodeIdx()];
         selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
         if (node) void checkSudoForNode(node.node_alias);
         render();
@@ -7460,9 +7462,11 @@ async function main() {
         }
       }
     } else if (screen === "detail") {
+      const _detailSnap = activeDashboardSnapshot();
+      const _detailNodeIdx = activeDashboardSelectedNodeIdx();
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         const idxs = gpuIndicesForNode(node);
         if (!idxs.length) return;
 
@@ -7472,8 +7476,8 @@ async function main() {
           render();
         }
       } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         const idxs = gpuIndicesForNode(node);
         if (!idxs.length) return;
 
@@ -7491,8 +7495,8 @@ async function main() {
         key.preventDefault();
         key.stopPropagation();
 
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         if (!node || node.error) return;
 
         openAllocModal(node, selectedGpuIdx);
@@ -7503,8 +7507,8 @@ async function main() {
         key.preventDefault();
         key.stopPropagation();
 
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         if (!node || node.error) return;
 
         try {
@@ -7519,8 +7523,8 @@ async function main() {
         if (!requireAdminUI("clear allocation")) return;
 
         // Clear allocation for selected GPU
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         if (!node || node.error) return;
         const existing = getAllocTarget(node.node_alias, selectedGpuIdx);
         if (!existing) return;
@@ -7534,8 +7538,8 @@ async function main() {
         if (!requireAdminUI("kill")) return;
 
         // Kill violator processes on selected GPU
-        if (!snapshot) return;
-        const node = snapshot.nodes[selectedNodeIdx];
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
         if (!node || node.error) return;
         const gi = node.gpus.find((g) => g.index === selectedGpuIdx);
         if (!gi) return;
