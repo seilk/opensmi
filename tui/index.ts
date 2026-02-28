@@ -138,6 +138,10 @@ let pollError = "";
 let selectedNodeIdx = 0;
 let selectedGpuIdx = 0;
 let screen: "dashboard" | "detail" | "help" | "alloc" | "kill" | "my-gpu-view" | "jobs" | "setup" = "dashboard";
+
+// Cluster tabs: index 0 = SSH cluster, 1+ = Slurm clusters
+let clusterTabIdx = 0;
+let clusterTabCount = 1; // updated when slurm data loads
 let tabSwitcherOpen = false;
 let tabSwitcherIdx = 0;
 let lastGpuClickKey = "";
@@ -321,7 +325,7 @@ const BASE_DIR = BASE_DIR_CANDIDATES.find(_isRepoRoot) || "";
 
 // Decide how to invoke the CLI:
 //  1) In dev (repo checkout): python3 -m opensmi (with cwd = repo root)
-//  2) Installed binary:       opensmi (from PATH — works for pip, pyz, any install method)
+//  2) Installed binary:       opensmi (from PATH - works for pip, pyz, any install method)
 function _resolveCliCommand(): { cmd: string[]; cwd: string | undefined } {
   // Explicit override
   const explicit = process.env.OPENSMI_CLI;
@@ -435,24 +439,24 @@ async function refreshLaunchGpuSelection(): Promise<void> {
     launchSelectedGpus = [];
     return;
   }
-  
+
   // In "selected" mode, use manually selected GPUs
   if (launchGpuMode === "selected") {
     launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
     return;
   }
-  
+
   // In "auto" mode, rank and select GPUs automatically
   try {
     const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
-    
+
     const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
-    
+
     const operatorFile = `/tmp/opensmi-op-${crypto.randomUUID()}.json`;
     await Bun.write(operatorFile, JSON.stringify({ operator: OPERATOR }));
-    
+
     const rankScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -513,23 +517,23 @@ with open("${operatorFile}", "r") as f:
 gpus = select_top_gpus(snap, ${launchNumGpus}, history, alloc_data, current_user)
 print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
 `;
-    
+
     const rankProc = Bun.spawn([PYTHON, "-c", rankScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const rankStdout = await new Response(rankProc.stdout).text();
     const rankCode = await rankProc.exited;
-    
+
     if (rankCode === 0) {
       launchSelectedGpus = JSON.parse(rankStdout);
     } else {
       launchSelectedGpus = [];
     }
-    
+
     try {
       await Bun.$`rm -f ${tmpFile} ${allocFile} ${operatorFile}`;
     } catch {}
@@ -639,16 +643,16 @@ async function pollCluster(): Promise<void> {
 
 function updateGpuIdleTracking(): void {
   if (!snapshot) return;
-  
+
   const now = Date.now();
-  
+
   for (const node of snapshot.nodes) {
     if (node.error) continue;
-    
+
     for (const gpu of node.gpus) {
       const key = `${node.node_alias}:${gpu.uuid}`;
       const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
-      
+
       if (procs.length === 0) {
         // GPU is idle
         if (!gpuIdleStart[key]) {
@@ -695,15 +699,15 @@ async function loadJobsFromCLI(): Promise<void> {
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const output = await new Response(proc.stdout).text();
     await proc.exited;
-    
+
     if (proc.exitCode !== 0) {
       jobList = [];
       return;
     }
-    
+
     const data = JSON.parse(output);
     jobList = (data.jobs || []) as Job[];
     jobsLastLoadTime = Date.now();
@@ -715,33 +719,33 @@ async function loadJobsFromCLI(): Promise<void> {
 async function findAvailableGpus(count: number): Promise<Array<{ node: string; gpu: number }>> {
   /**
    * Find available idle GPUs using the existing rank_gpus logic.
-   * 
+   *
    * "Available" means:
    *   - No active processes on the GPU
    *   - GPU utilization is 0%
    *   - Not already reserved by another queued job
-   * 
+   *
    * Reserved GPUs: Queued jobs that have already been assigned specific GPUs
    * (e.g. immediate mode jobs that were converted to queued) should not have
    * their GPUs re-allocated to new jobs.
-   * 
+   *
    * Returns: Top N available GPUs sorted by priority (rank_gpus order)
    */
   if (!snapshot || count <= 0) {
     return [];
   }
-  
+
   try {
     // Write snapshot and allocations to temp files
     const tmpFile = `/tmp/opensmi-snap-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(snapshot));
-    
+
     const allocFile = `/tmp/opensmi-alloc-${crypto.randomUUID()}.json`;
     await Bun.write(allocFile, JSON.stringify(allocations));
-    
+
     const operatorFile2 = `/tmp/opensmi-op-${crypto.randomUUID()}.json`;
     await Bun.write(operatorFile2, JSON.stringify({ operator: OPERATOR }));
-    
+
     // Build set of GPUs already assigned to queued jobs (to avoid double-booking)
     const queuedJobs = jobList.filter(j => j.status === "queued");
     const reservedGpuKeys = new Set<string>();
@@ -751,7 +755,7 @@ async function findAvailableGpus(count: number): Promise<Array<{ node: string; g
       }
     }
     const reservedGpusJson = JSON.stringify(Array.from(reservedGpuKeys));
-    
+
     const findScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -820,16 +824,16 @@ for node_alias, gpu_idx, gpu_info in ranked:
     gpu_key = f"{node_alias}:{gpu_idx}"
     if gpu_key in reserved:
         continue
-    
+
     # Check if GPU is idle (no processes, 0% utilization)
     node = next((n for n in snap.nodes if n.node_alias == node_alias), None)
     if not node:
         continue
-    
+
     gpu_uuid = gpu_info.uuid
     has_processes = any(p.gpu_uuid == gpu_uuid for p in node.processes)
     utilization = gpu_info.utilization_gpu_percent or 0
-    
+
     if not has_processes and utilization == 0:
         available.append({"node": node_alias, "gpu": gpu_idx})
         if len(available) >= ${count}:
@@ -837,28 +841,28 @@ for node_alias, gpu_idx, gpu_info in ranked:
 
 print(json.dumps(available))
 `;
-    
+
     const proc = Bun.spawn([PYTHON, "-c", findScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
-    
+
     // Cleanup temp files
     try {
       await Bun.$`rm -f ${tmpFile} ${allocFile} ${operatorFile2}`;
     } catch {}
-    
+
     if (exitCode !== 0) {
       tuiLog("ERROR", `findAvailableGpus failed: ${stderr}`);
       return [];
     }
-    
+
     return JSON.parse(stdout.trim());
   } catch (e) {
     tuiLog("ERROR", `findAvailableGpus error: ${e}`);
@@ -887,32 +891,32 @@ async function dispatchQueuedJobs(): Promise<void> {
 }
 
 async function _dispatchQueuedJobsInner(): Promise<void> {
-  
+
   // Get queued jobs in FIFO order (sorted by submission time)
-  // Dispatch ALL queued jobs regardless of queue_mode — a queued job needs execution.
+  // Dispatch ALL queued jobs regardless of queue_mode - a queued job needs execution.
   const queuedJobs = jobList
     .filter(j => j.status === "queued")
     .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
-  
+
   if (queuedJobs.length === 0) {
     return;
   }
-  
+
   // Process each queued job in order (FIFO)
   for (let i = 0; i < queuedJobs.length; i++) {
     const job = queuedJobs[i];
     const hasExplicitGpus = job.gpus.length > 0;
     const needed = job.requested_gpu_count || job.gpus.length;
-    
+
     if (needed === 0) {
       continue;
     }
-    
+
     try {
       if (!hasExplicitGpus) {
-        // No GPUs specified — auto-assign from available pool
+        // No GPUs specified - auto-assign from available pool
         const available = await findAvailableGpus(needed);
-        
+
         if (available.length < needed) {
           if (i === 0) {
             const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
@@ -920,47 +924,47 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
           }
           continue;
         }
-        
+
         job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
       }
-      
+
       // GPUs are set (explicit or just assigned)
       const gpuList = job.gpus
         .map(([n, g]) => `${n}:${g}`)
         .join(", ");
-      
+
       job.status = "running";
       job.started_at = new Date().toISOString();
-      
+
       const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
       setStatus(`Auto-dispatching job ${job.id} → [${gpuList}]`, 2000);
-      
+
       await executeJobRemote(job);
       await updateJobInStore(job);
       await loadJobsFromCLI();
-      
+
       setStatus(`✓ Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
-      
+
       requestRender?.();
-      
+
     } catch (e: any) {
       tuiLog("ERROR", `dispatch failed job=${job.id}: ${e?.message || String(e)}`);
-      
+
       job.status = "failed";
       job.finished_at = new Date().toISOString();
       job.error = `Dispatch failed: ${e?.message || String(e)}`;
-      
+
       const errorMsg = e?.message || String(e);
       const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
       setStatus(`✗ Auto-dispatch failed for job ${job.id}: ${errorMsg.slice(0, 40)}`, 4000);
-      
+
       try {
         await updateJobInStore(job);
         await loadJobsFromCLI();
       } catch (updateErr) {
         tuiLog("ERROR", `job store update failed job=${job.id}: ${updateErr}`);
       }
-      
+
       requestRender?.();
     }
   }
@@ -968,7 +972,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
 
 // Per-GPU liveness cache: jobId → { "node:gpu": alive }
 const gpuLivenessCache: Map<string, Record<string, boolean>> = new Map();
-// Consecutive "all dead" counter per job — only act after threshold
+// Consecutive "all dead" counter per job - only act after threshold
 const watchdogDeadCount: Map<string, number> = new Map();
 const WATCHDOG_DEAD_THRESHOLD = 3;  // Must see "all dead" 3 times in a row before acting
 const WATCHDOG_GRACE_MS = 20_000;   // 20s grace after job start
@@ -976,7 +980,7 @@ const WATCHDOG_GRACE_MS = 20_000;   // 20s grace after job start
 async function checkGpuLiveness(job: Job): Promise<Record<string, boolean> | null> {
   const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
   await Bun.write(tmpFile, JSON.stringify(job));
-  
+
   const checkScript = `
 import sys, json, os
 # Try multiple paths for opensmi module
@@ -1024,7 +1028,7 @@ async def main():
 
 asyncio.run(main())
 `;
-  
+
   try {
     const proc = Bun.spawn([PYTHON, "-c", checkScript], {
       stdout: "pipe",
@@ -1032,26 +1036,26 @@ asyncio.run(main())
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     const code = await proc.exited;
-    
+
     try {
       await Bun.$`rm -f ${tmpFile}`;
     } catch {}
-    
+
     if (code !== 0) {
       tuiLog("WARNING", `checkGpuLiveness: python exited ${code} for job=${job.id}: ${stderr.slice(0, 500)}`);
       return null;  // null = unknown, don't act on it
     }
-    
+
     const trimmed = stdout.trim();
     if (!trimmed) {
       tuiLog("WARNING", `checkGpuLiveness: empty stdout for job=${job.id}`);
       return null;
     }
-    
+
     const parsed = JSON.parse(trimmed);
     gpuLivenessCache.set(job.id, parsed);
     return parsed;
@@ -1063,11 +1067,11 @@ asyncio.run(main())
 
 async function watchRunningJobs(): Promise<void> {
   const runningJobs = jobList.filter(j => j.status === "running");
-  
+
   if (runningJobs.length === 0) {
     return;
   }
-  
+
   for (const job of runningJobs) {
     try {
       // Grace period: skip health check for first 30s after job started.
@@ -1080,15 +1084,15 @@ async function watchRunningJobs(): Promise<void> {
 
       // Remote liveness check via PID file
       const liveness = await checkGpuLiveness(job);
-      
+
       // null = check failed (SSH error, Python error, timeout)
-      // Don't act on failures — reset dead counter
+      // Don't act on failures - reset dead counter
       if (liveness === null) {
         tuiLog("DEBUG", `watchdog: job=${job.id} liveness check returned null (error/timeout), skipping`);
-        // Don't increment dead count on errors — could be transient
+        // Don't increment dead count on errors - could be transient
         continue;
       }
-      
+
       // Empty result = no GPUs mapped (misconfiguration)
       if (Object.keys(liveness).length === 0) {
         tuiLog("DEBUG", `watchdog: job=${job.id} empty liveness result, skipping`);
@@ -1098,62 +1102,62 @@ async function watchRunningJobs(): Promise<void> {
       const anyAlive = Object.values(liveness).some(v => v);
       const aliveCount = Object.values(liveness).filter(v => v).length;
       const totalCount = Object.keys(liveness).length;
-      
+
       if (anyAlive) {
         // Reset dead counter on any sign of life
         watchdogDeadCount.delete(job.id);
-        
+
         if (aliveCount < totalCount) {
           tuiLog("WARNING", `watchdog: job=${job.id} partial: ${aliveCount}/${totalCount} GPUs alive`);
         }
         continue;
       }
 
-      // ALL GPUs reported dead — increment consecutive counter
+      // ALL GPUs reported dead - increment consecutive counter
       const deadCount = (watchdogDeadCount.get(job.id) || 0) + 1;
       watchdogDeadCount.set(job.id, deadCount);
-      
+
       const gpuSummary = Object.entries(liveness).map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
       tuiLog("WARNING", `watchdog: job=${job.id} all dead (${deadCount}/${WATCHDOG_DEAD_THRESHOLD}) [${gpuSummary}]`);
-      
+
       // Only act after consecutive threshold
       if (deadCount < WATCHDOG_DEAD_THRESHOLD) {
         continue;
       }
-      
-      // Confirmed dead — take action
+
+      // Confirmed dead - take action
       const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
       tuiLog("ERROR", `watchdog: job=${job.id} CONFIRMED dead after ${deadCount} checks. cmd=${cmdPreview.slice(0, 80)}`);
       watchdogDeadCount.delete(job.id);
 
-      const shouldRestart = 
+      const shouldRestart =
         (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
         (job.restart_policy === "always");
-      
+
       if (shouldRestart) {
         job.status = "queued";
         job.retry_count++;
         job.started_at = null;
         job.tmux_sessions = [];
-        
-        const retryInfo = job.restart_policy === "always" 
+
+        const retryInfo = job.restart_policy === "always"
           ? `(retry ${job.retry_count})`
           : `(retry ${job.retry_count}/${job.max_retries})`;
-        
+
         tuiLog("INFO", `watchdog: re-queuing job=${job.id} ${retryInfo}`);
         setStatus(`Job ${job.id} died, re-queuing ${retryInfo}`, 3000);
       } else {
         job.status = "failed";
         job.finished_at = new Date().toISOString();
         job.error = `All GPU processes terminated after ${WATCHDOG_DEAD_THRESHOLD} consecutive checks`;
-        
-        tuiLog("ERROR", `watchdog: job=${job.id} failed — confirmed dead (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
+
+        tuiLog("ERROR", `watchdog: job=${job.id} failed - confirmed dead (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
         setStatus(`Job ${job.id} failed: GPU processes terminated`, 3000);
       }
-      
+
       // Clear caches
       gpuLivenessCache.delete(job.id);
-      
+
       await updateJobInStore(job);
       await loadJobsFromCLI();
       requestRender?.();
@@ -1179,7 +1183,7 @@ if len(cleaned_jobs) != len(jobs):
 else:
     print("No cleanup needed")
 `;
-  
+
   try {
     const proc = Bun.spawn([PYTHON, "-c", cleanupScript], {
       stdout: "pipe",
@@ -1187,7 +1191,7 @@ else:
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     await proc.exited;
   } catch (e: any) {
     tuiLog("ERROR", `cleanup failed: ${e}`);
@@ -1204,24 +1208,24 @@ async function killTmuxSessions(sessions: string[]): Promise<void> {
 
 async function executeJobRemote(job: Job): Promise<void> {
   const tmuxSessions: string[] = [];
-  
+
   try {
     if (job.dist_mode === "single") {
       const nodesByGpu = new Map<string, number[]>();
-      
+
       for (const [node, gpu] of job.gpus) {
         if (!nodesByGpu.has(node)) {
           nodesByGpu.set(node, []);
         }
         nodesByGpu.get(node)!.push(gpu);
       }
-      
+
       for (const [node, gpus] of nodesByGpu.entries()) {
         const gpusCsv = gpus.join(",");
-        const sessionName = job.exec_mode === "tmux" 
+        const sessionName = job.exec_mode === "tmux"
           ? `opensmi-${job.id}-${tmuxSafeName(node)}`
           : undefined;
-        
+
         const payload = await executeRemoteExec({
           node,
           gpusCsv,
@@ -1229,11 +1233,11 @@ async function executeJobRemote(job: Job): Promise<void> {
           command: job.command,
           session: sessionName,
         });
-        
+
         if (!payload.ok) {
           throw new Error(`Failed to execute on ${node}: ${payload.rawStderr.trim()}`);
         }
-        
+
         if (sessionName) {
           tmuxSessions.push(sessionName);
         }
@@ -1242,16 +1246,16 @@ async function executeJobRemote(job: Job): Promise<void> {
       for (let i = 0; i < job.commands.length; i++) {
         const cmd = job.commands[i];
         const [node, gpu] = job.gpus[i];
-        
+
         if (!cmd || !node || gpu === undefined) {
           continue;
         }
-        
+
         const gpuIndex = String(gpu);
         const sessionName = job.exec_mode === "tmux"
           ? `opensmi-${job.id}-${tmuxSafeName(node)}-gpu${gpu}`
           : undefined;
-        
+
         const payload = await executeRemoteExec({
           node,
           gpusCsv: gpuIndex,
@@ -1259,11 +1263,11 @@ async function executeJobRemote(job: Job): Promise<void> {
           command: cmd,
           session: sessionName,
         });
-        
+
         if (!payload.ok) {
           throw new Error(`Failed to execute on ${node}:GPU${gpu}: ${payload.rawStderr.trim()}`);
         }
-        
+
         if (sessionName) {
           tmuxSessions.push(sessionName);
         }
@@ -1276,14 +1280,14 @@ async function executeJobRemote(job: Job): Promise<void> {
     }
     throw err;
   }
-  
+
   job.tmux_sessions = tmuxSessions;
 }
 
 async function updateJobInStore(job: Job): Promise<void> {
   const tmpFile = `/tmp/opensmi-job-update-${crypto.randomUUID()}.json`;
   await Bun.write(tmpFile, JSON.stringify(job));
-  
+
   const updateScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -1335,21 +1339,21 @@ jobs = upsert_job(jobs, job)
 save_jobs(state_dir, jobs)
 print("OK")
 `;
-  
+
   const proc = Bun.spawn([PYTHON, "-c", updateScript], {
     stdout: "pipe",
     stderr: "pipe",
     env: OPENSMI_ENV,
     cwd: OPENSMI_CWD,
   });
-  
+
   const stderr = await new Response(proc.stderr).text();
   await proc.exited;
-  
+
   try {
     await Bun.$`rm -f ${tmpFile}`;
   } catch {}
-  
+
   if (proc.exitCode !== 0) {
     throw new Error(`Failed to update job in store: ${stderr}`);
   }
@@ -1364,9 +1368,9 @@ async function cancelJobAction(job: Job): Promise<void> {
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     await proc.exited;
-    
+
     if (proc.exitCode === 0) {
       tuiLog("INFO", `cancelJobAction: job=${job.id} cancelled`);
       setStatus(`Job ${job.id} cancelled`, 2000);
@@ -1393,10 +1397,10 @@ async function retryJobAction(job: Job): Promise<void> {
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const output = await new Response(proc.stdout).text();
     await proc.exited;
-    
+
     if (proc.exitCode === 0) {
       const match = output.match(/retried as ([a-f0-9]+)/) || output.match(/New job ID: ([a-f0-9]+)/);
       const newId = match ? match[1] : "created";
@@ -1407,7 +1411,7 @@ async function retryJobAction(job: Job): Promise<void> {
 
       // Hotfix: persist setup edits before retry dispatch.
       await flushSetupChangesToConfig();
-      
+
       // Immediately dispatch the new queued job instead of waiting 15s
       await dispatchQueuedJobs();
       await loadJobsFromCLI();
@@ -1567,9 +1571,9 @@ async function deleteJobAction(job: Job): Promise<void> {
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     await proc.exited;
-    
+
     if (proc.exitCode === 0) {
       setStatus(`Job ${job.id} deleted`, 2000);
       await loadJobsFromCLI();
@@ -1659,19 +1663,19 @@ function expiresInShort(expiresAt: string | null | undefined): string {
 
 function gpuActivityStatus(node: NodeSnapshot, gpuIdx: number, gpuUuid: string): string {
   const procs = node.processes.filter(p => p.gpu_uuid === gpuUuid);
-  
+
   if (procs.length > 0) {
     // GPU is in use
     return "in use";
   }
-  
+
   // GPU is idle - try to determine since when
-  
+
   // 1. Check if there's an allocation (assigned_at is the earliest idle bound)
   const alloc = allocations.find(
     a => a.node_alias === node.node_alias && a.gpu_index === gpuIdx
   );
-  
+
   if (alloc) {
     const assignedAt = _parseIso(alloc.assigned_at);
     if (assignedAt) {
@@ -1681,7 +1685,7 @@ function gpuActivityStatus(node: NodeSnapshot, gpuIdx: number, gpuUuid: string):
         const day = Math.floor(totalMin / (60 * 24));
         const hour = Math.floor((totalMin % (60 * 24)) / 60);
         const min = totalMin % 60;
-        
+
         if (day > 0) return `idle ${day}d${hour}h (alloc)`;
         if (hour > 0) return `idle ${hour}h${min}m (alloc)`;
         if (min > 0) return `idle ${min}m (alloc)`;
@@ -1689,23 +1693,23 @@ function gpuActivityStatus(node: NodeSnapshot, gpuIdx: number, gpuUuid: string):
       }
     }
   }
-  
+
   // 2. Fallback to TUI observation tracking
   const key = `${node.node_alias}:${gpuUuid}`;
   const idleStartTime = gpuIdleStart[key];
-  
+
   if (!idleStartTime) {
     return "idle (unknown)";
   }
-  
+
   const idleMs = Date.now() - idleStartTime;
   if (idleMs < 0) return "idle (unknown)";
-  
+
   const totalMin = Math.floor(idleMs / 60_000);
   const day = Math.floor(totalMin / (60 * 24));
   const hour = Math.floor((totalMin % (60 * 24)) / 60);
   const min = totalMin % 60;
-  
+
   if (day > 0) return `idle ${day}d${hour}h`;
   if (hour > 0) return `idle ${hour}h${min}m`;
   if (min > 0) return `idle ${min}m`;
@@ -1879,14 +1883,14 @@ function recomputeKnownUsers(): void {
 
 function computeGpuBundles(): GpuBundle[] {
   const bundles: GpuBundle[] = [];
-  
+
   const allocatedGpus = allocations
     .filter(a => {
       const targets = _parseTargets(a.target);
       return targets.includes(OPERATOR);
     })
     .map(a => ({ node: a.node_alias, gpu: a.gpu_index }));
-  
+
   if (allocatedGpus.length > 0) {
     bundles.push({
       id: "allocated",
@@ -1896,7 +1900,7 @@ function computeGpuBundles(): GpuBundle[] {
       shortcut: "a",
     });
   }
-  
+
   const activeGpuSet = new Set<string>();
   if (snapshot) {
     for (const node of snapshot.nodes) {
@@ -1911,7 +1915,7 @@ function computeGpuBundles(): GpuBundle[] {
       }
     }
   }
-  
+
   const activeGpuList: Array<{ node: string; gpu: number }> = [];
   for (const key of activeGpuSet) {
     const [node, gpuStr] = key.split(":");
@@ -1919,7 +1923,7 @@ function computeGpuBundles(): GpuBundle[] {
       activeGpuList.push({ node, gpu: parseInt(gpuStr, 10) });
     }
   }
-  
+
   if (activeGpuList.length > 0) {
     bundles.push({
       id: "active",
@@ -1929,7 +1933,7 @@ function computeGpuBundles(): GpuBundle[] {
       shortcut: "p",
     });
   }
-  
+
   if (myGpuViewState.pinnedGpus.length > 0) {
     bundles.push({
       id: "pinned",
@@ -1939,7 +1943,7 @@ function computeGpuBundles(): GpuBundle[] {
       shortcut: "+",
     });
   }
-  
+
   return bundles;
 }
 
@@ -2031,7 +2035,7 @@ function renderTabSwitcher() {
     const shortcutLabel = tab.shortcut ? `[${tab.shortcut.toUpperCase()}] ` : "    ";
     const activeLabel = isActive ? " ◀ Active" : "";
     const content = `${shortcutLabel}${tab.label}${activeLabel}`;
-    
+
     rows.push(
       Text({
         content: isSelected ? `▸ ${content}` : `  ${content}`,
@@ -2140,7 +2144,7 @@ function renderLoadingBadge() {
   // Flowing glyph at spinner position (3-char)
   const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
   const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
-  const text = "opensmi: I’m coordinating with your GPUs...";
+  const text = "opensmi: I'm coordinating with your GPUs...";
 
   // Prefer showing full message when terminal width allows.
   const termW = process.stdout.columns || 80;
@@ -2175,7 +2179,16 @@ function renderLoadingBadge() {
 }
 
 function renderDashboard() {
-  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "opensmi: I’m coordinating with your GPUs..." }));
+  // Update cluster tab count
+  clusterTabCount = 1 + slurmSnapshots.length;
+  if (clusterTabIdx >= clusterTabCount) clusterTabIdx = 0;
+
+  // If showing a Slurm cluster tab, delegate to Slurm renderer
+  if (clusterTabIdx > 0 && slurmSnapshots.length > 0) {
+    return renderSlurmClusterTab(clusterTabIdx - 1);
+  }
+
+  if (!snapshot) return Box({ flexDirection: "column" }, Text({ content: "opensmi: I'm coordinating with your GPUs..." }));
 
   const totalGpus = snapshot.nodes.reduce((s, n) => s + n.gpus.length, 0);
   const usedGpus = snapshot.nodes.reduce((s, n) => {
@@ -2193,6 +2206,9 @@ function renderDashboard() {
       }
     }
   }
+
+  // Cluster tab bar
+  const clusterTabBar = renderClusterTabBar();
 
   // Header
   const header = Box(
@@ -2306,7 +2322,7 @@ function renderDashboard() {
       const w = colW[1 + j]!;
       const g = idxToGpu[i];
       if (!g) {
-        gpuCells.push(Text({ content: "—".padEnd(w), fg: C.textDim }));
+        gpuCells.push(Text({ content: "-".padEnd(w), fg: C.textDim }));
         continue;
       }
 
@@ -2335,12 +2351,12 @@ function renderDashboard() {
               onMouseDown: (e: any) => {
                 e.preventDefault?.();
                 e.stopPropagation?.();
-                
+
                 const gpuKey = { node: n.node_alias, gpu: i };
                 const idx = launchManualGpus.findIndex(
                   (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
                 );
-                
+
                 if (idx >= 0) {
                   // Unselect GPU
                   launchManualGpus.splice(idx, 1);
@@ -2364,10 +2380,10 @@ function renderDashboard() {
                     }
                   }
                 }
-                
+
                 launchGpuMode = "selected";
                 launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-                
+
                 requestRender?.();
               },
             }) : undefined
@@ -2398,12 +2414,12 @@ function renderDashboard() {
               onMouseDown: (e: any) => {
                 e.preventDefault?.();
                 e.stopPropagation?.();
-                
+
                 const gpuKey = { node: n.node_alias, gpu: i };
                 const idx = launchManualGpus.findIndex(
                   (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
                 );
-                
+
                 if (idx >= 0) {
                   // Unselect GPU
                   launchManualGpus.splice(idx, 1);
@@ -2427,10 +2443,10 @@ function renderDashboard() {
                     }
                   }
                 }
-                
+
                 launchGpuMode = "selected";
                 launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-                
+
                 requestRender?.();
               },
             }) : undefined
@@ -2540,6 +2556,7 @@ function renderDashboard() {
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+      clusterTabBar,
       header,
       tableHeader,
       ...rows,
@@ -2558,7 +2575,7 @@ function renderDetail() {
   if (node.error) {
     return Box(
       { flexDirection: "column", backgroundColor: C.bg, padding: 1 },
-      Text({ content: `${node.node_alias} — ERROR`, fg: C.red }),
+      Text({ content: `${node.node_alias} - ERROR`, fg: C.red }),
       Text({ content: node.error, fg: C.red }),
       Text({ content: "" }),
       Text({ content: "[Esc/Backspace] Back", fg: C.textDim })
@@ -2574,7 +2591,7 @@ function renderDetail() {
 
   // Header
   children.push(
-    Text({ content: `${node.node_alias} (${node.hostname || node.address}) — ${node.os || ""}`, fg: C.blue }),
+    Text({ content: `${node.node_alias} (${node.hostname || node.address}) - ${node.os || ""}`, fg: C.blue }),
     Text({ content: "" })
   );
 
@@ -2596,9 +2613,9 @@ function renderDetail() {
     const prefix = isSel ? "▸" : (inLaunchSelection ? "●" : " ");
     children.push(
       Box(
-        { 
-          width: "100%", 
-          height: 1, 
+        {
+          width: "100%",
+          height: 1,
           position: "relative",
         },
         Text({
@@ -2663,10 +2680,10 @@ function renderDetail() {
         ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
         : (runnerFocused
             ? (isAdmin
-                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
+                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
                 : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Esc]")} Back`)
             : (isAdmin
-                ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear  [Shift+K] Kill  [ctrl+x ↓] Runner  [Esc] Back"
+                ? "[↑↓] GPU  [Enter/a] Allocate  [*] Open-to-all  [x] Clear  [Shift+k] Kill  [ctrl+x ↓] Runner  [Esc] Back"
                 : "[↑↓] GPU  [ctrl+x ↓] Runner  [Esc] Back  [r] Refresh   (read-only)")),
       fg: C.textDim,
     }),
@@ -2695,7 +2712,7 @@ function renderHelp() {
       padding: 1,
       backgroundColor: C.bg,
     },
-    Text({ content: t`${bold("Help — Keyboard Shortcuts")}`, fg: C.text }),
+    Text({ content: t`${bold("Help - Keyboard Shortcuts")}`, fg: C.text }),
     Text({ content: " " }),
     Text({ content: "Navigation:", fg: C.text }),
     Text({ content: "  ↑/↓ or j/k    Move selection", fg: C.textDim }),
@@ -2773,24 +2790,24 @@ function getJobStatusIcon(status: string): { icon: string; color: string } {
 }
 
 function formatJobTimestamp(isoString: string | null): string {
-  if (!isoString) return "—";
+  if (!isoString) return "-";
   try {
     const d = new Date(isoString);
     const hours = String(d.getHours()).padStart(2, "0");
     const minutes = String(d.getMinutes()).padStart(2, "0");
     return `${hours}:${minutes}`;
   } catch {
-    return "—";
+    return "-";
   }
 }
 
 function formatJobDuration(startedAt: string | null, finishedAt: string | null): string {
-  if (!startedAt) return "—";
+  if (!startedAt) return "-";
   const start = new Date(startedAt).getTime();
   const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
   const durationMs = end - start;
   const durationS = Math.floor(durationMs / 1000);
-  
+
   if (durationS < 60) return `${durationS}s`;
   const minutes = Math.floor(durationS / 60);
   if (minutes < 60) return `${minutes}m`;
@@ -2804,9 +2821,9 @@ function formatJobGpus(job: Job): string {
     if (job.requested_gpu_count > 0) {
       return `(auto×${job.requested_gpu_count})`;
     }
-    return "—";
+    return "-";
   }
-  
+
   return job.gpus.map(([node, gpu]) => `${node}:${gpu}`).join(",");
 }
 
@@ -2872,20 +2889,20 @@ function renderJobsListView() {
     const job = jobList[i];
     const selected = i === selectedJobIdx;
     const statusInfo = getJobStatusIcon(job.status);
-    
-    const commandDisplay = job.dist_mode === "single" 
-      ? job.command.slice(0, cmdWidth) 
+
+    const commandDisplay = job.dist_mode === "single"
+      ? job.command.slice(0, cmdWidth)
       : `[${job.commands.length} cmds]`;
-    
+
     const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
     const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
-    
+
     const prefix = selected ? "▶ " : "  ";
     const idDisplay = job.id.padEnd(8);
     const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
-    
+
     const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(cmdWidth)} ${runtime}`;
-    
+
     rows.push(
       Text({
         content: line,
@@ -2897,7 +2914,7 @@ function renderJobsListView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Shift+r]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -2912,7 +2929,7 @@ function renderJobsListView() {
 
 function renderJobDetailView() {
   if (!jobDetailView) return renderJobsListView();
-  
+
   // Log view mode: show captured tmux pane output
   if (jobDetailLogView !== null) {
     const logLines = jobDetailLogView.split("\n");
@@ -2921,40 +2938,40 @@ function renderJobDetailView() {
     const visibleLines = termHeight - 4;
     const maxScroll = Math.max(0, logLines.length - visibleLines);
     jobDetailLogScroll = Math.min(jobDetailLogScroll, maxScroll);
-    
+
     const displayLines = logLines.slice(jobDetailLogScroll, jobDetailLogScroll + visibleLines);
-    
+
     const rows: any[] = [];
     rows.push(Text({
-      content: t`${bold(fg(C.blue)("Log"))} — ${jobDetailLogSession}  ${fg(C.textDim)(`(${jobDetailLogScroll + 1}-${jobDetailLogScroll + displayLines.length}/${logLines.length} lines)`)}`,
+      content: t`${bold(fg(C.blue)("Log"))} - ${jobDetailLogSession}  ${fg(C.textDim)(`(${jobDetailLogScroll + 1}-${jobDetailLogScroll + displayLines.length}/${logLines.length} lines)`)}`,
     }));
     rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(Math.max(termWidth - 2, 20)))}` }));
-    
+
     for (const line of displayLines) {
       rows.push(Text({ content: line, fg: C.text }));
     }
-    
+
     rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(Math.max(termWidth - 2, 20)))}` }));
     rows.push(Text({
       content: t`${fg(C.textDim)("[↑↓]")} Scroll  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back to detail`,
       fg: C.textDim,
     }));
-    
+
     return Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, paddingLeft: 1, paddingRight: 1 },
       ...rows
     );
   }
-  
+
   const job = jobDetailView;
   const statusInfo = getJobStatusIcon(job.status);
   const liveness = gpuLivenessCache.get(job.id) || {};
   const termWidth = process.stdout.columns || 80;
   const contentWidth = Math.max(termWidth - 6, 30);  // padding=2 each side + some margin
-  
+
   // Build list of sessions for navigation
   const sessionEntries: Array<{ label: string; session: string | null; color: string }> = [];
-  
+
   if (job.dist_mode === "single") {
     // Single command → one or more sessions
     for (let i = 0; i < job.gpus.length; i++) {
@@ -2987,28 +3004,28 @@ function renderJobDetailView() {
       sessionEntries.push({ label: `${node}:GPU${gpu} → ${cmdPreview}`, session, color });
     }
   }
-  
+
   // Clamp selection
   if (sessionEntries.length > 0) {
     jobDetailSelectedCmd = Math.min(jobDetailSelectedCmd, sessionEntries.length - 1);
   }
-  
+
   const rows: any[] = [];
   rows.push(
-    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} — ${job.command.slice(0, contentWidth - 16)}` })
+    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} - ${job.command.slice(0, contentWidth - 16)}` })
   );
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
   rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
-  
+
   if (job.started_at) {
     const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
     rows.push(Text({ content: t`Runtime:   ${fg(job.status === "running" ? C.green : C.text)(runtime)}` }));
   }
-  
+
   rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}  Queue: ${job.queue_mode}` }));
   rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries})` : ""}` }));
-  
+
   // GPU/Command list with selection cursor
   if (sessionEntries.length > 0) {
     rows.push(Text({ content: "" }));
@@ -3016,7 +3033,7 @@ function renderJobDetailView() {
     const totalCount = Object.keys(liveness).length;
     const livenessStr = totalCount > 0 ? ` (${liveCount}/${totalCount} active)` : "";
     rows.push(Text({ content: t`${fg(C.cyan)("Sessions:")}${livenessStr}` }));
-    
+
     for (let i = 0; i < sessionEntries.length; i++) {
       const entry = sessionEntries[i];
       const selected = i === jobDetailSelectedCmd;
@@ -3027,29 +3044,29 @@ function renderJobDetailView() {
       rows.push(Text({ content: t`${fg(entryColor)(`${prefix}${statusDot} ${entry.label}`)}${hasLog}` }));
     }
   }
-  
+
   // Command display
   if (job.dist_mode === "single" && job.command) {
     rows.push(Text({ content: "" }));
     rows.push(Text({ content: t`${fg(C.cyan)("Command:")}` }));
     rows.push(Text({ content: `  ${job.command}`, fg: C.textDim }));
   }
-  
+
   // Timestamps
   rows.push(Text({ content: "" }));
   rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
   if (job.started_at) rows.push(Text({ content: t`Started:   ${job.started_at}` }));
   if (job.finished_at) rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
-  
+
   if (job.error) {
     rows.push(Text({ content: "" }));
     rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
   }
-  
+
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+R]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+r]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -3063,7 +3080,7 @@ function renderJobDetailView() {
 function renderMyGpuView() {
   const bundles = computeGpuBundles();
   myGpuViewState.bundles = bundles;
-  
+
   if (bundles.length === 0) {
     return Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
@@ -3079,7 +3096,7 @@ function renderMyGpuView() {
       Text({ content: "[Esc] Back to dashboard", fg: C.textDim })
     );
   }
-  
+
   const header = Box(
     {
       width: "100%",
@@ -3093,11 +3110,11 @@ function renderMyGpuView() {
       content: t`${bold(fg(C.blue)("My GPUs"))} ${fg(C.textDim)("· Operator:")} ${fg(C.cyan)(OPERATOR)}`,
     }),
     Text({
-      content: t`Bundles: ${bundles.length}  Poll: ${lastPollTime || "—"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`Bundles: ${bundles.length}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
       fg: C.text,
     })
   );
-  
+
   const bundleRows: any[] = [];
   bundleRows.push(
     Text({
@@ -3105,13 +3122,13 @@ function renderMyGpuView() {
       fg: C.cyan,
     })
   );
-  
+
   for (let i = 0; i < bundles.length; i++) {
     const bundle = bundles[i]!;
     const isSelected = i === myGpuViewState.selectedBundleIdx;
     const prefix = isSelected ? "▸ " : "  ";
     const shortcutLabel = bundle.shortcut ? ` [${bundle.shortcut}]` : "";
-    
+
     bundleRows.push(
       Text({
         content: `${prefix}${bundle.label}${shortcutLabel}`,
@@ -3119,12 +3136,12 @@ function renderMyGpuView() {
       })
     );
   }
-  
+
   bundleRows.push(Text({ content: "" }));
-  
+
   const selectedBundle = bundles[myGpuViewState.selectedBundleIdx];
   const gpuDetails: any[] = [];
-  
+
   if (selectedBundle && snapshot) {
     gpuDetails.push(
       Text({
@@ -3132,44 +3149,44 @@ function renderMyGpuView() {
       })
     );
     gpuDetails.push(Text({ content: "" }));
-    
+
     for (const gpuRef of selectedBundle.gpus) {
       const node = snapshot.nodes.find(n => n.node_alias === gpuRef.node);
       if (!node || node.error) {
         gpuDetails.push(
           Text({
-            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} — ERROR`,
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} - ERROR`,
             fg: C.red,
           })
         );
         continue;
       }
-      
+
       const gpu = node.gpus.find(g => g.index === gpuRef.gpu);
       if (!gpu) {
         gpuDetails.push(
           Text({
-            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} — NOT FOUND`,
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} - NOT FOUND`,
             fg: C.red,
           })
         );
         continue;
       }
-      
+
       const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
       const alloc = getAllocation(gpuRef.node, gpuRef.gpu);
       const allocStr = alloc ? alloc.target : "*";
       const utilVal = gpuUtilPct(gpu);
       const utilStr = utilVal !== null ? `${utilVal}%` : "?";
       const activityStr = gpuActivityStatus(node, gpuRef.gpu, gpu.uuid);
-      
+
       gpuDetails.push(
         Text({
           content: `  ${gpuRef.node}:GPU${gpuRef.gpu}  |  ${gpu.name}  |  ${gpuMemStr(gpu.memory_used_mib)}/${gpuMemStr(gpu.memory_total_mib)}  |  Load ${utilStr}  |  ${activityStr}`,
           fg: procs.length > 0 ? C.green : C.textDim,
         })
       );
-      
+
       for (const p of procs) {
         const mem = p.used_memory_mib !== null ? `${p.used_memory_mib} MiB` : "?";
         const rt = runtimeStr(p.runtime_s);
@@ -3182,7 +3199,7 @@ function renderMyGpuView() {
       }
     }
   }
-  
+
   const footer = Box(
     {
       width: "100%",
@@ -3202,7 +3219,7 @@ function renderMyGpuView() {
       content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
     })
   );
-  
+
   return Box(
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
@@ -3242,7 +3259,7 @@ function renderAlloc() {
     id: "alloc-user-input",
     width: "100%",
     value: allocDraftUser,
-    placeholder: "* (default) or username", 
+    placeholder: "* (default) or username",
     backgroundColor: C.bgAlt,
     focusedBackgroundColor: "#3b4261",
     textColor: "#ffffff",
@@ -3357,7 +3374,7 @@ function renderAlloc() {
   const rightPanel = Box(
     { flexDirection: "column", flexGrow: 1, height: "100%", gap: 1, overflow: "hidden" },
     Text({
-      content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}${gpuInfo ? ` — ${gpuInfo.name} (${gpuMemStr(gpuInfo.memory_total_mib)})` : ""}`,
+      content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}${gpuInfo ? ` - ${gpuInfo.name} (${gpuMemStr(gpuInfo.memory_total_mib)})` : ""}`,
       fg: C.cyan,
     }),
     Text({ content: `Current allocation: ${currentAllocStr}`, fg: C.textDim }),
@@ -3501,31 +3518,31 @@ function renderGpuAssignmentPanel() {
       Text({ content: "  No snapshot available", fg: C.red })
     );
   }
-  
-  let modeText = launchGpuMode === "auto" 
+
+  let modeText = launchGpuMode === "auto"
     ? "(Auto-ranked)              [click to exclude]  [g] manual"
     : "(Manual selection)         [click to toggle]  [g] auto";
-  
+
   if (launchSourceBundle) {
     modeText = `(From bundle: ${launchSourceBundle})         [g] auto`;
   }
-  
-  const headerNode = Text({ 
-    content: `GPU Assignment  ${modeText}`, 
-    fg: C.textDim 
+
+  const headerNode = Text({
+    content: `GPU Assignment  ${modeText}`,
+    fg: C.textDim
   });
-  
+
   const gpuRows: any[] = [];
-  
+
   if (launchSelectedGpus.length === 0) {
     gpuRows.push(
-      Text({ 
-        content: "  No GPUs selected. Press [+] to add GPUs.", 
-        fg: C.yellow 
+      Text({
+        content: "  No GPUs selected. Press [+] to add GPUs.",
+        fg: C.yellow
       })
     );
   }
-  
+
   const gpuInfoMap = new Map<string, { gpu: GPUInfo; node: NodeSnapshot; allocated: boolean; allocTarget: string }>();
   for (const node of snapshot.nodes) {
     for (const gpu of node.gpus) {
@@ -3539,32 +3556,32 @@ function renderGpuAssignmentPanel() {
       });
     }
   }
-  
+
   if (launchSelectedGpus.length > 0) {
-    
+
     for (let i = 0; i < launchSelectedGpus.length; i++) {
       const selectedGpu = launchSelectedGpus[i]!;
       const key = `${selectedGpu.node}:${selectedGpu.gpu}`;
       const gpuData = gpuInfoMap.get(key);
-      
+
       if (!gpuData) {
         gpuRows.push(
-          Text({ 
-            content: `  [${i + 1}] ● ${key}  (GPU not found in snapshot)`, 
-            fg: C.red 
+          Text({
+            content: `  [${i + 1}] ● ${key}  (GPU not found in snapshot)`,
+            fg: C.red
           })
         );
         continue;
       }
-      
+
       const { gpu, node, allocated, allocTarget } = gpuData;
-      
+
       // Calculate GPU info
       const memFree = gpu.memory_free_mib ?? 0;
       const memTotal = gpu.memory_total_mib ?? 0;
       const memFreeG = Math.floor(memFree / 1024);
       const util = gpu.utilization_gpu_percent ?? gpu.utilization_gpu ?? 0;
-      
+
       // Calculate idle time
       const gpuIdleKey = `${node.node_alias}:${gpu.uuid}`;
       const idleStartTime = gpuIdleStart[gpuIdleKey] || Date.now();
@@ -3572,18 +3589,18 @@ function renderGpuAssignmentPanel() {
       const idleHours = Math.floor(idleMs / (1000 * 60 * 60));
       const idleMinutes = Math.floor((idleMs % (1000 * 60 * 60)) / (1000 * 60));
       const idleDisplay = idleHours > 0 ? `${idleHours}h` : `${idleMinutes}m`;
-      
+
       // Count processes on this GPU
       const procCount = node.processes.filter(p => p.gpu_uuid === gpu.uuid).length;
-      
+
       // Build status indicators
       const isSelected = true; // All GPUs in launchSelectedGpus are selected
       const selectionIndicator = isSelected ? "●" : "○";
-      
+
       // Build reasoning text (why this GPU was selected)
       let reasoning = "";
       let reasoningColor = C.green; // Default good state
-      
+
       if (launchGpuMode === "auto") {
         if (procCount === 0 && util < 10) {
           reasoning = "✓ idle, unused";
@@ -3599,7 +3616,7 @@ function renderGpuAssignmentPanel() {
           reasoningColor = C.red;
         }
       }
-      
+
       // Allocation warning
       let allocWarning = "";
       let hasAllocConflict = false;
@@ -3609,17 +3626,17 @@ function renderGpuAssignmentPanel() {
         hasAllocConflict = true;
         reasoningColor = C.red; // Override with red for allocation conflict
       }
-      
+
       // Build line content
-      const linePrefix = launchDistMode === "one-to-one" 
-        ? `Command ${i + 1} → ` 
+      const linePrefix = launchDistMode === "one-to-one"
+        ? `Command ${i + 1} → `
         : `  `;
-      
+
       const lineContent = `${linePrefix}[${i + 1}] ${selectionIndicator} ${node.node_alias}:GPU${gpu.index}  [${allocTarget || OPERATOR}]  ${memFreeG}G free  idle ${idleDisplay}  ${reasoning}`;
-      
+
       // Color logic: red for conflicts, yellow for warnings, green for good, textDim for neutral
       const lineFg = hasAllocConflict ? C.red : (procCount > 2 ? C.yellow : (procCount === 0 ? C.green : C.textDim));
-      
+
       // Create clickable GPU row
       const gpuRow = Box(
         {
@@ -3645,11 +3662,11 @@ function renderGpuAssignmentPanel() {
               Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
               Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
             );
-            
+
             if (moved || elapsed > 300) {
               return; // Was a drag, don't trigger click
             }
-            
+
             // Handle GPU click based on mode
             if (launchGpuMode === "auto") {
               // In auto mode, clicking excludes GPU (not implemented yet - would need exclusion list)
@@ -3670,11 +3687,11 @@ function renderGpuAssignmentPanel() {
           },
         })
       );
-      
+
       gpuRows.push(gpuRow);
     }
   }
-  
+
   const numSelected = launchSelectedGpus.length;
   const numWithConflicts = launchSelectedGpus.filter((gpu, i) => {
     const key = `${gpu.node}:${gpu.gpu}`;
@@ -3683,17 +3700,17 @@ function renderGpuAssignmentPanel() {
     const { allocated, allocTarget } = gpuData;
     return allocated && allocTarget !== OPERATOR && !allocTarget.split(",").includes(OPERATOR);
   }).length;
-  
+
   const summaryText = numSelected === 0
     ? Text({ content: `  Selected: 0 GPUs`, fg: C.textDim })
     : (numWithConflicts > 0
       ? Text({ content: `  Selected: ${numSelected} GPUs  (${numWithConflicts} with allocation conflicts)`, fg: C.red })
       : Text({ content: `  Selected: ${numSelected} GPUs  ✓ All available`, fg: C.green }));
-  
+
   const helpText = launchGpuMode === "auto"
     ? Text({ content: "  [click GPU] toggle  [+/-] adjust count  [g] switch to manual", fg: C.textDim })
     : Text({ content: "  [click GPU] remove  [+/-] adjust  [g] switch to auto", fg: C.textDim });
-  
+
   return Box(
     {
       flexDirection: "column",
@@ -3736,7 +3753,7 @@ function setSetupMessage(msg: string, ms = 2000) {
 }
 
 async function loadSetupNodes(): Promise<void> {
-  // Always read opensmi.json directly — this is config, not runtime state.
+  // Always read opensmi.json directly - this is config, not runtime state.
   // Never depend on cluster snapshot (which requires SSH poll).
   setupNodes = [];
 
@@ -3780,7 +3797,7 @@ async function loadSetupNodes(): Promise<void> {
 }
 
 async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
-  // Write directly to opensmi.json — no CLI dependency.
+  // Write directly to opensmi.json - no CLI dependency.
   const configPaths = [
     process.env.OPENSMI_CONFIG,
     `${getStateDir()}/opensmi.json`,
@@ -3792,7 +3809,7 @@ async function saveSetupNode(node: NodeEnvConfig): Promise<boolean> {
       const cfg = JSON.parse(raw);
       if (!Array.isArray(cfg.nodes)) continue;
 
-      const target = cfg.nodes.find((n: any) => 
+      const target = cfg.nodes.find((n: any) =>
         String(n.alias || "").replace(/#/g, "-").replace(/:/g, "-") === node.alias
       );
       if (!target) continue;
@@ -3857,11 +3874,1207 @@ async function flushSetupChangesToConfig(): Promise<void> {
   }
 }
 
+// ── srun Popup Helpers ───────────────────────────────────────────
+
+function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSnapshot) {
+  slurmRunPopup = {
+    clusterName,
+    nodeName: node.name,
+    partition: node.partition || "",
+    freeGpusAtOpen: node.gpu_free,
+    snapshotTime: new Date().toISOString(),
+    loginNode: snap?.login_node || "",
+    sshUser: snap?.ssh_user || "",
+    gpuCount: 1,
+    editMode: false,
+    cmdOverride: null,
+    cursorPos: 0,
+    copyStatus: "idle",
+    errorMsg: "",
+    fullCmdForFallback: "",
+    jobSubmitStatus: "idle",
+    jobId: "",
+    gpuIdxList: "",
+    jobErrorMsg: "",
+    jobAbortRequested: false,
+    qosList: [],
+    qosIdx: 0,
+    qosLoading: !!snap?.login_node,
+    qosFetchFailed: false,
+    existingJobIds: snap ? getMyJobIdsOnNode(node, snap.ssh_user || "") : [],
+    existingJobCancelStatus: "idle",
+    existingJobCancelMsg: "",
+  };
+  tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
+  _renderHook?.();
+  // Async fetch QoS list for this partition
+  if (snap?.login_node) {
+    fetchQosForPartition(snap.login_node, snap.ssh_user || "", node.partition || "");
+  }
+}
+
+function closeSrunPopup() {
+  slurmRunPopup = null;
+  _renderHook?.();
+}
+
+function srunTokens(popup: SlurmRunPopup): string[] {
+  return ["srun", "-p", popup.partition, "-w", popup.nodeName,
+          "--gres", `gpu:${popup.gpuCount}`, "--pty", "bash"];
+}
+
+function shellQuote(token: string): string {
+  if (token.length === 0) return "''";
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(token)) return token;
+  // POSIX-safe single-quote escaping: ' -> '\''
+  return `'${token.replace(/'/g, `'\\''`)}'`;
+}
+
+function srunCommand(popup: SlurmRunPopup): string {
+  return srunTokens(popup).map(shellQuote).join(" ");
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  const cmds = [
+    ["pbcopy"],
+    ["xclip", "-selection", "clipboard"],
+    ["xsel", "--clipboard", "--input"],
+    ["wl-copy"],
+  ];
+  for (const [bin, ...args] of cmds) {
+    try {
+      const proc = Bun.spawn([bin!, ...args], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      proc.stdin.write(text);
+      proc.stdin.end();
+      const code = await proc.exited;
+      if (code === 0) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null {
+  const snap = slurmSnapshots[clusterIdx];
+  if (!snap) return null;
+  const node = snap.nodes.find(n => n.name === nodeName);
+  return node ? node.gpu_free : null;
+}
+
+// Strip ANSI escape codes for display-width calculation only
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+// Wrap a string into lines based on ANSI-stripped display width (raw string preserved per line)
+function wrapText(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [text];
+  const displayLen = stripAnsi(text).length;
+  if (displayLen <= maxWidth) return [text];
+  // Split by display characters, tracking raw offsets
+  const lines: string[] = [];
+  let rawIdx = 0;
+  let displayCount = 0;
+  let lineStart = 0;
+  while (rawIdx < text.length) {
+    // Skip ANSI sequences (don't count toward display width)
+    const ansiMatch = text.slice(rawIdx).match(/^\x1b\[[0-9;]*[A-Za-z]/);
+    if (ansiMatch) {
+      rawIdx += ansiMatch[0].length;
+      continue;
+    }
+    displayCount++;
+    rawIdx++;
+    if (displayCount >= maxWidth) {
+      lines.push(text.slice(lineStart, rawIdx));
+      lineStart = rawIdx;
+      displayCount = 0;
+    }
+  }
+  if (lineStart < text.length) lines.push(text.slice(lineStart));
+  return lines.length > 0 ? lines : [text];
+}
+
+// Wrap text and insert a visible cursor `|` at cursorPos for edit mode rendering
+function wrapTextWithCursor(text: string, cursorPos: number, maxWidth: number): string[] {
+  if (maxWidth <= 0) return [text];
+  const clampedPos = Math.max(0, Math.min(cursorPos, text.length));
+  const withCursor = text.slice(0, clampedPos) + "|" + text.slice(clampedPos);
+  return wrapText(withCursor, maxWidth);
+}
+
+function renderSrunPopup(popup: SlurmRunPopup): any {
+  const autoCmd = srunCommand(popup);
+  const cmd = popup.cmdOverride !== null ? popup.cmdOverride : autoCmd;
+  const isEdited = popup.cmdOverride !== null;
+  const currentFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+  const isStale = popup.copyStatus === "stale";
+  const gpuInvalid = !isEdited && (popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
+    || !Number.isInteger(popup.gpuCount));
+  const canCopy = !gpuInvalid && !isStale && !(isEdited && cmd.trim() === "");
+  const busy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling" || popup.jobSubmitStatus === "cancelling";
+
+  const w = Math.min(62, (process.stdout.columns || 80) - 4);
+  const innerW = w - 2; // padding 1 each side
+
+  const line = (content: any) => Box({ width: w, paddingLeft: 1, paddingRight: 1 }, content);
+
+  const rows: any[] = [
+    // Title bar
+    Box({ width: w, backgroundColor: C.blue, paddingLeft: 1 },
+      Text({ content: t`${bold(fg("#ffffff")("srun Job Submit"))} — ${bold(popup.nodeName)}` })
+    ),
+    line(Text({ content: "" })),
+    // Existing my-job section
+    ...(() => {
+      if (popup.existingJobCancelStatus === "done") {
+        return [
+          line(Text({ content: t`${fg(C.green)(`✓ Cancelled: ${popup.existingJobCancelMsg.replace("Cancelled: ", "")}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "error") {
+        return [
+          line(Text({ content: t`${fg(C.red)(`✗ ${popup.existingJobCancelMsg}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "cancelling") {
+        return [
+          line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling existing job(s)...")}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobIds.length > 0) {
+        return [
+          line(Box({ flexDirection: "row" },
+            Text({ content: t`${fg(C.yellow)(`⚠ Active job(s): ${popup.existingJobIds.join(", ")}  `)}` }),
+            Box({
+              paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+              onMouseDown: () => { cancelExistingJobsInPopup(); },
+            }, Text({ content: "X: Cancel", fg: "#ffffff" })),
+          )),
+          line(Text({ content: "" })),
+        ];
+      }
+      return [];
+    })(),
+    // Node info (read-only)
+    line(Text({ content: t`${fg(C.textDim)("Partition :")} ${popup.partition}` })),
+    line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })),
+    line(Text({ content: t`${fg(C.textDim)("Free GPUs :")} ${popup.freeGpusAtOpen}${currentFree !== null && currentFree !== popup.freeGpusAtOpen ? fg(C.yellow)(` → now ${currentFree}`) : ""}` })),
+    line(Text({ content: "" })),
+    // GPU count input
+    line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("GPUs      :")} ` }),
+      Text({ content: `[${popup.gpuCount}]`, fg: gpuInvalid ? C.red : C.green }),
+      Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}` }),
+    )),
+  ];
+
+  // QoS selector
+  if (popup.qosLoading) {
+    rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("⟳ loading...")}` })));
+  } else if (popup.qosFetchFailed) {
+    rows.push(line(Text({ content: t`${fg(C.red)("QoS       :")} ${fg(C.red)("unavailable — use 'e' to add --qos manually")}` })));
+  } else if (popup.qosList.length > 0) {
+    const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
+    rows.push(line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("QoS       :")} ` }),
+      Text({ content: `[${qosLabel}]`, fg: C.cyan }),
+      Text({ content: t`  ${fg(C.textDim)("Q to cycle")}` }),
+    )));
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Command preview / edit (with line wrap)
+  rows.push(line(Box({ flexDirection: "row" },
+    Text({ content: t`${fg(C.textDim)("Command:")}` }),
+    isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
+    popup.editMode
+      ? Text({ content: t`  ${fg(C.cyan)("editing — Enter/Esc to confirm")}` })
+      : Text({ content: t`  ${fg(C.textDim)("e: edit  r: reset cmd")}` }),
+  )));
+
+  if (popup.editMode) {
+    const wrapW = innerW - 2; // "▶ " prefix
+    const wrapped = wrapTextWithCursor(cmd, popup.cursorPos, wrapW);
+    for (let i = 0; i < wrapped.length; i++) {
+      rows.push(line(Box({ flexDirection: "row" },
+        Text({ content: i === 0 ? "▶ " : "  ", fg: C.cyan }),
+        Text({ content: wrapped[i]!, fg: C.cyan }),
+      )));
+    }
+  } else {
+    const wrapW = innerW;
+    const wrapped = wrapText(cmd, wrapW);
+    for (const wline of wrapped) {
+      rows.push(line(Text({ content: wline, fg: canCopy ? C.text : C.red })));
+    }
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Copy status
+  if (isStale) {
+    rows.push(line(Text({ content: t`${fg(C.red)("⚠ " + popup.errorMsg)}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+  if (popup.copyStatus === "fail" && popup.fullCmdForFallback) {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("Clipboard unavailable — copy manually:")}` })));
+    for (const wl of wrapText(popup.fullCmdForFallback, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.text })));
+    }
+    rows.push(line(Text({ content: "" })));
+  }
+  if (popup.copyStatus === "ok") {
+    rows.push(line(Text({ content: t`${fg(C.green)("✓ Copied to clipboard!")}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Submit note + capacity warning
+  rows.push(line(Text({ content: t`${fg(C.textDim)("ℹ  Reserves GPUs only — run workload after ssh attach.")}` })));
+  rows.push(line(Text({ content: t`${fg(C.textDim)("⚠  Capacity is real-time and may change.")}` })));
+  rows.push(line(Text({ content: "" })));
+
+  // Job submit status / result
+  if (popup.jobSubmitStatus === "submitting") {
+    rows.push(line(Text({ content: t`${fg(C.cyan)("⟳ Submitting job...")}  ${fg(C.textDim)("Esc to abort")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "polling") {
+    rows.push(line(Text({ content: t`${fg(C.cyan)(`⟳ Waiting for job ${popup.jobId} to start...`)}  ${fg(C.textDim)("Esc to abort")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "cancelling") {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling job...")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "running") {
+    rows.push(line(Text({ content: t`${fg(C.green)(`✓ Job ${popup.jobId} is RUNNING`)}` })));
+    rows.push(line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })));
+    if (popup.gpuIdxList) {
+      rows.push(line(Text({ content: t`${fg(C.textDim)("GPU IDX   :")} ${fg(C.green)(popup.gpuIdxList)}` })));
+      rows.push(line(Text({ content: "" })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
+      rows.push(line(Text({ content: `export CUDA_VISIBLE_DEVICES=${popup.gpuIdxList}`, fg: C.text })));
+      rows.push(line(Text({ content: `# then run: python train.py  (or your workload)`, fg: C.textDim })));
+    } else {
+      rows.push(line(Text({ content: t`${fg(C.yellow)("GPU IDX   : unavailable (check scontrol manually)")}` })));
+      rows.push(line(Text({ content: "" })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
+      rows.push(line(Text({ content: `# check: scontrol -d show job ${popup.jobId} | grep IDX`, fg: C.textDim })));
+    }
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "error") {
+    for (const wl of wrapText(`✗ ${popup.jobErrorMsg}`, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.red })));
+    }
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Action bar
+  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && !popup.qosFetchFailed && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
+  const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
+  const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
+
+  rows.push(line(Box({ flexDirection: "row" },
+    Box({
+      paddingLeft: 1, paddingRight: 1,
+      backgroundColor: canCopy && !popup.editMode && !busy ? C.blue : C.bgAlt,
+      onMouseDown: canCopy && !popup.editMode && !busy ? async () => { await submitSrunPopup(); } : undefined,
+    }, Text({ content: "c/Enter: Copy", fg: canCopy && !popup.editMode && !busy ? "#ffffff" : C.textDim })),
+    Text({ content: "  " }),
+    canCancel
+      ? Box({
+          paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+          onMouseDown: () => { cancelSlurmJob(); },
+        }, Text({ content: "X: Cancel Job", fg: "#ffffff" }))
+      : canResubmit
+        ? Box({
+            paddingLeft: 1, paddingRight: 1, backgroundColor: C.yellow,
+            onMouseDown: () => { submitJobToSlurm(); },
+          }, Text({ content: "R: Resubmit", fg: "#000000" }))
+        : Box({
+            paddingLeft: 1, paddingRight: 1,
+            backgroundColor: canSubmit ? C.green : C.bgAlt,
+            onMouseDown: canSubmit ? () => { submitJobToSlurm(); } : undefined,
+          }, Text({ content: busy ? "…" : "S: Submit", fg: canSubmit ? "#000000" : C.textDim })),
+    Text({ content: "  " }),
+    Box({
+      paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
+      onMouseDown: () => {
+        if (popup.editMode) { popup.editMode = false; _renderHook?.(); }
+        else if (busy) { popup.jobAbortRequested = true; _renderHook?.(); }
+        else closeSrunPopup();
+      },
+    }, Text({ content: popup.editMode ? "Esc: Done" : busy ? "Esc: Abort" : "Esc: Close", fg: C.textDim })),
+  )));
+  rows.push(line(Text({ content: "" })));
+
+  // Center popup on screen
+  const termW = process.stdout.columns || 80;
+  const termH = process.stdout.rows || 24;
+  const left = Math.max(0, Math.floor((termW - w) / 2));
+  const top = Math.max(0, Math.floor((termH - rows.length) / 2));
+
+  return Box(
+    { position: "absolute", left, top, width: w, flexDirection: "column", backgroundColor: C.bg, zIndex: 100 },
+    ...rows,
+  );
+}
+
+async function submitSrunPopup() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+
+  // If user edited the command, skip preflight and use override directly
+  const cmd = popup.cmdOverride !== null ? popup.cmdOverride : srunCommand(popup);
+
+  if (popup.cmdOverride === null) {
+    // Preflight: re-check latest free GPUs (only for auto-generated commands)
+    const latestFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+    if (latestFree === null) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = "Node no longer found in cluster data.";
+      _renderHook?.();
+      return;
+    }
+    if (popup.gpuCount > latestFree) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = `Capacity changed: was ${popup.freeGpusAtOpen}, now ${latestFree}. Adjust GPUs and retry.`;
+      _renderHook?.();
+      return;
+    }
+    if (latestFree === 0) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = "No free GPUs available on this node.";
+      _renderHook?.();
+      return;
+    }
+  }
+  tuiLog("INFO", `srun popup submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount}`);
+
+  const ok = await copyToClipboard(cmd);
+  if (ok) {
+    popup.copyStatus = "ok";
+    popup.fullCmdForFallback = "";
+  } else {
+    popup.copyStatus = "fail";
+    popup.fullCmdForFallback = cmd;
+  }
+  _renderHook?.();
+}
+
+// Strict allowlist: Slurm names are alphanumeric + _ . : - only
+function slurmNameSafe(s: string): boolean {
+  return /^[A-Za-z0-9_.:\-]+$/.test(s);
+}
+
+async function fetchQosForPartition(loginNode: string, sshUser: string, partition: string) {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  try {
+    const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
+    const proc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `scontrol show partition ${shellQuote(partition)}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    // Parse "AllowQos=normal,high" or "QoS=normal"
+    const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
+    if (m && m[1] !== "N/A" && m[1] !== "(null)") {
+      popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
+    }
+    tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
+  } catch (e) {
+    tuiLog("DEBUG", `fetchQos failed: ${e}`);
+    popup.qosFetchFailed = true;
+  } finally {
+    popup.qosLoading = false;
+  }
+  _renderHook?.();
+}
+
+// Returns deduplicated job IDs on a node that belong to sshUser
+function getMyJobIdsOnNode(node: SlurmNodeInfo, sshUser: string): number[] {
+  if (!sshUser) return [];
+  const ids = new Set<number>();
+  for (const slot of node.gpus) {
+    if (slot.user === sshUser && slot.job_id !== null) {
+      ids.add(slot.job_id);
+    }
+  }
+  return [...ids];
+}
+
+// Cancel jobs on a node by SSH — no popup required
+interface NodeCancelStatus { node: string; status: "idle" | "cancelling" | "done" | "error"; msg: string; }
+let nodeCancelStatus: NodeCancelStatus | null = null;
+
+async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot) {
+  const jobIds = getMyJobIdsOnNode(node, snap.ssh_user || "");
+  if (jobIds.length === 0) return;
+
+  // Validate all job IDs
+  for (const id of jobIds) {
+    if (!/^\d+$/.test(String(id))) {
+      tuiLog("WARNING", `cancelJobsOnNode: suspicious jobId "${id}", skipped`);
+      return;
+    }
+  }
+
+  if (!snap.login_node) {
+    nodeCancelStatus = { node: node.name, status: "error", msg: "No login_node configured." };
+    _renderHook?.();
+    return;
+  }
+
+  nodeCancelStatus = { node: node.name, status: "cancelling", msg: "" };
+  _renderHook?.();
+
+  const sshTarget = snap.ssh_user ? `${snap.ssh_user}@${snap.login_node}` : snap.login_node;
+
+  try {
+    for (const jobId of jobIds) {
+      // Ownership check before cancelling
+      const ownerProc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+         `squeue -h -j ${jobId} -o %u`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      const ownerExit = await ownerProc.exited;
+      const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
+      if (ownerExit !== 0 || (!jobOwner && snap.ssh_user)) {
+        nodeCancelStatus = { node: node.name, status: "error", msg: `Owner check failed for job ${jobId}; blocked for safety.` };
+        _renderHook?.();
+        return;
+      }
+      if (jobOwner && snap.ssh_user && jobOwner !== snap.ssh_user) {
+        nodeCancelStatus = { node: node.name, status: "error", msg: `Job ${jobId} owned by "${jobOwner}"; cancel denied.` };
+        _renderHook?.();
+        return;
+      }
+      const proc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `scancel ${jobId}`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      await proc.exited;
+      tuiLog("INFO", `cancelJobsOnNode: scancel ${jobId} on ${node.name} done`);
+    }
+    nodeCancelStatus = { node: node.name, status: "done", msg: `Cancelled: ${jobIds.join(", ")}` };
+    _renderHook?.();
+    // Refresh cluster data after cancel — force render on completion
+    setTimeout(async () => {
+      await loadSlurmData();
+      _renderHook?.();
+    }, 1500);
+  } catch (e: any) {
+    nodeCancelStatus = { node: node.name, status: "error", msg: e?.message || String(e) };
+    tuiLog("ERROR", `cancelJobsOnNode failed: ${nodeCancelStatus.msg}`);
+  }
+  _renderHook?.();
+}
+
+async function cancelExistingJobsInPopup() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  if (!popup.existingJobIds.length || !popup.loginNode) return;
+
+  popup.existingJobCancelStatus = "cancelling";
+  popup.existingJobCancelMsg = "";
+  _renderHook?.();
+
+  const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+  try {
+    for (const jobId of popup.existingJobIds) {
+      if (!/^\d+$/.test(String(jobId))) continue;
+      // Ownership check
+      const ownerProc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `squeue -h -j ${jobId} -o %u`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      const ownerExit = await ownerProc.exited;
+      const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
+      if (ownerExit !== 0 || (!jobOwner && popup.sshUser)) {
+        popup.existingJobCancelStatus = "error";
+        popup.existingJobCancelMsg = `Owner check failed for job ${jobId}; blocked for safety.`;
+        _renderHook?.();
+        return;
+      }
+      if (jobOwner && popup.sshUser && jobOwner !== popup.sshUser) {
+        popup.existingJobCancelStatus = "error";
+        popup.existingJobCancelMsg = `Job ${jobId} owned by "${jobOwner}"; cancel denied.`;
+        _renderHook?.();
+        return;
+      }
+      const proc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `scancel ${jobId}`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      await proc.exited;
+      tuiLog("INFO", `cancelExistingJobs: scancel ${jobId} done`);
+    }
+    popup.existingJobCancelStatus = "done";
+    popup.existingJobCancelMsg = `Cancelled: ${popup.existingJobIds.join(", ")}`;
+    popup.existingJobIds = [];
+    _renderHook?.();
+    // Refresh cluster data
+    setTimeout(async () => {
+      await loadSlurmData();
+      _renderHook?.();
+    }, 1500);
+  } catch (e: any) {
+    popup.existingJobCancelStatus = "error";
+    popup.existingJobCancelMsg = e?.message || String(e);
+    _renderHook?.();
+  }
+}
+
+async function cancelSlurmJob() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  if (!popup.jobId) return;
+  // jobId must be purely numeric
+  if (!/^\d+$/.test(popup.jobId)) {
+    tuiLog("WARNING", `cancelSlurmJob: suspicious jobId "${popup.jobId}", aborting`);
+    popup.jobSubmitStatus = "idle";
+    _renderHook?.();
+    return;
+  }
+  popup.jobSubmitStatus = "cancelling";
+  _renderHook?.();
+  try {
+    const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+    // Ownership check: verify job belongs to current user before cancelling
+    const ownerProc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `squeue -h -j ${popup.jobId} -o %u`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const ownerExit = await ownerProc.exited;
+    const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
+    const expectedUser = popup.sshUser || "";
+    if (ownerExit !== 0 || (!jobOwner && expectedUser)) {
+      // squeue lookup failed (permissions issue or transient error) — block for safety
+      tuiLog("WARNING", `cancelSlurmJob: owner lookup failed (exit=${ownerExit} jobOwner="${jobOwner}") — blocking scancel`);
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = `Owner check unavailable (squeue exit ${ownerExit}); cancel blocked for safety. Run: scancel ${popup.jobId}`;
+      _renderHook?.();
+      return;
+    }
+    if (jobOwner && expectedUser && jobOwner !== expectedUser) {
+      tuiLog("WARNING", `cancelSlurmJob: ownership mismatch — job ${popup.jobId} owner="${jobOwner}" expected="${expectedUser}", refusing scancel`);
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = `Job ${popup.jobId} owned by "${jobOwner}"; cancel denied.`;
+      _renderHook?.();
+      return;
+    }
+    const proc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `scancel ${popup.jobId}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    await proc.exited;
+    tuiLog("INFO", `scancel ${popup.jobId} done (owner: ${jobOwner || "unverified"})`);
+  } catch (e) {
+    tuiLog("WARNING", `scancel failed: ${e}`);
+  }
+  popup.jobSubmitStatus = "idle";
+  popup.jobId = "";
+  popup.gpuIdxList = "";
+  popup.jobAbortRequested = false;
+  _renderHook?.();
+}
+
+async function submitJobToSlurm() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+
+  if (!popup.loginNode) {
+    popup.jobSubmitStatus = "error";
+    popup.jobErrorMsg = "No login_node configured for this cluster.";
+    _renderHook?.();
+    return;
+  }
+
+  // Injection guard: validate all user-controlled Slurm fields
+  const fieldsToValidate: [string, string][] = [
+    ["partition", popup.partition],
+    ["node", popup.nodeName],
+  ];
+  const selectedQosName = popup.qosList[popup.qosIdx - 1] || "";
+  if (selectedQosName) fieldsToValidate.push(["qos", selectedQosName]);
+  for (const [fieldName, value] of fieldsToValidate) {
+    if (!slurmNameSafe(value)) {
+      const msg = `Invalid characters in ${fieldName} (allowed: A-Z a-z 0-9 _ . : -): "${value}"`;
+      tuiLog("WARNING", `injection guard blocked: field=${fieldName} value="${value}"`);
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = msg;
+      _renderHook?.();
+      return;
+    }
+  }
+
+  // Block submit if QoS is still loading
+  if (popup.qosLoading) {
+    popup.jobSubmitStatus = "error";
+    popup.jobErrorMsg = "QoS list still loading — please wait a moment.";
+    _renderHook?.();
+    return;
+  }
+
+  popup.jobSubmitStatus = "submitting";
+  popup.jobId = "";
+  popup.gpuIdxList = "";
+  popup.jobErrorMsg = "";
+  popup.jobAbortRequested = false;
+  _renderHook?.();
+
+  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQosName || "(default)"} login=${popup.loginNode}`);
+
+  try {
+    // 1. sbatch sleep infinity
+    // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
+    const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+    const qosPart = selectedQosName ? ` --qos=${shellQuote(selectedQosName)}` : "";
+    const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
+    const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, remoteCmd];
+
+    const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
+    const sbatchOut = await new Response(sbatchProc.stdout).text();
+    const sbatchExit = await sbatchProc.exited;
+    if (sbatchExit !== 0) {
+      const sbatchErr = await new Response(sbatchProc.stderr).text();
+      throw new Error(`sbatch failed: ${sbatchErr.trim() || `exit ${sbatchExit}`}`);
+    }
+
+    // Parse JOBID from "Submitted batch job 1059327" — retry up to 3× on parse failure
+    let jobIdMatch = sbatchOut.match(/Submitted batch job (\d+)/);
+    if (!jobIdMatch) {
+      // Some clusters emit delayed output; retry stderr+stdout combination
+      const sbatchErr2 = await new Response(sbatchProc.stderr).text();
+      const combined = sbatchOut + sbatchErr2;
+      jobIdMatch = combined.match(/Submitted batch job (\d+)/);
+    }
+    if (!jobIdMatch) {
+      // Abort was requested before we even got JOBID — nothing to scancel
+      if (popup.jobAbortRequested) {
+        popup.jobSubmitStatus = "idle";
+        _renderHook?.();
+        return;
+      }
+      throw new Error(`Could not parse JOBID from sbatch output: "${sbatchOut.trim()}"`);
+    }
+    popup.jobId = jobIdMatch[1]!;
+    // Check abort immediately after obtaining jobId — no orphan
+    if (popup.jobAbortRequested) {
+      tuiLog("INFO", `abort before polling: cancelling job ${popup.jobId}`);
+      await cancelSlurmJob();
+      return;
+    }
+    popup.jobSubmitStatus = "polling";
+    _renderHook?.();
+    tuiLog("INFO", `job submitted: JOBID=${popup.jobId}`);
+
+    // 2. Poll squeue until RUNNING — 200ms tick × 300 = 60s max; abort responsive
+    let running = false;
+    const TICK_MS = 200;
+    const POLL_EVERY = 10; // query squeue every 10 ticks (2s)
+    let tickCount = 0;
+    let totalTicks = 300;
+    while (tickCount < totalTicks) {
+      await new Promise(r => setTimeout(r, TICK_MS));
+      if (!slurmRunPopup) return; // popup closed
+      if (popup.jobAbortRequested) {
+        tuiLog("INFO", `abort requested for job ${popup.jobId}, cancelling`);
+        await cancelSlurmJob();
+        return;
+      }
+      tickCount++;
+      if (tickCount % POLL_EVERY !== 0) continue;
+      const sqCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+        "squeue", "-j", popup.jobId, "-h", "-o", "%T"];
+      const sqProc = Bun.spawn(sqCmd, { stdout: "pipe", stderr: "pipe" });
+      const sqOut = (await new Response(sqProc.stdout).text()).trim();
+      await sqProc.exited;
+      tuiLog("DEBUG", `poll squeue job ${popup.jobId}: state=${sqOut}`);
+      if (sqOut === "RUNNING") { running = true; break; }
+      if (sqOut === "FAILED" || sqOut === "CANCELLED" || sqOut === "TIMEOUT") {
+        throw new Error(`Job ${popup.jobId} ended unexpectedly (state: ${sqOut})`);
+      }
+      // empty = job not in queue yet (pending or not found) — keep polling
+    }
+    if (!running) throw new Error(`Job ${popup.jobId} did not reach RUNNING state within 60s`);
+
+    // 3. scontrol -d show job → GPU IDX
+    const scCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+      "scontrol", "-d", "show", "job", popup.jobId];
+    const scProc = Bun.spawn(scCmd, { stdout: "pipe", stderr: "pipe" });
+    const scOut = await new Response(scProc.stdout).text();
+    await scProc.exited;
+
+    // Parse all "GresUsed=gpu:N(IDX:a,b,...)" segments, collect & dedupe indices
+    const idxMatches = [...scOut.matchAll(/GresUsed=gpu:\d+\(IDX:([0-9,]+)\)/g)];
+    if (idxMatches.length > 0) {
+      const allIdx = idxMatches
+        .flatMap(m => m[1]!.split(","))
+        .filter(s => /^\d+$/.test(s))
+        .map(Number);
+      const unique = [...new Set(allIdx)].sort((a, b) => a - b);
+      popup.gpuIdxList = unique.join(",");
+    } else {
+      popup.gpuIdxList = ""; // unavailable — don't show false data
+      tuiLog("WARNING", `GresUsed IDX not found in scontrol output for job ${popup.jobId}`);
+    }
+    popup.jobSubmitStatus = "running";
+    _renderHook?.();
+    tuiLog("INFO", `job running: JOBID=${popup.jobId} GPU_IDX=${popup.gpuIdxList}`);
+
+  } catch (e: any) {
+    popup.jobSubmitStatus = "error";
+    popup.jobErrorMsg = e?.message || String(e);
+    tuiLog("ERROR", `job submit failed: ${popup.jobErrorMsg}`);
+    _renderHook?.();
+  }
+}
+
+// ── Cluster Tab Bar (Chrome-style) ────────────────────────────────
+
+function getClusterTabNames(): string[] {
+  const names: string[] = [snapshot?.cluster_name || "SSH Cluster"];
+  for (const ss of slurmSnapshots) {
+    names.push(ss.cluster_name || "Slurm");
+  }
+  return names;
+}
+
+function renderClusterTabBar() {
+  const names = getClusterTabNames();
+  if (names.length <= 1) {
+    // Only one cluster, no tab bar needed
+    return Box({ height: 0 });
+  }
+
+  const tabs = names.map((name, i) => {
+    const isActive = i === clusterTabIdx;
+    const label = name.length > 18 ? name.slice(0, 17) + "…" : name;
+    return Box(
+      { backgroundColor: isActive ? C.blue : C.bgAlt, paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: isActive
+          ? t`${bold(fg("#ffffff")(label))}`
+          : t`${fg(C.textDim)(label)}`,
+      }),
+    );
+  });
+
+  return Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0 },
+    ...tabs,
+    Box({ flexGrow: 1, backgroundColor: C.bgAlt },
+      Text({ content: t`  ${fg(C.textDim)("[Tab] switch")}` }),
+    ),
+  );
+}
+
+// ── Slurm Cluster Tab Renderer ───────────────────────────────────
+
+function renderSlurmClusterTab(slurmIdx: number) {
+  const ssnap = slurmSnapshots[slurmIdx];
+  if (!ssnap) {
+    return Box(
+      { flexDirection: "column", paddingLeft: 1, backgroundColor: C.bg },
+      renderClusterTabBar(),
+      Text({ content: "No data for this Slurm cluster.", fg: C.textDim }),
+    );
+  }
+
+  const nodes = ssnap.nodes || [];
+  const totalGpus = nodes.reduce((s, n) => s + n.gpu_total, 0);
+  const usedGpus = nodes.reduce((s, n) => s + n.gpu_used, 0);
+  const maxGpus = nodes.reduce((m, n) => Math.max(m, n.gpu_total), 0);
+
+  const termWidth = process.stdout.columns || 80;
+
+  // Tab bar
+  const tabBar = renderClusterTabBar();
+
+  // Header
+  const slurmHeader = Box(
+    { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
+    Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name))} ${fg(C.textDim)("· slurm")}` }),
+    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
+  );
+
+  // Sort nodes
+  const sortedNodes = [...nodes].sort((a, b) => {
+    switch (slurmSortKey) {
+      case "name":      return a.name.localeCompare(b.name);
+      case "partition": return (a.partition || "").localeCompare(b.partition || "");
+      case "free_asc":  return a.gpu_free - b.gpu_free;
+      case "free_desc": return b.gpu_free - a.gpu_free;
+      default:          return 0;
+    }
+  });
+
+  // Column widths
+  const nodeW = 12;
+  // Dynamic partition width: fit longest name, min 12, max 22
+  const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
+  const partW = Math.min(22, Math.max(12, maxPartLen + 1));
+  const freeW = 6;
+  // Clamp max GPU columns to fit screen — prefer showing user names legibly
+  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
+  const gpuW = maxDisplayGpus > 0
+    ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
+    : 8;
+
+  // Sort indicator helper
+  const sortArrow = (col: SlurmSortKey, altCol?: SlurmSortKey) => {
+    if (slurmSortKey === col || slurmSortKey === altCol) return fg(C.blue)(" ▲");
+    if (col === "free_asc" && slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
+    return fg(C.textDim)(" ·");
+  };
+
+  // Table header with clickable sort columns
+  const gpuHeaders = Array.from({ length: maxDisplayGpus }, (_, i) =>
+    Box({ width: gpuW }, Text({ content: `GPU${i}`.padEnd(gpuW), fg: C.textDim }))
+  );
+  const moreGpusHdr = maxGpus > maxDisplayGpus
+    ? Box({ width: 4 }, Text({ content: `+${maxGpus - maxDisplayGpus}`, fg: C.textDim }))
+    : null;
+
+  const tableHdr = Box(
+    { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
+    Box(
+      { width: nodeW, onMouseDown: () => { slurmSortKey = slurmSortKey === "name" ? "none" : "name"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Node".padEnd(nodeW - 2)}${sortArrow("name")}`, fg: C.textDim }),
+    ),
+    Box(
+      { width: partW, onMouseDown: () => { slurmSortKey = slurmSortKey === "partition" ? "none" : "partition"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Partition".padEnd(partW - 2)}${sortArrow("partition")}`, fg: C.textDim }),
+    ),
+    ...gpuHeaders,
+    ...(moreGpusHdr ? [moreGpusHdr] : []),
+    Box(
+      {
+        width: freeW,
+        onMouseDown: () => {
+          slurmSortKey = slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
+          slurmScrollOff = 0;
+          _renderHook?.();
+        },
+      },
+      Text({ content: t`${"Free".padEnd(freeW - 2)}${slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
+    ),
+  );
+
+  const stateIcon: Record<string, string> = {
+    idle: "🟢", mixed: "🟡", allocated: "🔴", down: "⚫", drain: "⚫", drained: "⚫",
+  };
+
+  const termHeight = process.stdout.rows || 24;
+  // tabBar(1) + slurmHeader(1) + tableHdr(1) + footer(3) = 6 fixed lines
+  const visibleRows = Math.max(1, termHeight - 6);
+
+  // Clamp scroll offset (non-destructive: only reduce, never over-clamp on small lists)
+  const maxScroll = Math.max(0, sortedNodes.length - visibleRows);
+  if (slurmScrollOff > maxScroll) slurmScrollOff = maxScroll;
+  if (slurmScrollOff < 0) slurmScrollOff = 0;
+
+  // Build all node rows first, then slice for scroll
+  const allNodeRows: any[] = [];
+  for (let ni = 0; ni < sortedNodes.length; ni++) {
+    const snode = sortedNodes[ni]!;
+    const isSelected = ni === slurmSelectedIdx;
+    const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
+
+    const gpuCells = Array.from({ length: maxDisplayGpus }, (_, gi) => {
+      const slot = snode.gpus?.[gi];
+      if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
+      if (slot.user === "???") {
+        // Occupied but owner unidentifiable (Slurm visibility/policy limit)
+        return Box({ width: gpuW }, Text({ content: "👤".padEnd(gpuW), fg: C.yellow }));
+      }
+      if (slot.user) {
+        const label = slot.user.length > gpuW - 1 ? slot.user.slice(0, gpuW - 2) + "…" : slot.user;
+        return Box({ width: gpuW }, Text({ content: label.padEnd(gpuW), fg: C.yellow }));
+      }
+      return Box({ width: gpuW }, Text({ content: "·".padEnd(gpuW), fg: C.textDim }));
+    });
+
+    // Extra GPU count for truncated columns
+    const hiddenGpus = maxGpus > maxDisplayGpus ? snode.gpus.slice(maxDisplayGpus) : [];
+    const hiddenUsed = hiddenGpus.filter(g => g?.user).length;
+    const moreCell = maxGpus > maxDisplayGpus
+      ? Box({ width: 4 }, Text({ content: hiddenUsed > 0 ? `+${hiddenUsed}` : "   ", fg: hiddenUsed > 0 ? C.red : C.textDim }))
+      : null;
+
+    const capturedNode = snode;
+    const capturedCluster = ssnap;
+    const handleNodeClick = () => {
+      const now = Date.now();
+      if (_slurmLastClickNode === capturedNode.name && now - _slurmLastClickTime < 400) {
+        // Double-click → open popup
+        openSrunPopup(capturedNode, capturedCluster.cluster_name, capturedCluster);
+      } else {
+        // Single click → select
+        slurmSelectedIdx = ni;
+        _renderHook?.();
+      }
+      _slurmLastClickNode = capturedNode.name;
+      _slurmLastClickTime = now;
+    };
+
+    const myJobIds = getMyJobIdsOnNode(snode, ssnap.ssh_user || "");
+    const hasMyJob = myJobIds.length > 0;
+
+    allNodeRows.push(
+      Box(
+        { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined, onMouseDown: handleNodeClick },
+        Box({ width: nodeW }, Text({ content: `${hasMyJob ? "★" : icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: hasMyJob ? C.cyan : isSelected ? "#ffffff" : C.text })),
+        Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
+        ...gpuCells,
+        ...(moreCell ? [moreCell] : []),
+        Box({ width: freeW }, Text({
+          content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
+          fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
+        })),
+      )
+    );
+  }
+
+  // Apply scroll window
+  const nodeRows = allNodeRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
+
+  // Scroll indicator
+  const scrollInfo = sortedNodes.length > visibleRows
+    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, sortedNodes.length)}/${sortedNodes.length}]`
+    : "";
+
+  // User summary
+  const userCounts: Record<string, number> = {};
+  for (const sn of nodes) {
+    for (const sg of (sn.gpus || [])) {
+      if (sg.user) userCounts[sg.user] = (userCounts[sg.user] || 0) + 1;
+    }
+  }
+  const userParts = Object.entries(userCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([u, c]) => u === "???" ? `👤:${c}` : `${u}:${c}`)
+    .join("  ");
+
+  // Node cancel status line
+  let cancelStatusContent: any = " ";
+  if (nodeCancelStatus && nodeCancelStatus.node) {
+    if (nodeCancelStatus.status === "cancelling") {
+      cancelStatusContent = t`${fg(C.yellow)(`⟳ Cancelling job on ${nodeCancelStatus.node}...`)}`;
+    } else if (nodeCancelStatus.status === "done") {
+      cancelStatusContent = t`${fg(C.green)(`✓ ${nodeCancelStatus.msg}`)}`;
+    } else if (nodeCancelStatus.status === "error") {
+      cancelStatusContent = t`${fg(C.red)(`✗ ${nodeCancelStatus.msg}`)}`;
+    }
+  }
+
+  const footer = Box(
+    { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
+    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
+    Text({ content: cancelStatusContent }),
+    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
+  );
+
+  // Error rows
+  const errorRows: any[] = [];
+  if (ssnap.errors?.length) {
+    errorRows.push(Box({ paddingLeft: 1 }, Text({ content: t`⚠ ${ssnap.errors.join("; ")}`, fg: C.red })));
+  }
+
+  // Thin scrollbar (1 char wide, right edge)
+  const scrollbar = (() => {
+    if (nodes.length <= visibleRows) return null;
+    const trackH = visibleRows;
+    const thumbH = Math.max(1, Math.round((visibleRows / nodes.length) * trackH));
+    const thumbTop = Math.round((slurmScrollOff / (nodes.length - visibleRows)) * (trackH - thumbH));
+    const chars = Array.from({ length: trackH }, (_, i) => {
+      const inThumb = i >= thumbTop && i < thumbTop + thumbH;
+      return Text({ content: inThumb ? "█" : "░", fg: inThumb ? C.blue : C.textDim });
+    });
+    return Box(
+      {
+        position: "absolute",
+        right: 0,
+        top: 3, // below tabBar + header + tableHdr
+        width: 1,
+        flexDirection: "column",
+      },
+      ...chars,
+    );
+  })();
+
+  // Mouse scroll handler for the node list area
+  const onMouseScroll = (e: any) => {
+    if (!e.scroll) return;
+    const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+    const maxSc = Math.max(0, nodes.length - visH);
+    if (e.scroll.direction === "down") {
+      slurmScrollOff = Math.min(maxSc, slurmScrollOff + 3);
+      slurmSelectedIdx = Math.min(nodes.length - 1, slurmScrollOff);
+    } else if (e.scroll.direction === "up") {
+      slurmScrollOff = Math.max(0, slurmScrollOff - 3);
+      slurmSelectedIdx = Math.max(0, slurmScrollOff);
+    }
+    _renderHook?.();
+  };
+
+  return Box(
+    {
+      position: "relative", width: "100%", height: "100%", backgroundColor: C.bg,
+      onMouseScroll,
+    },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+      tabBar,
+      slurmHeader,
+      tableHdr,
+      ...nodeRows,
+      ...errorRows,
+      footer,
+    ),
+    ...(scrollbar ? [scrollbar] : []),
+    // srun popup overlay (no runner pane in Slurm tab)
+    ...(slurmRunPopup ? [renderSrunPopup(slurmRunPopup)] : []),
+  );
+}
+
+// ── Slurm Tab ────────────────────────────────────────────────────
+
+interface SlurmGPUSlot {
+  index: number;
+  user: string | null;
+  job_id: number | null;
+  job_name: string | null;
+  job_state: string | null;
+  job_time: string | null;
+}
+
+interface SlurmNodeInfo {
+  name: string;
+  partition: string;
+  state: string;
+  gpu_type: string;
+  gpu_total: number;
+  gpu_used: number;
+  gpu_free: number;
+  gpus: SlurmGPUSlot[];
+}
+
+interface SlurmSnapshot {
+  cluster_name: string;
+  timestamp: string;
+  nodes: SlurmNodeInfo[];
+  errors: string[];
+  login_node: string | null;
+  ssh_user: string;
+}
+
+let slurmSnapshots: SlurmSnapshot[] = [];
+let slurmLoading = false;
+let slurmError: string | null = null;
+let slurmSelectedIdx = 0;
+let slurmScrollOff = 0;
+type SlurmSortKey = "none" | "name" | "partition" | "free_asc" | "free_desc";
+let slurmSortKey: SlurmSortKey = "none";
+
+// srun popup state
+interface SlurmRunPopup {
+  // snapshot at open time (immutable)
+  clusterName: string;
+  nodeName: string;
+  partition: string;
+  freeGpusAtOpen: number;
+  snapshotTime: string;
+  loginNode: string;
+  sshUser: string;
+  // user input
+  gpuCount: number;
+  // command edit
+  editMode: boolean;
+  cmdOverride: string | null; // null = use auto-generated command
+  cursorPos: number;           // cursor index in cmdOverride (or auto cmd)
+  // copy ui state
+  copyStatus: "idle" | "ok" | "fail" | "stale";
+  errorMsg: string;
+  fullCmdForFallback: string; // set on copy failure
+  // job submit state
+  jobSubmitStatus: "idle" | "submitting" | "polling" | "running" | "cancelling" | "error";
+  jobId: string;
+  gpuIdxList: string;   // e.g. "2,3,5,7"
+  jobErrorMsg: string;
+  jobAbortRequested: boolean;
+  // qos
+  qosList: string[];
+  qosIdx: number;       // 0 = no QoS (use partition default)
+  qosLoading: boolean;     // true while fetching QoS list
+  qosFetchFailed: boolean; // true if fetch failed — Submit blocked, user must edit cmd
+  // existing jobs on this node (populated at open time)
+  existingJobIds: number[];
+  existingJobCancelStatus: "idle" | "cancelling" | "done" | "error";
+  existingJobCancelMsg: string;
+}
+let slurmRunPopup: SlurmRunPopup | null = null;
+let _slurmLastClickNode = "";
+let _slurmLastClickTime = 0;
+
+// Module-level render hook, set inside main()
+let _renderHook: (() => void) | null = null;
+
+async function loadSlurmData(): Promise<void> {
+  if (slurmLoading) return;
+  slurmLoading = true;
+  slurmError = null;
+  tuiLog("DEBUG", `loadSlurmData: starting, OPENSMI=${JSON.stringify(OPENSMI)}, CWD=${OPENSMI_CWD}`);
+  _renderHook?.();
+
+  try {
+    // Use --all to load all configured Slurm clusters
+    const proc = spawn([...OPENSMI, "slurm", "--all", "--json"], {
+      cwd: OPENSMI_CWD,
+      env: OPENSMI_ENV,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0 && exitCode !== 1) {
+      const stderr = await new Response(proc.stderr).text();
+      throw new Error(stderr.trim() || `exit code ${exitCode}`);
+    }
+
+    const parsed = JSON.parse(stdout);
+    // --all returns an array; single returns an object
+    slurmSnapshots = Array.isArray(parsed) ? parsed : [parsed];
+    tuiLog("INFO", `slurm: loaded ${slurmSnapshots.length} cluster(s), total ${slurmSnapshots.reduce((s, c) => s + c.nodes.length, 0)} nodes`);
+  } catch (e: any) {
+    slurmError = e?.message || String(e);
+    slurmSnapshots = [];
+    tuiLog("ERROR", `slurm load failed: ${slurmError}`);
+  } finally {
+    slurmLoading = false;
+    _renderHook?.();
+  }
+}
+
+
+
 function renderSetupView() {
   tuiLog("INFO", `renderSetupView called: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
   const rows: any[] = [];
 
-  rows.push(Text({ content: t`${bold("Setup")} — Per-Node Environment Configuration`, fg: C.text }));
+  rows.push(Text({ content: t`${bold("Setup")} - Per-Node Environment Configuration`, fg: C.text }));
   rows.push(Text({ content: t`${fg(C.textDim)("Configure conda/micromamba/venv and work directory per node. Saved to opensmi.json.")}` }));
   rows.push(Text({ content: " " }));
 
@@ -3917,7 +5130,7 @@ function renderSetupView() {
   }
 
   rows.push(Text({ content: " " }));
-  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  S save")}` }));
+  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  s: save")}` }));
   if (setupMessage) {
     rows.push(Text({ content: t`${fg(C.green)(setupMessage)}` }));
   }
@@ -3936,26 +5149,26 @@ function renderSetupView() {
 
 function renderRunnerPane() {
   const height = runnerPaneFolded ? 3 : "40%"; // 40% of terminal height when unfolded
-  
+
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
-  const focusIndicator = runnerFocused 
-    ? (runnerInputTyping ? "⌨ typing" : "● focused") 
+  const focusIndicator = runnerFocused
+    ? (runnerInputTyping ? "⌨ typing" : "● focused")
     : "○ idle";
-  
-  const headerText = Text({ 
-    content: `${foldIcon} Command Runner  ${focusIndicator}`, 
+
+  const headerText = Text({
+    content: `${foldIcon} Command Runner  ${focusIndicator}`,
     fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.cyan)
   });
-  
-  const helpText = Text({ 
+
+  const helpText = Text({
     content: runnerInputTyping
       ? "[Enter] Execute  [Esc] Cancel"
       : (runnerFocused
           ? "[Enter] Edit  [ctrl+x Enter] Execute  [Esc] Unfocus  [Tab/+/-/Q] Options"
           : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
-    fg: C.textDim 
+    fg: C.textDim
   });
-  
+
   const headerBox = Box(
     {
       width: "100%",
@@ -3981,7 +5194,7 @@ function renderRunnerPane() {
     headerText,
     helpText
   );
-  
+
   if (runnerPaneFolded) {
     return Box(
       {
@@ -4002,39 +5215,39 @@ function renderRunnerPane() {
       headerBox
     );
   }
-  
-  const modeInfo = Text({ 
-    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Queue: ${launchQueueMode}  Count: ${launchNumGpus}`, 
-    fg: C.textDim 
+
+  const modeInfo = Text({
+    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Queue: ${launchQueueMode}  Count: ${launchNumGpus}`,
+    fg: C.textDim
   });
-  
+
   const gpuInfo = launchSelectedGpus.length > 0
     ? launchSelectedGpus.map(g => `${g.node}:${g.gpu}`).join(", ")
     : "no GPUs";
-  
-  const gpuText = Text({ 
-    content: `GPUs: ${gpuInfo}`, 
+
+  const gpuText = Text({
+    content: `GPUs: ${gpuInfo}`,
     fg: runnerInputTyping ? "#9b59d6" : (launchSelectedGpus.length > 0 ? C.green : C.yellow)
   });
-  
+
   const errorText = launchErrorMsg
     ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
     : null;
-  
+
   const commandNodes: any[] = [];
-  
+
   // Show hint if no GPUs selected
   if (launchSelectedGpus.length === 0) {
     commandNodes.push(Text({ content: " ", fg: C.textDim }));
-    commandNodes.push(Text({ 
-      content: "No GPUs selected. Press [+] or click GPU cells to add.", 
-      fg: C.yellow 
+    commandNodes.push(Text({
+      content: "No GPUs selected. Press [+] or click GPU cells to add.",
+      fg: C.yellow
     }));
   } else if (launchDistMode === "single") {
     commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
-    
+
     const isCmdFocused = runnerFocused && runnerFocusedInputIdx === 0;
-    
+
     if (runnerInputTyping && isCmdFocused) {
       commandNodes.push(Input({
         id: "runner-cmd-input",
@@ -4073,11 +5286,11 @@ function renderRunnerPane() {
                 Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
                 Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
               );
-              
+
               if (moved || elapsed > 300) {
                 return; // Was a drag, don't trigger click
               }
-              
+
               if (!runnerFocused) {
                 runnerFocused = true;
                 runnerInputBuffer = launchCommand;
@@ -4095,11 +5308,11 @@ function renderRunnerPane() {
     }
   } else {
     // one-to-one mode
-    commandNodes.push(Text({ 
-      content: `Commands (${launchNumGpus} lines, one per GPU):`, 
-      fg: C.textDim 
+    commandNodes.push(Text({
+      content: `Commands (${launchNumGpus} lines, one per GPU):`,
+      fg: C.textDim
     }));
-    
+
     if (runnerFocused && runnerInputTyping) {
       for (let i = 0; i < launchNumGpus; i++) {
         const value = launchCommands[i] || "";
@@ -4150,12 +5363,12 @@ function renderRunnerPane() {
                   Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
                   Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
                 );
-                
+
                 // If dragged, don't trigger click behavior (allow copy)
                 if (moved || elapsed > 300) {
                   return;
                 }
-                
+
                 // This was a click, not a drag
                 if (!runnerFocused) {
                   runnerFocused = true;
@@ -4179,9 +5392,9 @@ function renderRunnerPane() {
   if (launchMode === "tmux") {
     tmuxNodes.push(Text({ content: " " }));
     tmuxNodes.push(Text({ content: "Tmux session (empty = auto):", fg: C.textDim }));
-    
+
     const isTmuxFocused = runnerFocused && runnerFocusedInputIdx === -1;
-    
+
     if (runnerInputTyping && isTmuxFocused) {
       tmuxNodes.push(Input({
         id: "runner-tmux-session-input",
@@ -4220,11 +5433,11 @@ function renderRunnerPane() {
                 Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
                 Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
               );
-              
+
               if (moved || elapsed > 300) {
                 return; // Was a drag, don't trigger click
               }
-              
+
               if (!runnerFocused) {
                 runnerFocused = true;
                 runnerFocusedInputIdx = -1;
@@ -4313,10 +5526,10 @@ async function saveJobToStore(): Promise<void> {
       queue_mode: launchQueueMode,
       user: OPERATOR,
     };
-    
+
     const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(jobData));
-    
+
     const submitScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -4350,28 +5563,28 @@ save_jobs(state_dir, jobs)
 
 print(json.dumps({"job_id": job.id, "status": job.status}))
 `;
-    
+
     const submitProc = Bun.spawn([PYTHON, "-c", submitScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const stdout = await new Response(submitProc.stdout).text();
     const stderr = await new Response(submitProc.stderr).text();
     await submitProc.exited;
-    
+
     try {
       await Bun.$`rm -f ${tmpFile}`;
     } catch {}
-    
+
     if (submitProc.exitCode !== 0) {
       setLaunchError(`Failed to save job: ${stderr}`);
       runnerState = "failed";
       return;
     }
-    
+
     let result: any;
     try {
       result = JSON.parse(stdout.trim());
@@ -4380,11 +5593,11 @@ print(json.dumps({"job_id": job.id, "status": job.status}))
       runnerState = "failed";
       return;
     }
-    
+
     runnerState = "running";
     setStatus(`Job ${result.job_id} queued successfully`);
     launchOutput = `Job queued: ${result.job_id}\nStatus: ${result.status}\nGPUs: ${launchNumGpus}\nMode: ${launchDistMode} / ${launchMode}`;
-    
+
     await loadJobsFromCLI();
   } catch (e: any) {
     setLaunchError(`Failed to queue job: ${e?.message || String(e)}`);
@@ -4409,10 +5622,10 @@ async function createImmediateJob(): Promise<string | null> {
       tmux_sessions: [],
       user: OPERATOR,
     };
-    
+
     const tmpFile = `/tmp/opensmi-job-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(jobData));
-    
+
     const submitScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -4448,27 +5661,27 @@ save_jobs(state_dir, jobs)
 
 print(job.id)
 `;
-    
+
     const proc = Bun.spawn([PYTHON, "-c", submitScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     const stdout = await new Response(proc.stdout).text();
     await proc.exited;
-    
+
     try {
       await Bun.$`rm -f ${tmpFile}`;
     } catch {}
-    
+
     if (proc.exitCode !== 0) {
       const errMsg = await new Response(proc.stderr).text();
       tuiLog("ERROR", `Failed to create job: ${errMsg}`);
       return null;
     }
-    
+
     return stdout.trim() || null;
   } catch (e: any) {
     tuiLog("ERROR", `Failed to create immediate job: ${e?.message || String(e)}`);
@@ -4492,10 +5705,10 @@ async function updateImmediateJob(
       tmux_sessions: tmuxSessions,
       error: error,
     };
-    
+
     const tmpFile = `/tmp/opensmi-update-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(updateData));
-    
+
     const updateScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -4529,20 +5742,20 @@ if job:
 else:
     sys.exit(1)
 `;
-    
+
     const proc = Bun.spawn([PYTHON, "-c", updateScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     await proc.exited;
-    
+
     try {
       await Bun.$`rm -f ${tmpFile}`;
     } catch {}
-    
+
     if (proc.exitCode !== 0) {
       tuiLog("ERROR", `Failed to update job ${jobId}`);
     }
@@ -4552,24 +5765,24 @@ else:
 }
 
 async function executeLaunch(): Promise<void> {
-  tuiLog("INFO", `executeLaunch — mode=${launchMode} dist=${launchDistMode} queue=${launchQueueMode} gpus=${launchSelectedGpus.length} cmd="${launchCommand.slice(0, 80)}"`);
+  tuiLog("INFO", `executeLaunch - mode=${launchMode} dist=${launchDistMode} queue=${launchQueueMode} gpus=${launchSelectedGpus.length} cmd="${launchCommand.slice(0, 80)}"`);
   runnerState = "queued";
   runnerStderr = [];
   runnerAttachCmd = "";
   runnerStartTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
-  
+
   if (!snapshot) {
     setLaunchError("No snapshot available");
     runnerState = "failed";
     return;
   }
-  
+
   if (launchSelectedGpus.length === 0) {
     setLaunchError("No GPUs available");
     runnerState = "failed";
     return;
   }
-  
+
   if (launchDistMode === "single") {
     if (!launchCommand.trim()) {
       setLaunchError("Command cannot be empty");
@@ -4583,18 +5796,18 @@ async function executeLaunch(): Promise<void> {
       runnerState = "failed";
       return;
     }
-    
+
     if (nonEmpty !== launchNumGpus) {
       launchErrorMsg = `Expected ${launchNumGpus} commands, got ${nonEmpty}`;
       runnerState = "failed";
       return;
     }
   }
-  
+
   launchErrorMsg = "";
   launchOutput = "";
   runnerState = "preparing";
-  
+
   try {
     // Hotfix: ensure latest setup edits are persisted before any submit/execute.
     await flushSetupChangesToConfig();
@@ -4604,9 +5817,9 @@ async function executeLaunch(): Promise<void> {
       await saveJobToStore();
       return;
     }
-    
+
     // Immediate mode: execute now and track in job store
-    
+
     // Create job record before execution
     const currentJobId = await createImmediateJob();
     if (!currentJobId) {
@@ -4614,11 +5827,11 @@ async function executeLaunch(): Promise<void> {
       runnerState = "failed";
       return;
     }
-    
+
     // Update launch history
     const tmpFile = `/tmp/opensmi-gpus-${crypto.randomUUID()}.json`;
     await Bun.write(tmpFile, JSON.stringify(launchSelectedGpus));
-    
+
     const updateScript = `
 import sys, json
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
@@ -4631,25 +5844,25 @@ gpus = [(g["node"], g["gpu"]) for g in gpus_data]
 update_history(get_state_dir(), gpus)
 print("OK")
 `;
-    
+
     const updateProc = Bun.spawn([PYTHON, "-c", updateScript], {
       stdout: "pipe",
       stderr: "pipe",
       env: OPENSMI_ENV,
       cwd: OPENSMI_CWD,
     });
-    
+
     await updateProc.exited;
-    
+
     try {
       await Bun.$`rm -f ${tmpFile}`;
     } catch {}
-    
+
     runnerState = "sent";
-    
+
     // Execute and collect tmux session names
     const tmuxSessions: string[] = [];
-    
+
     if (launchDistMode === "single") {
       const gpuIndices = launchSelectedGpus.map(g => g.gpu).join(",");
       if (launchMode === "tmux") {
@@ -4680,12 +5893,12 @@ print("OK")
       }
       await executeLaunchOneToOne();
     }
-    
+
     // Update job status after execution
     const finalStatus = launchErrorMsg ? "failed" : (launchMode === "tmux" ? "running" : "done");
     await updateImmediateJob(currentJobId, finalStatus, tmuxSessions, launchErrorMsg || null);
     await loadJobsFromCLI();
-    
+
     if (launchErrorMsg === "") {
       runnerState = "running";
     } else {
@@ -4939,7 +6152,7 @@ async function executeLaunchTmux(command: string, gpuIndices: string): Promise<v
 /**
  * Navigate to a tab using the tab registry.
  * This ensures lifecycle hooks execute and state stays synchronized.
- * 
+ *
  * @param tabId - The tab ID to navigate to
  * @returns true if navigation succeeded, false otherwise
  */
@@ -5002,11 +6215,11 @@ async function main() {
       }
 
       const ok = renderer.copyToClipboardOSC52(text);
-      
+
       // Show "Copied" message (2s) in lower right
       const charCount = text.length;
       setStatus(`Copied ${charCount} char${charCount === 1 ? '' : 's'}`, 2000);
-      
+
       // Clear selection immediately after copy (tmux-like behavior)
       // Use setImmediate to clear on next tick, ensuring copy completes first
       setImmediate(() => {
@@ -5053,6 +6266,7 @@ async function main() {
   }
 
   function render() {
+    _renderHook = render;  // expose to module-level functions
     // Expire transient status messages
     if (statusMsg && statusUntil > 0 && Date.now() > statusUntil) {
       statusMsg = "";
@@ -5141,7 +6355,7 @@ async function main() {
     } catch {
       // ignore
     }
-    
+
     // Auto-refocus runner input when typing
     if (runnerInputTyping || runnerFocused) {
       setTimeout(() => {
@@ -5167,7 +6381,7 @@ async function main() {
     shortcut: "d",
     render: renderDashboard,
     onEnter: async () => {
-      await Promise.all([pollCluster(), loadAllocations()]);
+      await Promise.all([pollCluster(), loadAllocations(), loadSlurmData()]);
     },
   });
 
@@ -5241,6 +6455,7 @@ async function main() {
     loadAllocations(),
     loadSystemUsers(true),
     loadJobsFromCLI(),
+    loadSlurmData(),
   ]);
   await dispatchQueuedJobs();
   await watchRunningJobs();
@@ -5256,21 +6471,21 @@ async function main() {
   // UI refresh is skipped on non-data tabs to avoid unnecessary redraws
   const refreshInterval = setInterval(async () => {
     if (runnerFocused || runnerInputTyping) return;
-    
+
     // Always poll cluster + allocations (needed for dispatch decisions)
-    await Promise.all([pollCluster(), loadAllocations()]);
-    
+    await Promise.all([pollCluster(), loadAllocations(), loadSlurmData()]);
+
     // Load jobs if on jobs tab
     if (screen === "jobs") {
       await loadJobsFromCLI();
     }
-    
-    // Dispatch queued jobs after snapshot update — runs regardless of active tab
+
+    // Dispatch queued jobs after snapshot update - runs regardless of active tab
     await dispatchQueuedJobs();
-    
-    // Watch running jobs for health and auto-restart — runs regardless of active tab
+
+    // Watch running jobs for health and auto-restart - runs regardless of active tab
     await watchRunningJobs();
-    
+
     // Only re-render if on a data-display tab
     if (screen === "dashboard" || screen === "detail" || screen === "jobs") {
       render();
@@ -5298,7 +6513,7 @@ async function main() {
         render();
         return;
       }
-      
+
       if (key.name === "return") {
         const tabs = tabRegistry.getAllVisible();
         const selectedTab = tabs[tabSwitcherIdx];
@@ -5312,21 +6527,21 @@ async function main() {
         }
         return;
       }
-      
+
       if (key.name === "up" || key.name === "k") {
         const tabs = tabRegistry.getAllVisible();
         tabSwitcherIdx = (tabSwitcherIdx - 1 + tabs.length) % tabs.length;
         render();
         return;
       }
-      
+
       if (key.name === "down" || key.name === "j") {
         const tabs = tabRegistry.getAllVisible();
         tabSwitcherIdx = (tabSwitcherIdx + 1) % tabs.length;
         render();
         return;
       }
-      
+
       if (key.name.length === 1) {
         const tabs = tabRegistry.getAllVisible();
         const matchedTab = tabs.find(t => t.shortcut === key.name);
@@ -5340,11 +6555,11 @@ async function main() {
         }
         return;
       }
-      
+
       return;
     }
-    
-    // ctrl+x prefix key — works from ALL tabs
+
+    // ctrl+x prefix key - works from ALL tabs
     if (key.name === "x" && key.ctrl) {
       prefixKeyPressed = true;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
@@ -5355,7 +6570,7 @@ async function main() {
       return;
     }
 
-    // ctrl+x t — tab switcher from ANY screen
+    // ctrl+x t - tab switcher from ANY screen
     if (prefixKeyPressed && key.name === "t") {
       prefixKeyPressed = false;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
@@ -5366,7 +6581,7 @@ async function main() {
       return;
     }
 
-    // ctrl+x q — quit from ANY screen
+    // ctrl+x q - quit from ANY screen
     if (prefixKeyPressed && key.name === "q") {
       prefixKeyPressed = false;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
@@ -5376,7 +6591,7 @@ async function main() {
     }
 
     if (screen === "dashboard" || screen === "my-gpu-view") {
-      
+
       if (prefixKeyPressed && key.name === "down") {
         // ctrl+x down: focus runner
         prefixKeyPressed = false;
@@ -5384,7 +6599,7 @@ async function main() {
         runnerFocused = true;
         runnerInputBuffer = launchCommand;
         runnerFocusedInputIdx = 0; // Start at first input
-        
+
         // Initialize commands with GPU info if not already set
         if (launchDistMode === "one-to-one") {
           for (let i = 0; i < launchCommands.length; i++) {
@@ -5394,12 +6609,12 @@ async function main() {
             }
           }
         }
-        
+
         runnerInputTyping = false; // Ensure not in typing mode
         render();
         return;
       }
-      
+
       if (prefixKeyPressed && key.name === "f") {
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
@@ -5407,11 +6622,11 @@ async function main() {
         render();
         return;
       }
-      
+
       if (prefixKeyPressed && key.name === "r" && screen === "my-gpu-view") {
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        
+
         const selectedBundle = myGpuViewState.bundles[myGpuViewState.selectedBundleIdx];
         if (selectedBundle && selectedBundle.gpus.length > 0) {
           launchGpuMode = "selected";
@@ -5419,7 +6634,7 @@ async function main() {
           launchNumGpus = selectedBundle.gpus.length;
           launchSelectedGpus = [...selectedBundle.gpus];
           launchSourceBundle = selectedBundle.label;
-          
+
           if (launchDistMode === "one-to-one") {
             launchCommands = [];
             for (let i = 0; i < launchNumGpus; i++) {
@@ -5427,27 +6642,27 @@ async function main() {
               launchCommands.push(getGpuCommandPlaceholder(gpu));
             }
           }
-          
+
           runnerPaneFolded = false;
           runnerFocused = true;
           runnerInputBuffer = launchCommand;
           runnerFocusedInputIdx = 0;
           runnerInputTyping = false;
-          
+
           setStatus(`Runner opened with ${launchNumGpus} GPU(s) from ${selectedBundle.label}`, 2000);
         } else {
           setStatus("No GPUs in selected bundle");
         }
-        
+
         render();
         return;
       }
-      
+
       if (prefixKeyPressed && key.name === "return") {
         // ctrl+x Enter: execute commands
         prefixKeyPressed = false;
         if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-        
+
         // Capture input values from Input components (if in typing mode)
         // or fall back to stored values (if in focused-but-not-typing mode)
         if (launchDistMode === "single") {
@@ -5467,21 +6682,21 @@ async function main() {
             }
           }
         }
-        
+
         if (launchMode === "tmux") {
           const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
           if (tmuxInputAny) {
             launchTmuxSession = String(tmuxInputAny.value ?? "");
           }
         }
-        
+
         runnerInputTyping = false;
         runnerFocused = false;
         await executeLaunch();
         render();
         return;
       }
-      
+
       // === TYPING MODE ===
       if (runnerInputTyping) {
         if (key.name === "escape") {
@@ -5498,14 +6713,14 @@ async function main() {
               }
             }
           }
-          
+
           if (launchMode === "tmux") {
             const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
             if (tmuxInputAny) {
               launchTmuxSession = String(tmuxInputAny?.value ?? "");
             }
           }
-          
+
           runnerInputTyping = false;
           render();
         } else if (key.name === "return") {
@@ -5523,16 +6738,16 @@ async function main() {
               }
             }
           }
-          
+
           if (launchMode === "tmux") {
             const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
             if (tmuxInputAny) {
               launchTmuxSession = String(tmuxInputAny?.value ?? "");
             }
           }
-          
+
           runnerInputTyping = false;
-          // Stay in focused mode — user can ctrl+x Enter to execute
+          // Stay in focused mode - user can ctrl+x Enter to execute
           render();
         } else if (key.name === "down" && launchDistMode === "one-to-one") {
           // Navigate to next input line (commands + tmux if applicable)
@@ -5540,7 +6755,7 @@ async function main() {
           if (inputAny) {
             launchCommands[runnerFocusedInputIdx] = String(inputAny?.value ?? "");
           }
-          
+
           // If at last command line and tmux mode, move to tmux session input
           if (runnerFocusedInputIdx === launchNumGpus - 1 && launchMode === "tmux") {
             runnerFocusedInputIdx = -1; // Special value for tmux session
@@ -5576,7 +6791,7 @@ async function main() {
             if (inputAny) {
               launchCommands[runnerFocusedInputIdx] = String(inputAny?.value ?? "");
             }
-            
+
             runnerFocusedInputIdx = Math.max(runnerFocusedInputIdx - 1, 0);
             render();
             setTimeout(() => {
@@ -5588,14 +6803,14 @@ async function main() {
         // All other keys pass through to input
         return;
       }
-      
+
       // (PREFIX KEY handlers moved to top of dashboard screen)
-      
+
       // === RUNNER FOCUSED MODE ===
       if (runnerFocused) {
         if (key.name === "escape") {
           runnerFocused = false;
-          
+
           // Capture input values
           if (launchDistMode === "single") {
             const inputAny: any = container.findDescendantById("runner-cmd-input");
@@ -5609,18 +6824,18 @@ async function main() {
               }
             }
           }
-          
+
           if (launchMode === "tmux") {
             const tmuxInputAny: any = container.findDescendantById("runner-tmux-session-input");
             if (tmuxInputAny) {
               launchTmuxSession = String(tmuxInputAny?.value ?? "");
             }
           }
-          
+
           render();
           return;
         }
-        
+
         if (key.name === "return") {
           // Enter in focused mode: start typing on current highlighted line
           runnerInputTyping = true;
@@ -5640,14 +6855,14 @@ async function main() {
           }, 50);
           return;
         }
-        
+
         if (key.name === "tab" && !key.shift) {
           key.preventDefault();
           launchMode = launchMode === "direct" ? "tmux" : "direct";
           render();
           return;
         }
-        
+
         if (key.name === "tab" && key.shift) {
           key.preventDefault();
           if (launchDistMode === "single") {
@@ -5665,17 +6880,17 @@ async function main() {
           render();
           return;
         }
-        
+
         if (key.name === "+" || key.name === "=") {
           const oldMode = launchGpuMode;
           const oldCount = launchNumGpus;
-          
+
           launchNumGpus = Math.min(launchNumGpus + 1, 16);
-          
+
           // Get next best GPU via auto selection
           launchGpuMode = "auto";
           await refreshLaunchGpuSelection();
-          
+
           // Add the new GPU to manual selection
           if (launchSelectedGpus.length > oldCount) {
             const newGpu = launchSelectedGpus[launchSelectedGpus.length - 1];
@@ -5683,11 +6898,11 @@ async function main() {
               launchManualGpus.push({ node: newGpu.node, gpu: newGpu.gpu });
             }
           }
-          
+
           // Switch to selected mode to show marking
           launchGpuMode = "selected";
           launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
-          
+
           if (launchDistMode === "one-to-one") {
             while (launchCommands.length < launchNumGpus) {
               const idx = launchCommands.length;
@@ -5695,11 +6910,11 @@ async function main() {
               launchCommands.push(getGpuCommandPlaceholder(gpu));
             }
           }
-          
+
           render();
           return;
         }
-        
+
         if (key.name === "-" || key.name === "_") {
           launchNumGpus = Math.max(launchNumGpus - 1, 0); // Allow down to 0
           if (launchDistMode === "one-to-one") {
@@ -5713,7 +6928,7 @@ async function main() {
           render();
           return;
         }
-        
+
         if ((key.name === "q" || key.name === "Q") && !runnerInputTyping) {
           key.preventDefault();
           launchQueueMode = launchQueueMode === "immediate" ? "queued" : "immediate";
@@ -5721,7 +6936,7 @@ async function main() {
           render();
           return;
         }
-        
+
         if (key.name === "down" && !runnerInputTyping) {
           // Navigate down through input lines
           if (launchDistMode === "single") {
@@ -5743,7 +6958,7 @@ async function main() {
           }
           return;
         }
-        
+
         if (key.name === "up" && !runnerInputTyping) {
           // Navigate up through input lines
           if (launchDistMode === "single") {
@@ -5764,7 +6979,7 @@ async function main() {
           }
           return;
         }
-        
+
         if (key.name === "g" && !runnerInputTyping) {
           if (launchGpuMode === "auto") {
             launchGpuMode = "selected";
@@ -5781,7 +6996,7 @@ async function main() {
           render();
           return;
         }
-        
+
         // Detect typing when any printable key is pressed
         if (key.sequence && key.sequence.length === 1) {
           runnerInputTyping = true;
@@ -5789,8 +7004,163 @@ async function main() {
         }
         return;
       }
-      
+
+      // === SLURM POPUP KEY HANDLING ===
+      if (slurmRunPopup) {
+        const popup = slurmRunPopup;
+
+        // --- Edit mode: raw text input ---
+        if (popup.editMode) {
+          const cur = popup.cmdOverride ?? srunCommand(popup);
+          const pos = Math.max(0, Math.min(popup.cursorPos, cur.length));
+          if (key.name === "escape" || key.name === "return") {
+            // Exit edit mode (keep changes)
+            popup.editMode = false;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          } else if (key.name === "left") {
+            popup.cursorPos = Math.max(0, pos - 1);
+            _renderHook?.();
+          } else if (key.name === "right") {
+            popup.cursorPos = Math.min(cur.length, pos + 1);
+            _renderHook?.();
+          } else if (key.name === "home" || (key.ctrl && key.sequence === "\x01")) {
+            popup.cursorPos = 0;
+            _renderHook?.();
+          } else if (key.name === "end" || (key.ctrl && key.sequence === "\x05")) {
+            popup.cursorPos = cur.length;
+            _renderHook?.();
+          } else if (key.name === "backspace" || key.sequence === "\x7f") {
+            if (pos > 0) {
+              popup.cmdOverride = cur.slice(0, pos - 1) + cur.slice(pos);
+              popup.cursorPos = pos - 1;
+              popup.copyStatus = "idle";
+              _renderHook?.();
+            }
+          } else if (key.name === "delete") {
+            if (pos < cur.length) {
+              popup.cmdOverride = cur.slice(0, pos) + cur.slice(pos + 1);
+              popup.copyStatus = "idle";
+              _renderHook?.();
+            }
+          } else if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1) {
+            popup.cmdOverride = cur.slice(0, pos) + key.sequence + cur.slice(pos);
+            popup.cursorPos = pos + 1;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          }
+          return;
+        }
+
+        // --- Normal mode ---
+        const isBusy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling" || popup.jobSubmitStatus === "cancelling";
+        if (key.name === "escape") {
+          if (isBusy) {
+            popup.jobAbortRequested = true;
+            render();
+          } else {
+            closeSrunPopup();
+            render();
+          }
+        } else if ((key.sequence === "x" || key.sequence === "X") && popup.jobSubmitStatus === "running" && popup.jobId) {
+          cancelSlurmJob();
+          render();
+        } else if ((key.sequence === "x" || key.sequence === "X") && popup.jobSubmitStatus === "idle" && popup.existingJobIds.length > 0) {
+          cancelExistingJobsInPopup();
+          render();
+        } else if ((key.sequence === "r" || key.sequence === "R") && popup.jobSubmitStatus === "error" && popup.loginNode) {
+          // Resubmit
+          popup.jobSubmitStatus = "idle";
+          popup.jobErrorMsg = "";
+          submitJobToSlurm();
+          render();
+        } else if ((key.sequence === "q" || key.sequence === "Q") && popup.qosList.length > 0 && !isBusy) {
+          popup.qosIdx = (popup.qosIdx + 1) % (popup.qosList.length + 1);
+          _renderHook?.();
+        } else if (key.sequence === "e" || key.sequence === "E") {
+          // Enter edit mode (only when not in error/resubmit state)
+          if (popup.jobSubmitStatus === "idle" || popup.jobSubmitStatus === "running") {
+            if (popup.cmdOverride === null) popup.cmdOverride = srunCommand(popup);
+            popup.editMode = true;
+            popup.cursorPos = popup.cmdOverride.length;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          }
+        } else if ((key.sequence === "r" || key.sequence === "R") && popup.jobSubmitStatus !== "error") {
+          // Reset command override (only when not in error — error uses R for resubmit above)
+          popup.cmdOverride = null;
+          popup.editMode = false;
+          popup.copyStatus = "idle";
+          _renderHook?.();
+        } else if (key.name === "right" || key.sequence === "+") {
+          if (popup.gpuCount < popup.freeGpusAtOpen) { popup.gpuCount++; popup.cmdOverride = null; popup.copyStatus = "idle"; _renderHook?.(); }
+        } else if (key.name === "left" || key.sequence === "-") {
+          if (popup.gpuCount > 1) { popup.gpuCount--; popup.cmdOverride = null; popup.copyStatus = "idle"; _renderHook?.(); }
+        } else if (key.sequence === "s" || key.sequence === "S") {
+          // Submit job
+          if (popup.loginNode && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle") {
+            submitJobToSlurm(); // async, don't await — updates via _renderHook
+            render();
+          }
+        } else if (key.name === "return" || key.sequence === "c" || key.sequence === "C") {
+          const isEdited = popup.cmdOverride !== null;
+          const gpuOk = popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen;
+          if (isEdited || gpuOk) {
+            await submitSrunPopup();
+            render();
+          }
+        }
+        return;
+      }
+
       // === DASHBOARD FOCUS MODE (default) ===
+
+      // When viewing a Slurm cluster tab, handle navigation for Slurm nodes
+      if (clusterTabIdx > 0 && slurmSnapshots.length > 0) {
+        const sNodes = slurmSnapshots[clusterTabIdx - 1]?.nodes || [];
+        if (key.name === "up" || (key.name === "k" && !key.shift)) {
+          if (sNodes.length > 0) {
+            const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+            slurmSelectedIdx = slurmSelectedIdx <= 0 ? sNodes.length - 1 : slurmSelectedIdx - 1;
+            // Scroll up with cursor
+            if (slurmSelectedIdx < slurmScrollOff) slurmScrollOff = slurmSelectedIdx;
+            // Wrap-around to bottom: adjust scroll to show last items
+            if (slurmSelectedIdx === sNodes.length - 1) {
+              slurmScrollOff = Math.max(0, sNodes.length - visH);
+            }
+            render();
+          }
+          return;
+        } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
+          if (sNodes.length > 0) {
+            const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+            slurmSelectedIdx = slurmSelectedIdx >= sNodes.length - 1 ? 0 : slurmSelectedIdx + 1;
+            // Scroll down with cursor
+            if (slurmSelectedIdx >= slurmScrollOff + visH) slurmScrollOff = slurmSelectedIdx - visH + 1;
+            // Wrap-around to top: reset scroll
+            if (slurmSelectedIdx === 0) slurmScrollOff = 0;
+            render();
+          }
+          return;
+        } else if (key.name === "return") {
+          // Enter on Slurm tab → open srun popup for selected node
+          const snap = slurmSnapshots[clusterTabIdx - 1];
+          const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
+            switch (slurmSortKey) {
+              case "name": return a.name.localeCompare(b.name);
+              case "partition": return (a.partition||"").localeCompare(b.partition||"");
+              case "free_asc": return a.gpu_free - b.gpu_free;
+              case "free_desc": return b.gpu_free - a.gpu_free;
+              default: return 0;
+            }
+          });
+          const node = sortedN[slurmSelectedIdx];
+          if (node && snap) openSrunPopup(node, snap.cluster_name, snap);
+          render();
+          return;
+        }
+      }
+
       if (key.name === "up" || (key.name === "k" && !key.shift)) {
         if (snapshot && snapshot.nodes.length > 0) {
           if (selectedNodeIdx <= 0) {
@@ -5815,8 +7185,37 @@ async function main() {
         selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
         if (node) void checkSudoForNode(node.node_alias);
         render();
+      } else if (key.name === "tab" || key.sequence === "\t") {
+        tuiLog("DEBUG", `cluster tab key: name=${JSON.stringify(key.name)} seq=${JSON.stringify(key.sequence)} shift=${key.shift} slurmCount=${slurmSnapshots.length}`);
+        // Switch to next/prev cluster tab
+        clusterTabCount = 1 + slurmSnapshots.length;
+        if (clusterTabCount > 1) {
+          clusterTabIdx = (clusterTabIdx + 1) % clusterTabCount;
+          slurmSelectedIdx = 0;
+          slurmScrollOff = 0;
+          slurmSortKey = "none";
+          slurmRunPopup = null;
+          // Load slurm data if switching to slurm tab for first time
+          if (clusterTabIdx > 0 && slurmSnapshots.length > 0 && !slurmSnapshots[clusterTabIdx - 1]?.nodes?.length) {
+            await loadSlurmData();
+          }
+        }
+        render();
+      } else if ((key.name === "tab" || key.sequence === "\t") && key.shift) {
+        // Switch to previous cluster tab
+        clusterTabCount = 1 + slurmSnapshots.length;
+        if (clusterTabCount > 1) {
+          clusterTabIdx = (clusterTabIdx - 1 + clusterTabCount) % clusterTabCount;
+          slurmSelectedIdx = 0;
+          slurmScrollOff = 0;
+        }
+        render();
       } else if (key.name === "r") {
-        await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
+        if (clusterTabIdx > 0) {
+          await loadSlurmData();
+        } else {
+          await Promise.all([pollCluster(), loadAllocations(), loadSystemUsers(true)]);
+        }
         render();
       } else if (key.name === "?" || key.name === "h") {
         await navigateToTab("help");
@@ -5829,14 +7228,14 @@ async function main() {
         await navigateToTab("my-gpu-view");
         render();
       }
-      
+
       if (screen === "my-gpu-view") {
         if (key.name === "escape" || key.name === "backspace") {
           await navigateToTab("dashboard");
           render();
           return;
         }
-        
+
         if (key.name === "up" || key.name === "k") {
           const bundles = myGpuViewState.bundles;
           if (bundles.length > 0) {
@@ -5845,7 +7244,7 @@ async function main() {
           }
           return;
         }
-        
+
         if (key.name === "down" || key.name === "j") {
           const bundles = myGpuViewState.bundles;
           if (bundles.length > 0) {
@@ -5854,13 +7253,13 @@ async function main() {
           }
           return;
         }
-        
+
         if (key.name === "r") {
           await Promise.all([pollCluster(), loadAllocations()]);
           render();
           return;
         }
-        
+
         if (key.name.length === 1) {
           const bundles = myGpuViewState.bundles;
           const matchedIdx = bundles.findIndex(b => b.shortcut === key.name);
@@ -6195,7 +7594,7 @@ async function main() {
       } else if (jobDetailView) {
         // Detail view mode
         const sessionCount = Math.max(jobDetailView.tmux_sessions.length, jobDetailView.gpus.length);
-        
+
         if (key.name === "escape" || key.name === "backspace") {
           jobDetailView = null;
           jobDetailSelectedCmd = 0;

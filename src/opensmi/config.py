@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from .models import ClusterConfig, NodeConfig
+from .models import ClusterConfig, NodeConfig, SlurmClusterConfig
 from .state import atomic_write_text
 
 
@@ -63,12 +63,24 @@ def load_config(path: Path) -> ClusterConfig:
     if not nodes:
         raise ValueError(f"No nodes found in config: {path}")
 
+    slurm_clusters = []
+    for raw in data.get("slurm_clusters", []):
+        slurm_clusters.append(
+            SlurmClusterConfig(
+                name=str(raw.get("name", "Slurm Cluster")),
+                login_node=str(raw["login_node"]),
+                user=str(raw.get("user", "")),
+                port=int(raw.get("port", 22)),
+            )
+        )
+
     return ClusterConfig(
         cluster_name=str(data.get("cluster_name", "GPU-Cluster")),
         nodes=nodes,
         admins=dict(data.get("admins", {})),
         users=list(data.get("users", [])),
         policy=dict(data.get("policy", {})),
+        slurm_clusters=slurm_clusters,
     )
 
 
