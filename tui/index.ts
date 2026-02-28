@@ -3944,19 +3944,29 @@ function renderSlurmClusterTab(slurmIdx: number) {
 
   // Column widths
   const nodeW = 12;
-  const partW = 16;
-  const freeW = 6;
-  const gpuW = Math.max(10, Math.floor((termWidth - nodeW - partW - freeW - 3) / Math.max(maxGpus, 1)));
+  const partW = 14;
+  const freeW = 5;
+  // Clamp max GPU columns to fit screen — prefer showing user names legibly
+  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
+  const gpuW = maxDisplayGpus > 0
+    ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
+    : 8;
 
   // Table header
-  const gpuHeaders = Array.from({ length: maxGpus }, (_, i) =>
+  const gpuHeaders = Array.from({ length: maxDisplayGpus }, (_, i) =>
     Box({ width: gpuW }, Text({ content: `GPU${i}`.padEnd(gpuW), fg: C.textDim }))
   );
+  // If maxGpus > maxDisplayGpus, show truncation indicator
+  const moreGpusHdr = maxGpus > maxDisplayGpus
+    ? Box({ width: 4 }, Text({ content: `+${maxGpus - maxDisplayGpus}`, fg: C.textDim }))
+    : null;
+
   const tableHdr = Box(
     { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
     Box({ width: nodeW }, Text({ content: "Node".padEnd(nodeW), fg: C.textDim })),
     Box({ width: partW }, Text({ content: "Partition".padEnd(partW), fg: C.textDim })),
     ...gpuHeaders,
+    ...(moreGpusHdr ? [moreGpusHdr] : []),
     Box({ width: freeW }, Text({ content: "Free".padEnd(freeW), fg: C.textDim })),
   );
 
@@ -3964,14 +3974,23 @@ function renderSlurmClusterTab(slurmIdx: number) {
     idle: "🟢", mixed: "🟡", allocated: "🔴", down: "⚫", drain: "⚫", drained: "⚫",
   };
 
-  // Node rows
-  const nodeRows: any[] = [];
+  const termHeight = process.stdout.rows || 24;
+  // header(1) + clusterHeader(1) + tableHdr(1) + footer(3) = 6 fixed lines
+  const visibleRows = Math.max(1, termHeight - 6);
+
+  // Clamp scroll offset
+  if (slurmScrollOff > Math.max(0, nodes.length - visibleRows)) {
+    slurmScrollOff = Math.max(0, nodes.length - visibleRows);
+  }
+
+  // Build all node rows first, then slice for scroll
+  const allNodeRows: any[] = [];
   for (let ni = 0; ni < nodes.length; ni++) {
     const snode = nodes[ni]!;
     const isSelected = ni === slurmSelectedIdx;
     const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
 
-    const gpuCells = Array.from({ length: maxGpus }, (_, gi) => {
+    const gpuCells = Array.from({ length: maxDisplayGpus }, (_, gi) => {
       const slot = snode.gpus?.[gi];
       if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
       if (slot.user) {
@@ -3981,12 +4000,20 @@ function renderSlurmClusterTab(slurmIdx: number) {
       return Box({ width: gpuW }, Text({ content: "·".padEnd(gpuW), fg: C.textDim }));
     });
 
-    nodeRows.push(
+    // Extra GPU count for truncated columns
+    const hiddenGpus = maxGpus > maxDisplayGpus ? snode.gpus.slice(maxDisplayGpus) : [];
+    const hiddenUsed = hiddenGpus.filter(g => g?.user).length;
+    const moreCell = maxGpus > maxDisplayGpus
+      ? Box({ width: 4 }, Text({ content: hiddenUsed > 0 ? `+${hiddenUsed}` : "   ", fg: hiddenUsed > 0 ? C.red : C.textDim }))
+      : null;
+
+    allNodeRows.push(
       Box(
         { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined },
         Box({ width: nodeW }, Text({ content: `${icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: isSelected ? "#ffffff" : C.text })),
         Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
         ...gpuCells,
+        ...(moreCell ? [moreCell] : []),
         Box({ width: freeW }, Text({
           content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
           fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
@@ -3994,6 +4021,14 @@ function renderSlurmClusterTab(slurmIdx: number) {
       )
     );
   }
+
+  // Apply scroll window
+  const nodeRows = allNodeRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
+
+  // Scroll indicator
+  const scrollInfo = nodes.length > visibleRows
+    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, nodes.length)}/${nodes.length}]`
+    : "";
 
   // User summary
   const userCounts: Record<string, number> = {};
@@ -4006,9 +4041,9 @@ function renderSlurmClusterTab(slurmIdx: number) {
 
   const footer = Box(
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
-    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}` }),
+    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " " }),
-    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch cluster  ${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[r]")} Refresh` }),
+    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
@@ -6052,12 +6087,24 @@ async function main() {
         if (key.name === "up" || (key.name === "k" && !key.shift)) {
           if (sNodes.length > 0) {
             slurmSelectedIdx = slurmSelectedIdx <= 0 ? sNodes.length - 1 : slurmSelectedIdx - 1;
+            // Scroll up if needed
+            if (slurmSelectedIdx < slurmScrollOff) slurmScrollOff = slurmSelectedIdx;
+            // Wrap-around: jump to bottom
+            if (slurmSelectedIdx === sNodes.length - 1) {
+              const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+              slurmScrollOff = Math.max(0, sNodes.length - visH);
+            }
             render();
           }
           return;
         } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
           if (sNodes.length > 0) {
             slurmSelectedIdx = slurmSelectedIdx >= sNodes.length - 1 ? 0 : slurmSelectedIdx + 1;
+            // Scroll down if needed
+            const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+            if (slurmSelectedIdx >= slurmScrollOff + visH) slurmScrollOff = slurmSelectedIdx - visH + 1;
+            // Wrap-around: jump to top
+            if (slurmSelectedIdx === 0) slurmScrollOff = 0;
             render();
           }
           return;
