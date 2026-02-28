@@ -4081,8 +4081,26 @@ function renderSlurmClusterTab(slurmIdx: number) {
     );
   })();
 
+  // Mouse scroll handler for the node list area
+  const onMouseScroll = (e: any) => {
+    if (!e.scroll) return;
+    const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+    const maxSc = Math.max(0, nodes.length - visH);
+    if (e.scroll.direction === "down") {
+      slurmScrollOff = Math.min(maxSc, slurmScrollOff + 3);
+      slurmSelectedIdx = Math.min(nodes.length - 1, slurmScrollOff);
+    } else if (e.scroll.direction === "up") {
+      slurmScrollOff = Math.max(0, slurmScrollOff - 3);
+      slurmSelectedIdx = Math.max(0, slurmScrollOff);
+    }
+    _renderHook?.();
+  };
+
   return Box(
-    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    {
+      position: "relative", width: "100%", height: "100%", backgroundColor: C.bg,
+      onMouseScroll,
+    },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
       tabBar,
