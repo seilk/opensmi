@@ -43,7 +43,19 @@ def default_config_data() -> Dict[str, Any]:
 
 
 def load_config(path: Path) -> ClusterConfig:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    clusters = load_all_clusters(path)
+    if not clusters:
+        raise ValueError(f"No clusters found in config: {path}")
+    return clusters[0]
+
+
+def _parse_cluster_config(
+    raw_data: Dict[str, Any], *, default_user: str = ""
+) -> ClusterConfig:
+    data = dict(raw_data)
+
+    if default_user and not data.get("default_user"):
+        data["default_user"] = default_user
 
     nodes = []
     for raw in data.get("nodes", []):
@@ -61,7 +73,7 @@ def load_config(path: Path) -> ClusterConfig:
         )
 
     if not nodes:
-        raise ValueError(f"No nodes found in config: {path}")
+        raise ValueError("No nodes found in cluster config")
 
     slurm_clusters = []
     for raw in data.get("slurm_clusters", []):
@@ -82,6 +94,38 @@ def load_config(path: Path) -> ClusterConfig:
         policy=dict(data.get("policy", {})),
         slurm_clusters=slurm_clusters,
     )
+
+
+def load_all_clusters(path: Path) -> list[ClusterConfig]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    raw_clusters = data.get("clusters")
+    if isinstance(raw_clusters, list):
+        clusters: list[ClusterConfig] = []
+        root_default_user = str(data.get("default_user") or "")
+        root_admins = dict(data.get("admins", {}))
+        root_users = list(data.get("users", []))
+        root_policy = dict(data.get("policy", {}))
+
+        for raw in raw_clusters:
+            if not isinstance(raw, dict):
+                continue
+            cluster_data = dict(raw)
+            if "admins" not in cluster_data:
+                cluster_data["admins"] = dict(root_admins)
+            if "users" not in cluster_data:
+                cluster_data["users"] = list(root_users)
+            if "policy" not in cluster_data:
+                cluster_data["policy"] = dict(root_policy)
+            clusters.append(
+                _parse_cluster_config(cluster_data, default_user=root_default_user)
+            )
+
+        if not clusters:
+            raise ValueError(f"No valid clusters found in config: {path}")
+        return clusters
+
+    return [_parse_cluster_config(data)]
 
 
 def update_node_env(
