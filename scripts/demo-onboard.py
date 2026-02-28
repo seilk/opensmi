@@ -1,98 +1,130 @@
 #!/usr/bin/env python3
 """
-demo-onboard.py — Preview of `opensmi onboard` wizard UI
-No SSH connections are made. No files are written.
-Run:  python3 scripts/demo-onboard.py
+demo-onboard.py — Simulated walkthrough of `opensmi onboard` as a new user.
+
+Runs the REAL onboard wizard with pre-programmed inputs piped in.
+No SSH connections are made (SSH test will show ⚠ unreachable, user continues).
+No files are written (temp dir is used and discarded).
+
+Usage:
+    python3 scripts/demo-onboard.py                  # manual entry mode
+    python3 scripts/demo-onboard.py --mode auto       # SSH-import mode
+    python3 scripts/demo-onboard.py --slow            # typed character-by-character
 """
+import argparse
+import os
+import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
-# ── ANSI helpers ──────────────────────────────────────────────────────────────
-def _c(code: str) -> str:
-    return f"\033[{code}m" if sys.stdout.isatty() else ""
+REPO   = Path(__file__).resolve().parent.parent
+PYTHON = sys.executable
 
-GREEN  = _c("32")
-YELLOW = _c("33")
-BOLD   = _c("1")
-DIM    = _c("2")
-RESET  = _c("0")
+# ── ANSI ─────────────────────────────────────────────────────────────────────
+def _c(c): return f"\033[{c}m" if sys.stdout.isatty() else ""
+DIM, BOLD, CYAN, YELLOW, RESET = _c("2"), _c("1"), _c("36"), _c("33"), _c("0")
 
-W    = 44
-LINE = "─" * W
+# ── argument parse ─────────────────────────────────────────────────────────────
+ap = argparse.ArgumentParser(description="demo-onboard: simulate new-user onboarding")
+ap.add_argument("--mode", choices=["manual", "auto"], default="manual")
+ap.add_argument("--slow", action="store_true", help="type-effect delay")
+opt = ap.parse_args()
 
-def box_row(text: str, style: str = "") -> str:
-    return f"  {GREEN}│{RESET}  {style}{text[:W].ljust(W)}{RESET}{GREEN}│{RESET}"
+# ── demo inputs ────────────────────────────────────────────────────────────────
+# Each string maps to one interactive prompt in order.
+# "\n" = press Enter (accept default).
 
-def prompt(label: str, hint: str, default: str) -> str:
-    hint_str    = f"  {DIM}{hint}{RESET}\n" if hint else ""
-    default_str = f" [{DIM}{default}{RESET}]" if default else ""
-    return f"{hint_str}  {BOLD}{label}{RESET}{default_str}: "
+if opt.mode == "auto":
+    INPUTS = [
+        "My GPU Lab\n",   # Cluster label
+        "a\n",            # Node setup mode: a=auto import from ~/.ssh/config
+        "\n",             # SSH config path (default ~/.ssh/config)
+        "all\n",          # Select all discovered hosts
+        "ubuntu\n",       # Admin username
+        "n\n",            # Skip verify (no real nodes)
+    ]
+else:
+    INPUTS = [
+        "My GPU Lab\n",   # Cluster label
+        "m\n",            # Node setup mode: manual
+        "2\n",            # Number of GPU nodes
+        # Node 1 — 127.0.0.1:19998 gives instant "Connection refused"
+        "GPU-01\n",       # Alias
+        "127.0.0.1\n",    # Address
+        "ubuntu\n",       # SSH user
+        "19998\n",        # SSH port (nothing listening → instant fail)
+        "y\n",            # SSH unreachable → continue anyway
+        # Node 2
+        "GPU-02\n",       # Alias
+        "127.0.0.1\n",    # Address
+        "ubuntu\n",       # SSH user
+        "19999\n",        # SSH port
+        "y\n",            # SSH unreachable → continue anyway
+        # Post-nodes
+        "ubuntu\n",       # Admin username
+        "n\n",            # Skip verify
+    ]
 
+stdin_data = "".join(INPUTS)
 
-# ── header ────────────────────────────────────────────────────────────────────
-print(f"\n  {GREEN}╭{LINE}╮{RESET}")
-print(box_row("opensmi onboard", BOLD))
-print(box_row("Set up your GPU cluster config.", DIM))
-print(f"  {GREEN}╰{LINE}╯{RESET}\n")
+# ── header ─────────────────────────────────────────────────────────────────────
+print(f"\n{BOLD}{'─'*56}{RESET}")
+print(f"{BOLD}  opensmi onboard  —  new user simulation{RESET}")
+print(f"{DIM}  Mode: {opt.mode}  ·  No files written  ·  SSH tests simulated{RESET}")
+print(f"{BOLD}{'─'*56}{RESET}\n")
+time.sleep(0.4)
 
+# Show what the user would type
+print(f"{DIM}  Scripted inputs:{RESET}")
+labels = {
+    0: "Cluster label",
+    1: "Node setup mode",
+}
+for i, inp in enumerate(INPUTS):
+    val = inp.strip() or "(Enter — use default)"
+    print(f"  {DIM}{str(i+1).rjust(2)}.{RESET}  {CYAN}{val}{RESET}")
 
-# ── cluster label ──────────────────────────────────────────────────────────────
-raw = input(prompt(
-    "Cluster label",
-    "Shown in the dashboard header — any name you like.",
-    "GPU-Cluster",
-)).strip()
-cluster_name = raw or "GPU-Cluster"
+print(f"\n{DIM}{'─'*56}{RESET}\n")
+sys.stdout.flush()
+time.sleep(0.6 if opt.slow else 0.2)
 
+# ── run the real wizard ────────────────────────────────────────────────────────
+with tempfile.TemporaryDirectory() as tmp:
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO / "src"),
+        "OPENSMI_STATE_DIR": tmp,
+        # Force color output even though stdin is piped
+        "FORCE_COLOR": "1",
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+    }
 
-# ── node count ─────────────────────────────────────────────────────────────────
-raw_n = input(prompt("Number of GPU nodes", "", "2")).strip() or "2"
-try:
-    n_nodes = max(1, int(raw_n))
-except ValueError:
-    n_nodes = 2
+    proc = subprocess.run(
+        [PYTHON, "-m", "opensmi", "--state-dir", tmp, "onboard"],
+        input=stdin_data,
+        env=env,
+        cwd=str(REPO),
+        text=True,
+        capture_output=False,   # stream directly to terminal
+    )
 
+    print(f"\n{DIM}{'─'*56}{RESET}")
+    written = Path(tmp) / "opensmi.json"
+    if written.exists():
+        import json
+        data = json.loads(written.read_text())
+        print(f"{BOLD}  Config written to: {tmp}/opensmi.json{RESET}")
+        print(f"{DIM}  cluster_name : {data.get('cluster_name')}{RESET}")
+        nodes = data.get("nodes") or []
+        print(f"{DIM}  nodes        : {len(nodes)}{RESET}")
+        for n in nodes:
+            print(f"{DIM}               · {n['alias']} → {n['user']}@{n['address']}{RESET}")
+        print(f"{DIM}  (temp dir will be deleted){RESET}")
+    else:
+        print(f"{YELLOW}  No config written (wizard may have exited early){RESET}")
 
-# ── nodes ──────────────────────────────────────────────────────────────────────
-nodes = []
-print(f"\n  {BOLD}Add GPU nodes{RESET}  {DIM}({n_nodes} total){RESET}\n")
+    print(f"\n{DIM}  exit code: {proc.returncode}{RESET}")
 
-for idx in range(1, n_nodes + 1):
-    default_alias = f"GPU-{idx:02d}"
-    print(f"  {DIM}── Node #{idx} ──────────────────────────────────{RESET}")
-
-    alias   = input(prompt("  Alias",   "", default_alias)).strip() or default_alias
-    address = input(prompt("  Address", "IP or hostname", "")).strip() or "192.168.1.10"
-    user    = input(prompt("  SSH user","", "ubuntu")).strip() or "ubuntu"
-
-    # Simulated SSH test
-    sys.stdout.write(f"  {DIM}Testing SSH ({user}@{address})...{RESET}  ")
-    sys.stdout.flush()
-    time.sleep(0.8)  # simulate latency
-    print(f"{GREEN}✓ connected{RESET}")
-
-    nodes.append({"alias": alias, "address": address, "user": user})
-    print()
-
-
-# ── admin ──────────────────────────────────────────────────────────────────────
-default_admin = nodes[0]["user"] if nodes else "ubuntu"
-admin = input(prompt(
-    "Admin username",
-    "SSH user who manages the cluster.",
-    default_admin,
-)).strip() or default_admin
-
-
-# ── done card ──────────────────────────────────────────────────────────────────
-cfg_path = "~/.opensmi/opensmi.json"
-print(f"\n  {GREEN}╭{LINE}╮{RESET}")
-print(box_row("✓  Config saved", BOLD))
-print(box_row(f"   {cfg_path}", DIM))
-print(box_row("", ""))
-print(box_row("Next steps:", DIM))
-print(box_row("  opensmi poll          # verify SSH + GPUs", ""))
-print(box_row("  opensmi alloc seed    # seed from live usage", ""))
-print(f"  {GREEN}╰{LINE}╯{RESET}\n")
-
-print(f"{DIM}(demo mode — no files written, SSH tests simulated){RESET}\n")
+print(f"{BOLD}{'─'*56}{RESET}\n")
