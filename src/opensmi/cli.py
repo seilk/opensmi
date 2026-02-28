@@ -1883,6 +1883,34 @@ def _cmd_node_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_slurm(args: argparse.Namespace) -> int:
+    """Show GPU usage across Slurm-managed nodes."""
+    import shutil
+
+    if not shutil.which("sinfo"):
+        print(
+            "Slurm CLI tools not found (sinfo/squeue/scontrol).\n"
+            "Run this command on a Slurm login node.",
+            file=sys.stderr,
+        )
+        return 1
+
+    from .slurm import collect_slurm_snapshot, format_table, snapshot_to_json
+
+    snap = collect_slurm_snapshot(
+        partition_filter=args.partition,
+        node_filter=args.node,
+        timeout=15,
+    )
+
+    if args.output_json:
+        print(snapshot_to_json(snap))
+    else:
+        print(format_table(snap, compact=args.compact))
+
+    return 0 if not snap.errors else 1
+
+
 def _cmd_uninstall(args: argparse.Namespace) -> int:
     try:
         out = run_uninstall(
@@ -2535,6 +2563,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp_ne.add_argument("--work-dir", default=None, help="Remote working directory")
     sp_ne.add_argument("--json", dest="json", action="store_true", default=False)
     sp_ne.set_defaults(func=_cmd_node_env)
+
+    # ── slurm: Slurm cluster GPU overview (no SSH) ────────────────
+    sp_slurm = sub.add_parser(
+        "slurm",
+        help="Show GPU usage across Slurm-managed nodes (no SSH required)",
+    )
+    sp_slurm.add_argument(
+        "--partition", "-p", default=None, help="Filter by partition name (substring match)"
+    )
+    sp_slurm.add_argument(
+        "--node", "-n", default=None, help="Filter by node name (substring match)"
+    )
+    sp_slurm.add_argument(
+        "--compact", "-c", action="store_true", default=False,
+        help="Compact output: skip individual idle GPU lines for fully idle nodes",
+    )
+    sp_slurm.add_argument(
+        "--json", dest="output_json", action="store_true", default=False,
+        help="Output as JSON",
+    )
+    sp_slurm.set_defaults(func=_cmd_slurm)
 
     return p
 
