@@ -2680,10 +2680,10 @@ function renderDetail() {
         ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
         : (runnerFocused
             ? (isAdmin
-                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[a]")} Allocate  ${fg(C.textDim)("[Shift+K]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
+                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
                 : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Esc]")} Back`)
             : (isAdmin
-                ? "[↑↓] GPU  [a] Allocate  [*] Open-to-all  [x] Clear  [Shift+K] Kill  [ctrl+x ↓] Runner  [Esc] Back"
+                ? "[↑↓] GPU  [Enter/a] Allocate  [*] Open-to-all  [x] Clear  [Shift+k] Kill  [ctrl+x ↓] Runner  [Esc] Back"
                 : "[↑↓] GPU  [ctrl+x ↓] Runner  [Esc] Back  [r] Refresh   (read-only)")),
       fg: C.textDim,
     }),
@@ -2914,7 +2914,7 @@ function renderJobsListView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[Shift+R]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[↑/↓]")} Navigate  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Shift+r]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -3066,7 +3066,7 @@ function renderJobDetailView() {
   rows.push(Text({ content: "" }));
   rows.push(
     Text({
-      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+R]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+r]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
       fg: C.textDim,
     })
   );
@@ -4094,7 +4094,7 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
     popup.editMode
       ? Text({ content: t`  ${fg(C.cyan)("editing — Enter/Esc to confirm")}` })
-      : Text({ content: t`  ${fg(C.textDim)("e: edit  r: reset")}` }),
+      : Text({ content: t`  ${fg(C.textDim)("e: edit  r: reset cmd")}` }),
   )));
 
   if (popup.editMode) {
@@ -4183,7 +4183,7 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
       paddingLeft: 1, paddingRight: 1,
       backgroundColor: canCopy && !popup.editMode && !busy ? C.blue : C.bgAlt,
       onMouseDown: canCopy && !popup.editMode && !busy ? async () => { await submitSrunPopup(); } : undefined,
-    }, Text({ content: "C: Copy", fg: canCopy && !popup.editMode && !busy ? "#ffffff" : C.textDim })),
+    }, Text({ content: "c/Enter: Copy", fg: canCopy && !popup.editMode && !busy ? "#ffffff" : C.textDim })),
     Text({ content: "  " }),
     canCancel
       ? Box({
@@ -5130,7 +5130,7 @@ function renderSetupView() {
   }
 
   rows.push(Text({ content: " " }));
-  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  S save")}` }));
+  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  s: save")}` }));
   if (setupMessage) {
     rows.push(Text({ content: t`${fg(C.green)(setupMessage)}` }));
   }
