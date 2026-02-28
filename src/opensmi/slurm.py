@@ -48,6 +48,7 @@ class SlurmNodeInfo:
 @dataclass
 class SlurmClusterSnapshot:
     """Full cluster snapshot from Slurm."""
+    cluster_name: str = "Slurm Cluster"
     timestamp: str = ""
     nodes: List[SlurmNodeInfo] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -61,6 +62,20 @@ def _run(cmd: List[str], timeout: int = 15) -> str:
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} failed (rc={r.returncode}): {r.stderr.strip()}")
+    return r.stdout
+
+
+def _run_remote(cmd: List[str], login_node: str, user: str = "", port: int = 22, timeout: int = 15) -> str:
+    """Run a command on a remote login node via SSH."""
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes"]
+    if port != 22:
+        ssh_cmd += ["-p", str(port)]
+    target = f"{user}@{login_node}" if user else login_node
+    ssh_cmd.append(target)
+    ssh_cmd.append(" ".join(cmd))
+    r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"ssh {target}: {r.stderr.strip() or f'exit {r.returncode}'}")
     return r.stdout
 
 
@@ -167,18 +182,32 @@ def collect_slurm_snapshot(
     partition_filter: Optional[str] = None,
     node_filter: Optional[str] = None,
     timeout: int = 15,
+    login_node: Optional[str] = None,
+    ssh_user: str = "",
+    ssh_port: int = 22,
+    cluster_name: str = "Slurm Cluster",
 ) -> SlurmClusterSnapshot:
-    """Collect a full Slurm cluster snapshot using only Slurm CLI tools."""
+    """Collect a full Slurm cluster snapshot using only Slurm CLI tools.
+
+    If login_node is provided, commands are run remotely via SSH.
+    Otherwise, they are run locally (assumes we're on a Slurm login node).
+    """
     from datetime import datetime, timezone, timedelta
 
     _KST = timezone(timedelta(hours=9))
     snap = SlurmClusterSnapshot(
         timestamp=datetime.now(_KST).isoformat(timespec="seconds"),
+        cluster_name=cluster_name,
     )
+
+    def run_cmd(cmd: List[str]) -> str:
+        if login_node:
+            return _run_remote(cmd, login_node, user=ssh_user, port=ssh_port, timeout=timeout)
+        return _run(cmd, timeout=timeout)
 
     # 1. sinfo — node list
     try:
-        sinfo_raw = _run(["sinfo", "-N", "-o", "%N %P %T %G"], timeout=timeout)
+        sinfo_raw = run_cmd(["sinfo", "-N", "-o", "'%N %P %T %G'"])
     except Exception as e:
         snap.errors.append(f"sinfo failed: {e}")
         return snap
@@ -187,16 +216,15 @@ def collect_slurm_snapshot(
 
     # 2. squeue — running jobs
     try:
-        squeue_raw = _run(
-            ["squeue", "--noheader", "-o", "%i %u %T %M %j", "--states=RUNNING"],
-            timeout=timeout,
+        squeue_raw = run_cmd(
+            ["squeue", "--noheader", "-o", "'%i %u %T %M %j'", "--states=RUNNING"],
         )
     except Exception as e:
         snap.errors.append(f"squeue failed: {e}")
         squeue_raw = ""
 
     def _scontrol_detail(job_id: int) -> str:
-        return _run(["scontrol", "-d", "show", "job", str(job_id)], timeout=timeout)
+        return run_cmd(["scontrol", "-d", "show", "job", str(job_id)])
 
     try:
         job_allocs = _parse_jobs(squeue_raw, _scontrol_detail)
@@ -268,7 +296,7 @@ def format_table(snap: SlurmClusterSnapshot, *, compact: bool = False) -> str:
             return "\n".join(lines)
 
     lines: List[str] = []
-    lines.append(f"Slurm GPU Overview — {snap.timestamp}")
+    lines.append(f"{snap.cluster_name} — Slurm GPU Overview — {snap.timestamp}")
     lines.append("")
 
     for node in snap.nodes:

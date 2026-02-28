@@ -18,12 +18,22 @@ class NodeConfig:
 
 
 @dataclass
+class SlurmClusterConfig:
+    """Config for a Slurm-managed cluster accessed via a login node."""
+    name: str               # Display name, e.g. "SUMA HPC"
+    login_node: str          # SSH alias or address for the login node
+    user: str = ""           # SSH user (optional, defaults to current user)
+    port: int = 22
+
+
+@dataclass
 class ClusterConfig:
     cluster_name: str
     nodes: List[NodeConfig]
     admins: Dict[str, object] = field(default_factory=dict)
     users: List[str] = field(default_factory=list)
     policy: Dict[str, object] = field(default_factory=dict)
+    slurm_clusters: List[SlurmClusterConfig] = field(default_factory=list)
 
 
 @dataclass

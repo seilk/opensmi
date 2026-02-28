@@ -1886,21 +1886,54 @@ def _cmd_node_env(args: argparse.Namespace) -> int:
 def _cmd_slurm(args: argparse.Namespace) -> int:
     """Show GPU usage across Slurm-managed nodes."""
     import shutil
+    from .slurm import collect_slurm_snapshot, format_table, snapshot_to_json
 
-    if not shutil.which("sinfo"):
+    login_node = getattr(args, "login_node", None)
+
+    # If --all, load from config
+    if getattr(args, "show_all", False):
+        state_dir = get_state_dir(args.state_dir)
+        cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+        cfg = load_config(cfg_path)
+        if not cfg.slurm_clusters:
+            print("No slurm_clusters configured in opensmi.json", file=sys.stderr)
+            return 1
+        results = []
+        for sc in cfg.slurm_clusters:
+            snap = collect_slurm_snapshot(
+                partition_filter=args.partition,
+                node_filter=args.node,
+                timeout=15,
+                login_node=sc.login_node,
+                ssh_user=sc.user,
+                ssh_port=sc.port,
+                cluster_name=sc.name,
+            )
+            results.append(snap)
+        if args.output_json:
+            import json as _json
+            print(_json.dumps([json.loads(snapshot_to_json(s)) for s in results], indent=2))
+        else:
+            for snap in results:
+                print(format_table(snap, compact=args.compact))
+                print()
+        return 0 if all(not s.errors for s in results) else 1
+
+    if not login_node and not shutil.which("sinfo"):
         print(
             "Slurm CLI tools not found (sinfo/squeue/scontrol).\n"
-            "Run this command on a Slurm login node.",
+            "Run on a Slurm login node or use --login-node <host>.",
             file=sys.stderr,
         )
         return 1
-
-    from .slurm import collect_slurm_snapshot, format_table, snapshot_to_json
 
     snap = collect_slurm_snapshot(
         partition_filter=args.partition,
         node_filter=args.node,
         timeout=15,
+        login_node=login_node,
+        ssh_user=getattr(args, "ssh_user", ""),
+        cluster_name="Slurm Cluster",
     )
 
     if args.output_json:
@@ -2582,6 +2615,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp_slurm.add_argument(
         "--json", dest="output_json", action="store_true", default=False,
         help="Output as JSON",
+    )
+    sp_slurm.add_argument(
+        "--login-node", default=None,
+        help="SSH alias/address of Slurm login node (runs commands remotely)",
+    )
+    sp_slurm.add_argument(
+        "--ssh-user", default="",
+        help="SSH user for login node",
+    )
+    sp_slurm.add_argument(
+        "--all", dest="show_all", action="store_true", default=False,
+        help="Show all configured Slurm clusters from opensmi.json",
     )
     sp_slurm.set_defaults(func=_cmd_slurm)
 
