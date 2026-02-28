@@ -4074,6 +4074,7 @@ async function loadSlurmData(): Promise<void> {
   if (slurmLoading) return;
   slurmLoading = true;
   slurmError = null;
+  tuiLog("DEBUG", `loadSlurmData: starting, OPENSMI=${JSON.stringify(OPENSMI)}, CWD=${OPENSMI_CWD}`);
   _renderHook?.();
 
   try {
@@ -5493,6 +5494,7 @@ async function main() {
     loadAllocations(),
     loadSystemUsers(true),
     loadJobsFromCLI(),
+    loadSlurmData(),
   ]);
   await dispatchQueuedJobs();
   await watchRunningJobs();
@@ -5510,7 +5512,7 @@ async function main() {
     if (runnerFocused || runnerInputTyping) return;
 
     // Always poll cluster + allocations (needed for dispatch decisions)
-    await Promise.all([pollCluster(), loadAllocations()]);
+    await Promise.all([pollCluster(), loadAllocations(), loadSlurmData()]);
 
     // Load jobs if on jobs tab
     if (screen === "jobs") {
@@ -6086,8 +6088,9 @@ async function main() {
         selectedGpuIdx = gpuIndicesForNode(node)[0] ?? 0;
         if (node) void checkSudoForNode(node.node_alias);
         render();
-      } else if (key.name === "tab" && !key.shift) {
-        // Switch to next cluster tab
+      } else if (key.name === "tab" || key.sequence === "\t") {
+        tuiLog("DEBUG", `cluster tab key: name=${JSON.stringify(key.name)} seq=${JSON.stringify(key.sequence)} shift=${key.shift} slurmCount=${slurmSnapshots.length}`);
+        // Switch to next/prev cluster tab
         clusterTabCount = 1 + slurmSnapshots.length;
         if (clusterTabCount > 1) {
           clusterTabIdx = (clusterTabIdx + 1) % clusterTabCount;
@@ -6099,7 +6102,7 @@ async function main() {
           }
         }
         render();
-      } else if (key.name === "tab" && key.shift) {
+      } else if ((key.name === "tab" || key.sequence === "\t") && key.shift) {
         // Switch to previous cluster tab
         clusterTabCount = 1 + slurmSnapshots.length;
         if (clusterTabCount > 1) {
