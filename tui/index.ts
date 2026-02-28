@@ -1744,7 +1744,23 @@ function renderDashboardTabBar() {
     const isActive = i === activeClusterTabIdx;
     const label = tab.name.length > 18 ? tab.name.slice(0, 17) + "..." : tab.name;
     return Box(
-      { backgroundColor: isActive ? C.blue : C.bgAlt, paddingLeft: 1, paddingRight: 1 },
+      {
+        backgroundColor: isActive ? C.blue : C.bgAlt,
+        paddingLeft: 1,
+        paddingRight: 1,
+        onClick: async () => {
+          if (activeClusterTabIdx === i) return;
+          activeClusterTabIdx = i;
+          slurmSelectedIdx = 0;
+          slurmScrollOff = 0;
+          slurmSortKey = "none";
+          slurmRunPopup = null;
+          if (tab.type === "slurm" && !slurmSnapshots[tab.idx]?.nodes?.length) {
+            await loadSlurmData();
+          }
+          requestRender?.();
+        },
+      },
       Text({
         content: isActive
           ? t`${bold(fg("#ffffff")(label))}`
