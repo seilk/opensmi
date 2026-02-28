@@ -3884,6 +3884,8 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string) {
     freeGpusAtOpen: node.gpu_free,
     snapshotTime: new Date().toISOString(),
     gpuCount: 1,
+    editMode: false,
+    cmdOverride: null,
     copyStatus: "idle",
     errorMsg: "",
     fullCmdForFallback: "",
@@ -3902,8 +3904,15 @@ function srunTokens(popup: SlurmRunPopup): string[] {
           "--gres", `gpu:${popup.gpuCount}`, "--pty", "bash"];
 }
 
+function shellQuote(token: string): string {
+  if (token.length === 0) return "''";
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(token)) return token;
+  // POSIX-safe single-quote escaping: ' -> '\''
+  return `'${token.replace(/'/g, `'\\''`)}'`;
+}
+
 function srunCommand(popup: SlurmRunPopup): string {
-  return srunTokens(popup).map(t => /[\s|&;()<>]/.test(t) ? `'${t}'` : t).join(" ");
+  return srunTokens(popup).map(shellQuote).join(" ");
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -3933,12 +3942,14 @@ function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null 
 }
 
 function renderSrunPopup(popup: SlurmRunPopup): any {
-  const cmd = srunCommand(popup);
+  const autoCmd = srunCommand(popup);
+  const cmd = popup.cmdOverride !== null ? popup.cmdOverride : autoCmd;
+  const isEdited = popup.cmdOverride !== null;
   const currentFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
   const isStale = popup.copyStatus === "stale";
-  const gpuInvalid = popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
-    || !Number.isInteger(popup.gpuCount);
-  const canCopy = !gpuInvalid && !isStale;
+  const gpuInvalid = !isEdited && (popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
+    || !Number.isInteger(popup.gpuCount));
+  const canCopy = !gpuInvalid && !isStale && !(isEdited && cmd.trim() === "");
 
   const w = Math.min(58, (process.stdout.columns || 80) - 4);
 
@@ -3965,9 +3976,18 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
       Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}`, fg: C.textDim }),
     )),
     line(Text({ content: "" })),
-    // Command preview
-    line(Text({ content: t`${fg(C.textDim)("Command:")}` })),
-    line(Text({ content: cmd, fg: canCopy ? C.text : C.red })),
+    // Command preview / edit
+    line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("Command:")}` }),
+      isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
+      popup.editMode ? Text({ content: t`  ${fg(C.cyan)("(editing — Esc to exit)")}` }) : Text({ content: t`  ${fg(C.textDim)("(e to edit, r to reset)")}` }),
+    )),
+    popup.editMode
+      ? line(Box({ flexDirection: "row" },
+          Text({ content: "▶ ", fg: C.cyan }),
+          Text({ content: cmd + "█", fg: C.cyan }),
+        ))
+      : line(Text({ content: cmd, fg: canCopy ? C.text : C.red })),
     line(Text({ content: "" })),
   ];
 
@@ -3999,13 +4019,13 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
     Box({
       paddingLeft: 1, paddingRight: 1,
       backgroundColor: canCopy ? C.blue : C.bgAlt,
-      onMouseDown: canCopy ? async () => { await submitSrunPopup(); } : undefined,
-    }, Text({ content: "Enter/C: Copy", fg: canCopy ? "#ffffff" : C.textDim })),
+      onMouseDown: canCopy && !popup.editMode ? async () => { await submitSrunPopup(); } : undefined,
+    }, Text({ content: "Enter/C: Copy", fg: canCopy && !popup.editMode ? "#ffffff" : C.textDim })),
     Text({ content: "  " }),
     Box({
       paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
-      onMouseDown: () => closeSrunPopup(),
-    }, Text({ content: "Esc: Cancel", fg: C.textDim })),
+      onMouseDown: () => popup.editMode ? (popup.editMode = false, _renderHook?.()) : closeSrunPopup(),
+    }, Text({ content: popup.editMode ? "Esc: Done" : "Esc: Cancel", fg: C.textDim })),
   )));
   rows.push(line(Text({ content: "" })));
 
@@ -4025,28 +4045,31 @@ async function submitSrunPopup() {
   if (!slurmRunPopup) return;
   const popup = slurmRunPopup;
 
-  // Preflight: re-check latest free GPUs
-  const latestFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
-  if (latestFree === null) {
-    popup.copyStatus = "stale";
-    popup.errorMsg = "Node no longer found in cluster data.";
-    _renderHook?.();
-    return;
-  }
-  if (popup.gpuCount > latestFree) {
-    popup.copyStatus = "stale";
-    popup.errorMsg = `Capacity changed: was ${popup.freeGpusAtOpen}, now ${latestFree}. Adjust GPUs and retry.`;
-    _renderHook?.();
-    return;
-  }
-  if (latestFree === 0) {
-    popup.copyStatus = "stale";
-    popup.errorMsg = "No free GPUs available on this node.";
-    _renderHook?.();
-    return;
-  }
+  // If user edited the command, skip preflight and use override directly
+  const cmd = popup.cmdOverride !== null ? popup.cmdOverride : srunCommand(popup);
 
-  const cmd = srunCommand(popup);
+  if (popup.cmdOverride === null) {
+    // Preflight: re-check latest free GPUs (only for auto-generated commands)
+    const latestFree = getLatestFreeGpus(popup.nodeName, clusterTabIdx - 1);
+    if (latestFree === null) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = "Node no longer found in cluster data.";
+      _renderHook?.();
+      return;
+    }
+    if (popup.gpuCount > latestFree) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = `Capacity changed: was ${popup.freeGpusAtOpen}, now ${latestFree}. Adjust GPUs and retry.`;
+      _renderHook?.();
+      return;
+    }
+    if (latestFree === 0) {
+      popup.copyStatus = "stale";
+      popup.errorMsg = "No free GPUs available on this node.";
+      _renderHook?.();
+      return;
+    }
+  }
   tuiLog("INFO", `srun popup submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount}`);
 
   const ok = await copyToClipboard(cmd);
@@ -4400,6 +4423,9 @@ interface SlurmRunPopup {
   snapshotTime: string;
   // user input
   gpuCount: number;
+  // command edit
+  editMode: boolean;
+  cmdOverride: string | null; // null = use auto-generated command
   // ui state
   copyStatus: "idle" | "ok" | "fail" | "stale";
   errorMsg: string;
@@ -6389,15 +6415,57 @@ async function main() {
       // === SLURM POPUP KEY HANDLING ===
       if (slurmRunPopup) {
         const popup = slurmRunPopup;
+
+        // --- Edit mode: raw text input ---
+        if (popup.editMode) {
+          if (key.name === "escape") {
+            // Exit edit mode (keep changes)
+            popup.editMode = false;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          } else if (key.name === "return") {
+            // Confirm edit, exit edit mode
+            popup.editMode = false;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          } else if (key.name === "backspace" || key.sequence === "\x7f") {
+            const cur = popup.cmdOverride ?? srunCommand(popup);
+            popup.cmdOverride = cur.slice(0, -1);
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          } else if (key.sequence && !key.ctrl && !key.meta && key.sequence.length === 1) {
+            const cur = popup.cmdOverride ?? srunCommand(popup);
+            popup.cmdOverride = cur + key.sequence;
+            popup.copyStatus = "idle";
+            _renderHook?.();
+          }
+          return;
+        }
+
+        // --- Normal mode ---
         if (key.name === "escape") {
           closeSrunPopup();
           render();
+        } else if (key.sequence === "e" || key.sequence === "E") {
+          // Enter edit mode
+          if (popup.cmdOverride === null) popup.cmdOverride = srunCommand(popup);
+          popup.editMode = true;
+          popup.copyStatus = "idle";
+          _renderHook?.();
+        } else if (key.sequence === "r" || key.sequence === "R") {
+          // Reset command override
+          popup.cmdOverride = null;
+          popup.editMode = false;
+          popup.copyStatus = "idle";
+          _renderHook?.();
         } else if (key.name === "right" || key.sequence === "+") {
-          if (popup.gpuCount < popup.freeGpusAtOpen) { popup.gpuCount++; popup.copyStatus = "idle"; _renderHook?.(); }
+          if (popup.gpuCount < popup.freeGpusAtOpen) { popup.gpuCount++; popup.cmdOverride = null; popup.copyStatus = "idle"; _renderHook?.(); }
         } else if (key.name === "left" || key.sequence === "-") {
-          if (popup.gpuCount > 1) { popup.gpuCount--; popup.copyStatus = "idle"; _renderHook?.(); }
+          if (popup.gpuCount > 1) { popup.gpuCount--; popup.cmdOverride = null; popup.copyStatus = "idle"; _renderHook?.(); }
         } else if (key.name === "return" || key.sequence === "c" || key.sequence === "C") {
-          if (popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen) {
+          const isEdited = popup.cmdOverride !== null;
+          const gpuOk = popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen;
+          if (isEdited || gpuOk) {
             await submitSrunPopup();
             render();
           }
