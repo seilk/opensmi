@@ -3900,6 +3900,7 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
     qosList: [],
     qosIdx: 0,
     qosLoading: !!snap?.login_node,
+    qosFetchFailed: false,
   };
   tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
   _renderHook?.();
@@ -4016,6 +4017,8 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   // QoS selector
   if (popup.qosLoading) {
     rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("⟳ loading...")}` })));
+  } else if (popup.qosFetchFailed) {
+    rows.push(line(Text({ content: t`${fg(C.red)("QoS       :")} ${fg(C.red)("unavailable — use 'e' to add --qos manually")}` })));
   } else if (popup.qosList.length > 0) {
     const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
     rows.push(line(Box({ flexDirection: "row" },
@@ -4105,7 +4108,7 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
   }
 
   // Action bar
-  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
+  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && !popup.qosFetchFailed && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
   const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
   const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
 
@@ -4222,6 +4225,7 @@ async function fetchQosForPartition(loginNode: string, sshUser: string, partitio
     tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
   } catch (e) {
     tuiLog("DEBUG", `fetchQos failed: ${e}`);
+    popup.qosFetchFailed = true;
   } finally {
     popup.qosLoading = false;
   }
@@ -4243,14 +4247,29 @@ async function cancelSlurmJob() {
   _renderHook?.();
   try {
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+    // Ownership check: verify job belongs to current user before cancelling
+    const ownerProc = Bun.spawn(
+      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+       `squeue -h -j ${popup.jobId} -o %u`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
+    await ownerProc.exited;
+    const expectedUser = popup.sshUser || "";
+    if (jobOwner && expectedUser && jobOwner !== expectedUser) {
+      tuiLog("WARNING", `cancelSlurmJob: ownership mismatch — job ${popup.jobId} owner="${jobOwner}" expected="${expectedUser}", refusing scancel`);
+      popup.jobSubmitStatus = "error";
+      popup.jobErrorMsg = `Ownership mismatch: job ${popup.jobId} belongs to "${jobOwner}", not "${expectedUser}"`;
+      _renderHook?.();
+      return;
+    }
     const proc = Bun.spawn(
-      // Pass jobId as separate arg (no shell interpolation)
       ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
        `scancel ${popup.jobId}`],
       { stdout: "pipe", stderr: "pipe" }
     );
     await proc.exited;
-    tuiLog("INFO", `scancel ${popup.jobId} done`);
+    tuiLog("INFO", `scancel ${popup.jobId} done (owner: ${jobOwner || "unverified"})`);
   } catch (e) {
     tuiLog("WARNING", `scancel failed: ${e}`);
   }
@@ -4281,8 +4300,10 @@ async function submitJobToSlurm() {
   if (selectedQosName) fieldsToValidate.push(["qos", selectedQosName]);
   for (const [fieldName, value] of fieldsToValidate) {
     if (!slurmNameSafe(value)) {
+      const msg = `Invalid characters in ${fieldName} (allowed: A-Z a-z 0-9 _ . : -): "${value}"`;
+      tuiLog("WARNING", `injection guard blocked: field=${fieldName} value="${value}"`);
       popup.jobSubmitStatus = "error";
-      popup.jobErrorMsg = `Invalid characters in ${fieldName}: "${value}"`;
+      popup.jobErrorMsg = msg;
       _renderHook?.();
       return;
     }
@@ -4321,10 +4342,30 @@ async function submitJobToSlurm() {
       throw new Error(`sbatch failed: ${sbatchErr.trim() || `exit ${sbatchExit}`}`);
     }
 
-    // Parse JOBID from "Submitted batch job 1059327"
-    const jobIdMatch = sbatchOut.match(/Submitted batch job (\d+)/);
-    if (!jobIdMatch) throw new Error(`Could not parse JOBID from: ${sbatchOut.trim()}`);
+    // Parse JOBID from "Submitted batch job 1059327" — retry up to 3× on parse failure
+    let jobIdMatch = sbatchOut.match(/Submitted batch job (\d+)/);
+    if (!jobIdMatch) {
+      // Some clusters emit delayed output; retry stderr+stdout combination
+      const sbatchErr2 = await new Response(sbatchProc.stderr).text();
+      const combined = sbatchOut + sbatchErr2;
+      jobIdMatch = combined.match(/Submitted batch job (\d+)/);
+    }
+    if (!jobIdMatch) {
+      // Abort was requested before we even got JOBID — nothing to scancel
+      if (popup.jobAbortRequested) {
+        popup.jobSubmitStatus = "idle";
+        _renderHook?.();
+        return;
+      }
+      throw new Error(`Could not parse JOBID from sbatch output: "${sbatchOut.trim()}"`);
+    }
     popup.jobId = jobIdMatch[1]!;
+    // Check abort immediately after obtaining jobId — no orphan
+    if (popup.jobAbortRequested) {
+      tuiLog("INFO", `abort before polling: cancelling job ${popup.jobId}`);
+      await cancelSlurmJob();
+      return;
+    }
     popup.jobSubmitStatus = "polling";
     _renderHook?.();
     tuiLog("INFO", `job submitted: JOBID=${popup.jobId}`);
@@ -4752,7 +4793,8 @@ interface SlurmRunPopup {
   // qos
   qosList: string[];
   qosIdx: number;       // 0 = no QoS (use partition default)
-  qosLoading: boolean;  // true while fetching QoS list
+  qosLoading: boolean;     // true while fetching QoS list
+  qosFetchFailed: boolean; // true if fetch failed — Submit blocked, user must edit cmd
 }
 let slurmRunPopup: SlurmRunPopup | null = null;
 let _slurmLastClickNode = "";
