@@ -4052,6 +4052,28 @@ function renderSlurmClusterTab(slurmIdx: number) {
     errorRows.push(Box({ paddingLeft: 1 }, Text({ content: t`⚠ ${ssnap.errors.join("; ")}`, fg: C.red })));
   }
 
+  // Thin scrollbar (1 char wide, right edge)
+  const scrollbar = (() => {
+    if (nodes.length <= visibleRows) return null;
+    const trackH = visibleRows;
+    const thumbH = Math.max(1, Math.round((visibleRows / nodes.length) * trackH));
+    const thumbTop = Math.round((slurmScrollOff / (nodes.length - visibleRows)) * (trackH - thumbH));
+    const chars = Array.from({ length: trackH }, (_, i) => {
+      const inThumb = i >= thumbTop && i < thumbTop + thumbH;
+      return Text({ content: inThumb ? "█" : "░", fg: inThumb ? C.blue : C.textDim });
+    });
+    return Box(
+      {
+        position: "absolute",
+        right: 0,
+        top: 3, // below tabBar + header + tableHdr
+        width: 1,
+        flexDirection: "column",
+      },
+      ...chars,
+    );
+  })();
+
   return Box(
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
@@ -4063,6 +4085,7 @@ function renderSlurmClusterTab(slurmIdx: number) {
       ...errorRows,
       footer,
     ),
+    ...(scrollbar ? [scrollbar] : []),
     renderRunnerPane(),
   );
 }
