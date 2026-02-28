@@ -5,7 +5,7 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
     <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
-    <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-informational.svg">
+    <img alt="Version" src="https://img.shields.io/badge/version-0.2.5-informational.svg">
   </p>
 </p>
 
@@ -30,6 +30,8 @@ It runs from your terminal, connects over SSH, and reads `nvidia-smi`.
 ## What you get
 
 - **Interactive TUI** — live dashboard, node detail, GPU runner, job tracker
+- **Multi-cluster tab bar** — switch between SSH clusters and Slurm clusters in one view
+- **Slurm GPU monitoring** — read-only per-node GPU usage via Slurm APIs (no SSH to compute nodes)
 - **CLI** — poll, allocate, detect violations, watch, kill, exec
 - **Policy enforcement** — unallocated GPU usage is a violation; `*` = open to all
 - **No agents or daemons** on GPU nodes
@@ -100,6 +102,15 @@ opensmi
 ```
 
 The top bar shows: **cluster name · user@hostname · GPUs used/total · Violations · Poll time**
+
+### Cluster Tab Bar
+
+A tab bar at the very top of the TUI shows all configured clusters. Press **`Tab`** / **`Shift+Tab`** to cycle, or **click** a tab directly.
+
+- **SSH clusters** — defined in `clusters[]` in your config, polled via SSH + nvidia-smi
+- **Slurm clusters** — defined in `slurm_clusters[]`, show per-node GPU usage via Slurm APIs (read-only, no SSH to compute nodes)
+
+When a newer version is available, the version label on the right of the tab bar turns yellow: `opensmi@0.2.5 → 0.2.6 ↑`
 
 ### Tab Navigation
 
@@ -285,6 +296,45 @@ opensmi init             # write default template
 Reference template: [`opensmi.example.json`](opensmi.example.json)  
 Keep your real `opensmi.json` private — it's gitignored by default.
 
+### Multi-cluster config
+
+To monitor multiple SSH clusters as separate tabs, use the `clusters` array:
+
+```json
+{
+  "clusters": [
+    {
+      "cluster_name": "Lab-A",
+      "nodes": [{ "alias": "GPU-01", "address": "10.0.0.1", "user": "ubuntu" }]
+    },
+    {
+      "cluster_name": "Lab-B",
+      "nodes": [{ "alias": "GPU-05", "address": "10.0.1.1", "user": "admin" }]
+    }
+  ]
+}
+```
+
+Single-cluster configs (root-level `cluster_name` + `nodes`) continue to work unchanged.
+
+### Slurm monitoring config
+
+To add a read-only Slurm cluster tab, add `slurm_clusters`:
+
+```json
+{
+  "slurm_clusters": [
+    {
+      "name": "HPC Cluster",
+      "login_node": "hpc-login",
+      "user": "myuser"
+    }
+  ]
+}
+```
+
+opensmi SSHes into the login node and queries `sinfo`/`squeue`/`scontrol` — no access to compute nodes is required.
+
 **Key environment variables:**
 
 | Variable | Purpose |
@@ -303,13 +353,19 @@ Keep your real `opensmi.json` private — it's gitignored by default.
 
 ## Scope / Supported Environments
 
-opensmi is a **standalone alternative to Slurm**, not a supplement.  
-Running alongside an active Slurm installation is **not supported** and causes conflicts:
+opensmi supports two distinct cluster setups:
 
-- **`CUDA_VISIBLE_DEVICES`**: Slurm remaps GPU indices to 0-based; opensmi uses physical indices — they conflict.
+### 1. Self-managed clusters (no scheduler)
+Full feature set — allocation, enforcement, job dispatch, kill.  
+SSH directly into each GPU node; reads `nvidia-smi` for live GPU state.
+
+Using opensmi's **job dispatch** (tmux/direct execution) on a cluster already running Slurm is **not recommended**:
+- **`CUDA_VISIBLE_DEVICES`**: Slurm remaps GPU indices to 0-based; opensmi uses physical indices — they will conflict.
 - **Process lifecycle**: opensmi tmux sessions run outside Slurm cgroups, bypassing Slurm's resource accounting.
 
-**Supported use case**: self-managed GPU clusters with no workload scheduler (Slurm, PBS, LSF, etc.).
+### 2. Slurm-managed clusters (read-only monitoring)
+opensmi can monitor a Slurm cluster as a **read-only tab** in the TUI — showing per-node GPU assignments, job owners, partition info, and GPU indices via `scontrol`.  
+Configure via `slurm_clusters` in `opensmi.json`. No access to compute nodes is required.
 
 **Local node**: If opensmi runs on a GPU node itself, SSH is bypassed automatically — no loopback connection needed.
 

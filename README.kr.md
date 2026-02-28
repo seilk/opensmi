@@ -5,7 +5,7 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue.svg">
     <img alt="Dependencies" src="https://img.shields.io/badge/deps-zero-brightgreen.svg">
-    <img alt="Version" src="https://img.shields.io/badge/version-0.2.4-informational.svg">
+    <img alt="Version" src="https://img.shields.io/badge/version-0.2.5-informational.svg">
   </p>
 </p>
 
@@ -30,6 +30,8 @@
 ## 제공 기능
 
 - **인터랙티브 TUI** — 실시간 대시보드, 노드 상세, GPU 실행기, 작업 추적기
+- **멀티클러스터 탭바** — SSH 클러스터와 Slurm 클러스터를 탭으로 전환하며 한 화면에서 관리
+- **Slurm GPU 모니터링** — Slurm API를 통한 노드별 GPU 사용 현황 조회 (읽기 전용, compute 노드 SSH 불필요)
 - **CLI** — poll, 할당 관리, 위반 감지, 감시, kill, exec
 - **정책 강제** — 할당되지 않은 GPU 사용은 위반으로 처리; `*` = 모두에게 오픈
 - **GPU 노드 무설치** — 에이전트·데몬 불필요
@@ -100,6 +102,15 @@ opensmi
 ```
 
 상단 바에는 **클러스터명 · user@hostname · GPU 사용/전체 · 위반 수 · 폴링 시각**이 표시됩니다.
+
+### 클러스터 탭바
+
+TUI 최상단에 설정된 모든 클러스터가 탭으로 표시됩니다. **`Tab`** / **`Shift+Tab`**으로 순환하거나 **클릭**으로 바로 전환할 수 있습니다.
+
+- **SSH 클러스터** — `clusters[]`에 정의된 클러스터, SSH + nvidia-smi로 폴링
+- **Slurm 클러스터** — `slurm_clusters[]`에 정의된 클러스터, Slurm API로 노드별 GPU 사용 현황 표시 (읽기 전용, compute 노드 SSH 불필요)
+
+새 버전이 출시되면 탭바 우측의 버전 표시가 노란색으로 바뀝니다: `opensmi@0.2.5 → 0.2.6 ↑`
 
 ### 탭 이동
 
@@ -283,6 +294,45 @@ opensmi init        # 기본 템플릿 생성
 참고 템플릿: [`opensmi.example.json`](opensmi.example.json)  
 실제 `opensmi.json`은 기본적으로 `.gitignore`에 포함되어 공개 저장소에 올라가지 않습니다.
 
+### 멀티클러스터 설정
+
+여러 SSH 클러스터를 탭으로 관리하려면 `clusters` 배열을 사용합니다:
+
+```json
+{
+  "clusters": [
+    {
+      "cluster_name": "Lab-A",
+      "nodes": [{ "alias": "GPU-01", "address": "10.0.0.1", "user": "ubuntu" }]
+    },
+    {
+      "cluster_name": "Lab-B",
+      "nodes": [{ "alias": "GPU-05", "address": "10.0.1.1", "user": "admin" }]
+    }
+  ]
+}
+```
+
+기존 단일 클러스터 설정(루트 레벨 `cluster_name` + `nodes`)은 변경 없이 그대로 동작합니다.
+
+### Slurm 모니터링 설정
+
+읽기 전용 Slurm 클러스터 탭을 추가하려면 `slurm_clusters`를 설정합니다:
+
+```json
+{
+  "slurm_clusters": [
+    {
+      "name": "HPC 클러스터",
+      "login_node": "hpc-login",
+      "user": "myuser"
+    }
+  ]
+}
+```
+
+로그인 노드에만 SSH로 접속해 `sinfo`/`squeue`/`scontrol`을 조회합니다 — compute 노드 접근 불필요.
+
 **주요 환경변수:**
 
 | 변수 | 용도 |
@@ -296,13 +346,20 @@ opensmi init        # 기본 템플릿 생성
 
 ## 지원 범위 및 환경
 
-opensmi는 Slurm의 **보완재가 아닌 대체제**로 설계되었습니다.  
-Slurm이 활성화된 환경에서 함께 실행하는 것은 **지원하지 않으며**, 자원 관리 충돌이 발생합니다:
+opensmi는 두 가지 클러스터 환경을 지원합니다:
 
-- **`CUDA_VISIBLE_DEVICES`**: Slurm은 GPU 인덱스를 0-based로 remapping하지만, opensmi는 물리 인덱스를 사용해 충돌합니다.
-- **프로세스 생명주기**: opensmi의 tmux 세션은 Slurm cgroup 외부에서 실행되어 Slurm의 자원 회계 및 적용을 우회합니다.
+### 1. 자체 운영 클러스터 (스케줄러 없음)
+전체 기능 사용 가능 — 할당, 정책 강제, 작업 디스패치, kill.  
+각 GPU 노드에 직접 SSH해 `nvidia-smi`로 실시간 GPU 상태를 수집합니다.
 
-**지원 환경**: Slurm·PBS·LSF 등 워크로드 스케줄러 없이 자체 운영하는 GPU 클러스터.
+Slurm이 이미 운영 중인 클러스터에서 opensmi **작업 디스패치**(tmux/direct 실행)를 함께 사용하는 것은 **권장하지 않습니다**:
+- **`CUDA_VISIBLE_DEVICES`**: Slurm은 GPU 인덱스를 0-based로 remapping하지만 opensmi는 물리 인덱스를 사용해 충돌합니다.
+- **프로세스 생명주기**: opensmi의 tmux 세션은 Slurm cgroup 외부에서 실행되어 Slurm의 자원 회계를 우회합니다.
+
+### 2. Slurm 관리 클러스터 (읽기 전용 모니터링)
+opensmi는 TUI에서 **읽기 전용 탭**으로 Slurm 클러스터를 모니터링할 수 있습니다.  
+노드별 GPU 할당 현황, 작업 소유자, 파티션 정보, GPU 인덱스를 `scontrol`을 통해 표시합니다.  
+`opensmi.json`의 `slurm_clusters`로 설정하며, compute 노드 접근은 필요하지 않습니다.
 
 **로컬 노드**: opensmi가 GPU 노드 위에서 직접 실행될 경우, SSH를 자동으로 우회해 루프백 연결 없이 동작합니다.
 
