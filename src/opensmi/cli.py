@@ -1925,6 +1925,16 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
 
     login_node = getattr(args, "login_node", None)
 
+    # If --names-only, just print cluster names from config (no SSH)
+    if getattr(args, "names_only", False):
+        import json as _json
+        state_dir = get_state_dir(args.state_dir)
+        cfg_path = resolve_config_path(state_dir=state_dir, cli_config=args.config)
+        cfg = load_config(cfg_path)
+        names = [sc.name for sc in (cfg.slurm_clusters or [])]
+        print(_json.dumps(names))
+        return 0
+
     # If --all, load from config
     if getattr(args, "show_all", False):
         state_dir = get_state_dir(args.state_dir)
@@ -2674,6 +2684,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp_slurm.add_argument(
         "--all", dest="show_all", action="store_true", default=False,
         help="Show all configured Slurm clusters from opensmi.json",
+    )
+    sp_slurm.add_argument(
+        "--names-only", dest="names_only", action="store_true", default=False,
+        help="Print Slurm cluster names from config as JSON array (no SSH)",
     )
     sp_slurm.set_defaults(func=_cmd_slurm)
 

@@ -376,6 +376,7 @@ async function runOpensmi(
 
 async function loadClusterTabsFromConfig(): Promise<void> {
   try {
+    // Load manual clusters
     const { code, stdout, stderr } = await runOpensmi(["clusters", "list", "--json"]);
     if (code !== 0) {
       setStatus(`Failed to load clusters: ${stderr.trim() || `exit ${code}`}`);
@@ -384,23 +385,31 @@ async function loadClusterTabsFromConfig(): Promise<void> {
       extraPollErrors = [];
       extraSelectedNodeIdx = [];
       activeClusterTabIdx = 0;
-      return;
-    }
-    const clusters = JSON.parse(stdout) as Array<{ cluster_name: string; node_count: number }>;
-    if (clusters.length > 1) {
-      extraClusterNames = clusters.slice(1).map((c) => String(c.cluster_name || "Cluster"));
-      extraSnapshots = extraClusterNames.map(() => null);
-      extraPollErrors = extraClusterNames.map(() => "");
-      extraSelectedNodeIdx = extraClusterNames.map(() => 0);
-      const totalTabs = extraClusterNames.length + 1;
-      if (activeClusterTabIdx >= totalTabs) activeClusterTabIdx = 0;
     } else {
-      extraClusterNames = [];
-      extraSnapshots = [];
-      extraPollErrors = [];
-      extraSelectedNodeIdx = [];
-      activeClusterTabIdx = 0;
+      const clusters = JSON.parse(stdout) as Array<{ cluster_name: string; node_count: number }>;
+      if (clusters.length > 1) {
+        extraClusterNames = clusters.slice(1).map((c) => String(c.cluster_name || "Cluster"));
+        extraSnapshots = extraClusterNames.map(() => null);
+        extraPollErrors = extraClusterNames.map(() => "");
+        extraSelectedNodeIdx = extraClusterNames.map(() => 0);
+        const totalTabs = extraClusterNames.length + 1;
+        if (activeClusterTabIdx >= totalTabs) activeClusterTabIdx = 0;
+      } else {
+        extraClusterNames = [];
+        extraSnapshots = [];
+        extraPollErrors = [];
+        extraSelectedNodeIdx = [];
+        activeClusterTabIdx = 0;
+      }
     }
+
+    // Load Slurm cluster names from config (no SSH — just for tab bar placeholder)
+    try {
+      const slurm = await runOpensmi(["slurm", "--names-only"]);
+      if (slurm.code === 0) {
+        slurmClusterConfigNames = JSON.parse(slurm.stdout) as string[];
+      }
+    } catch {}
   } catch (e: any) {
     setStatus(`Failed to load clusters: ${e?.message || String(e)}`);
     extraClusterNames = [];
@@ -4791,8 +4800,15 @@ async function submitJobToSlurm() {
 
 function getClusterTabNames(): string[] {
   const names: string[] = [snapshot?.cluster_name || "SSH Cluster"];
-  for (const ss of slurmSnapshots) {
-    names.push(ss.cluster_name || "Slurm");
+  if (slurmSnapshots.length > 0) {
+    for (const ss of slurmSnapshots) {
+      names.push(ss.cluster_name || "Slurm");
+    }
+  } else {
+    // Show placeholder tabs from config even before data loads
+    for (const n of slurmClusterConfigNames) {
+      names.push(n);
+    }
   }
   return names;
 }
@@ -5127,6 +5143,7 @@ interface SlurmSnapshot {
 }
 
 let slurmSnapshots: SlurmSnapshot[] = [];
+let slurmClusterConfigNames: string[] = []; // populated from config at startup (no SSH)
 let slurmLoading = false;
 let slurmError: string | null = null;
 let slurmSelectedIdx = 0;
