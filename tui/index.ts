@@ -3975,13 +3975,13 @@ function renderSlurmClusterTab(slurmIdx: number) {
   };
 
   const termHeight = process.stdout.rows || 24;
-  // header(1) + clusterHeader(1) + tableHdr(1) + footer(3) = 6 fixed lines
+  // tabBar(1) + slurmHeader(1) + tableHdr(1) + footer(3) = 6 fixed lines
   const visibleRows = Math.max(1, termHeight - 6);
 
-  // Clamp scroll offset
-  if (slurmScrollOff > Math.max(0, nodes.length - visibleRows)) {
-    slurmScrollOff = Math.max(0, nodes.length - visibleRows);
-  }
+  // Clamp scroll offset (non-destructive: only reduce, never over-clamp on small lists)
+  const maxScroll = Math.max(0, nodes.length - visibleRows);
+  if (slurmScrollOff > maxScroll) slurmScrollOff = maxScroll;
+  if (slurmScrollOff < 0) slurmScrollOff = 0;
 
   // Build all node rows first, then slice for scroll
   const allNodeRows: any[] = [];
@@ -6116,12 +6116,12 @@ async function main() {
         const sNodes = slurmSnapshots[clusterTabIdx - 1]?.nodes || [];
         if (key.name === "up" || (key.name === "k" && !key.shift)) {
           if (sNodes.length > 0) {
+            const visH = Math.max(1, (process.stdout.rows || 24) - 6);
             slurmSelectedIdx = slurmSelectedIdx <= 0 ? sNodes.length - 1 : slurmSelectedIdx - 1;
-            // Scroll up if needed
+            // Scroll up with cursor
             if (slurmSelectedIdx < slurmScrollOff) slurmScrollOff = slurmSelectedIdx;
-            // Wrap-around: jump to bottom
+            // Wrap-around to bottom: adjust scroll to show last items
             if (slurmSelectedIdx === sNodes.length - 1) {
-              const visH = Math.max(1, (process.stdout.rows || 24) - 6);
               slurmScrollOff = Math.max(0, sNodes.length - visH);
             }
             render();
@@ -6129,11 +6129,11 @@ async function main() {
           return;
         } else if (key.name === "down" || (key.name === "j" && !key.shift)) {
           if (sNodes.length > 0) {
-            slurmSelectedIdx = slurmSelectedIdx >= sNodes.length - 1 ? 0 : slurmSelectedIdx + 1;
-            // Scroll down if needed
             const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+            slurmSelectedIdx = slurmSelectedIdx >= sNodes.length - 1 ? 0 : slurmSelectedIdx + 1;
+            // Scroll down with cursor
             if (slurmSelectedIdx >= slurmScrollOff + visH) slurmScrollOff = slurmSelectedIdx - visH + 1;
-            // Wrap-around: jump to top
+            // Wrap-around to top: reset scroll
             if (slurmSelectedIdx === 0) slurmScrollOff = 0;
             render();
           }
