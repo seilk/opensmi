@@ -3901,6 +3901,9 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
     qosIdx: 0,
     qosLoading: !!snap?.login_node,
     qosFetchFailed: false,
+    existingJobIds: snap ? getMyJobIdsOnNode(node, snap.ssh_user || "") : [],
+    existingJobCancelStatus: "idle",
+    existingJobCancelMsg: "",
   };
   tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
   _renderHook?.();
@@ -4022,14 +4025,35 @@ function renderSrunPopup(popup: SlurmRunPopup): any {
       Text({ content: t`${bold(fg("#ffffff")("srun Job Submit"))} — ${bold(popup.nodeName)}` })
     ),
     line(Text({ content: "" })),
-    // Existing my-job warning (if any)
+    // Existing my-job section
     ...(() => {
-      const snap = slurmSnapshots[clusterTabIdx - 1];
-      const node = snap?.nodes.find(n => n.name === popup.nodeName);
-      const existingJobs = node ? getMyJobIdsOnNode(node, popup.sshUser) : [];
-      if (existingJobs.length > 0) {
+      if (popup.existingJobCancelStatus === "done") {
         return [
-          line(Text({ content: t`${fg(C.yellow)(`⚠ You have active job(s): ${existingJobs.join(", ")}`)}` })),
+          line(Text({ content: t`${fg(C.green)(`✓ Cancelled: ${popup.existingJobCancelMsg.replace("Cancelled: ", "")}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "error") {
+        return [
+          line(Text({ content: t`${fg(C.red)(`✗ ${popup.existingJobCancelMsg}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "cancelling") {
+        return [
+          line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling existing job(s)...")}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobIds.length > 0) {
+        return [
+          line(Box({ flexDirection: "row" },
+            Text({ content: t`${fg(C.yellow)(`⚠ Active job(s): ${popup.existingJobIds.join(", ")}  `)}` }),
+            Box({
+              paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+              onMouseDown: () => { cancelExistingJobsInPopup(); },
+            }, Text({ content: "X: Cancel", fg: "#ffffff" })),
+          )),
           line(Text({ content: "" })),
         ];
       }
@@ -4341,13 +4365,72 @@ async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot) {
       tuiLog("INFO", `cancelJobsOnNode: scancel ${jobId} on ${node.name} done`);
     }
     nodeCancelStatus = { node: node.name, status: "done", msg: `Cancelled: ${jobIds.join(", ")}` };
-    // Refresh cluster data after cancel
-    setTimeout(() => { loadSlurmData(); }, 1000);
+    _renderHook?.();
+    // Refresh cluster data after cancel — force render on completion
+    setTimeout(async () => {
+      await loadSlurmData();
+      _renderHook?.();
+    }, 1500);
   } catch (e: any) {
     nodeCancelStatus = { node: node.name, status: "error", msg: e?.message || String(e) };
     tuiLog("ERROR", `cancelJobsOnNode failed: ${nodeCancelStatus.msg}`);
   }
   _renderHook?.();
+}
+
+async function cancelExistingJobsInPopup() {
+  if (!slurmRunPopup) return;
+  const popup = slurmRunPopup;
+  if (!popup.existingJobIds.length || !popup.loginNode) return;
+
+  popup.existingJobCancelStatus = "cancelling";
+  popup.existingJobCancelMsg = "";
+  _renderHook?.();
+
+  const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
+  try {
+    for (const jobId of popup.existingJobIds) {
+      if (!/^\d+$/.test(String(jobId))) continue;
+      // Ownership check
+      const ownerProc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `squeue -h -j ${jobId} -o %u`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      const ownerExit = await ownerProc.exited;
+      const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
+      if (ownerExit !== 0 || (!jobOwner && popup.sshUser)) {
+        popup.existingJobCancelStatus = "error";
+        popup.existingJobCancelMsg = `Owner check failed for job ${jobId}; blocked for safety.`;
+        _renderHook?.();
+        return;
+      }
+      if (jobOwner && popup.sshUser && jobOwner !== popup.sshUser) {
+        popup.existingJobCancelStatus = "error";
+        popup.existingJobCancelMsg = `Job ${jobId} owned by "${jobOwner}"; cancel denied.`;
+        _renderHook?.();
+        return;
+      }
+      const proc = Bun.spawn(
+        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `scancel ${jobId}`],
+        { stdout: "pipe", stderr: "pipe" }
+      );
+      await proc.exited;
+      tuiLog("INFO", `cancelExistingJobs: scancel ${jobId} done`);
+    }
+    popup.existingJobCancelStatus = "done";
+    popup.existingJobCancelMsg = `Cancelled: ${popup.existingJobIds.join(", ")}`;
+    popup.existingJobIds = [];
+    _renderHook?.();
+    // Refresh cluster data
+    setTimeout(async () => {
+      await loadSlurmData();
+      _renderHook?.();
+    }, 1500);
+  } catch (e: any) {
+    popup.existingJobCancelStatus = "error";
+    popup.existingJobCancelMsg = e?.message || String(e);
+    _renderHook?.();
+  }
 }
 
 async function cancelSlurmJob() {
@@ -4800,7 +4883,7 @@ function renderSlurmClusterTab(slurmIdx: number) {
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
     Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[D]")} Cancel my job  ${fg(C.textDim)("[r]")} Refresh` }),
+    Text({ content: t`${fg(C.textDim)("[Tab]")} Switch  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
@@ -4936,6 +5019,10 @@ interface SlurmRunPopup {
   qosIdx: number;       // 0 = no QoS (use partition default)
   qosLoading: boolean;     // true while fetching QoS list
   qosFetchFailed: boolean; // true if fetch failed — Submit blocked, user must edit cmd
+  // existing jobs on this node (populated at open time)
+  existingJobIds: number[];
+  existingJobCancelStatus: "idle" | "cancelling" | "done" | "error";
+  existingJobCancelMsg: string;
 }
 let slurmRunPopup: SlurmRunPopup | null = null;
 let _slurmLastClickNode = "";
@@ -6978,6 +7065,9 @@ async function main() {
         } else if ((key.sequence === "x" || key.sequence === "X") && popup.jobSubmitStatus === "running" && popup.jobId) {
           cancelSlurmJob();
           render();
+        } else if ((key.sequence === "x" || key.sequence === "X") && popup.jobSubmitStatus === "idle" && popup.existingJobIds.length > 0) {
+          cancelExistingJobsInPopup();
+          render();
         } else if ((key.sequence === "r" || key.sequence === "R") && popup.jobSubmitStatus === "error" && popup.loginNode) {
           // Resubmit
           popup.jobSubmitStatus = "idle";
@@ -7066,30 +7156,6 @@ async function main() {
           });
           const node = sortedN[slurmSelectedIdx];
           if (node && snap) openSrunPopup(node, snap.cluster_name, snap);
-          render();
-          return;
-        } else if (key.sequence === "d" || key.sequence === "D") {
-          // Cancel my job(s) on selected node
-          const snap = slurmSnapshots[clusterTabIdx - 1];
-          const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
-            switch (slurmSortKey) {
-              case "name": return a.name.localeCompare(b.name);
-              case "partition": return (a.partition||"").localeCompare(b.partition||"");
-              case "free_asc": return a.gpu_free - b.gpu_free;
-              case "free_desc": return b.gpu_free - a.gpu_free;
-              default: return 0;
-            }
-          });
-          const node = sortedN[slurmSelectedIdx];
-          if (node && snap) {
-            const myJobs = getMyJobIdsOnNode(node, snap.ssh_user || "");
-            if (myJobs.length > 0) {
-              cancelJobsOnNode(node, snap);
-            } else {
-              nodeCancelStatus = { node: node.name, status: "error", msg: `No jobs by "${snap.ssh_user}" on ${node.name}` };
-              _renderHook?.();
-            }
-          }
           render();
           return;
         }
