@@ -199,6 +199,7 @@ let launchDistMode: "single" | "one-to-one" = "one-to-one";
 let launchCommands: string[] = []; // Empty initially, populated when GPUs added
 let launchGpuMode: "auto" | "selected" = "auto";
 let launchManualGpus: Array<{ node: string; gpu: number }> = [];
+let launchExcludedGpus: Array<{ node: string; gpu: number }> = [];
 let launchSelectionReasoning = "";
 let launchSourceBundle: string | null = null; // Track which bundle opened the runner
 let launchQueueMode: "immediate" | "queued" = "immediate"; // Queue mode for job submission
@@ -567,7 +568,14 @@ with open("${allocFile}", "r") as f:
 
 with open("${operatorFile}", "r") as f:
     current_user = json.loads(f.read())["operator"]
-gpus = select_top_gpus(snap, ${launchNumGpus}, history, alloc_data, current_user)
+excluded_nodes = set([g["node"] + ":" + str(g["gpu"]) for g in json.loads('${JSON.stringify(launchExcludedGpus)}')])
+    all_ranked_gpus = select_top_gpus(snap, 9999, history, alloc_data, current_user)
+    gpus = []
+    for n, g in all_ranked_gpus:
+        if n + ":" + str(g) not in excluded_nodes:
+            gpus.append((n, g))
+            if len(gpus) >= ${launchNumGpus}:
+                break
 print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
 `;
 
@@ -3889,8 +3897,19 @@ function renderGpuAssignmentPanel() {
 
             // Handle GPU click based on mode
             if (launchGpuMode === "auto") {
-              // In auto mode, clicking excludes GPU (not implemented yet - would need exclusion list)
-              setStatus("Auto mode: GPU exclusion not yet implemented. Use [g] for manual mode.");
+              const idx = launchExcludedGpus.findIndex(
+                g => g.node === selectedGpu.node && g.gpu === selectedGpu.gpu
+              );
+              if (idx === -1) {
+                launchExcludedGpus.push({ node: selectedGpu.node, gpu: selectedGpu.gpu });
+                setStatus(`Excluded ${key} from auto selection`);
+                // Use a non-blocking refresh so we don't stall the UI thread
+                setTimeout(() => {
+                  refreshLaunchGpuSelection().then(() => {
+                    if (requestRender) requestRender();
+                  });
+                }, 10);
+              }
             } else {
               // In selected mode, clicking removes GPU
               const idx = launchManualGpus.findIndex(
@@ -5349,7 +5368,8 @@ function renderSetupView() {
 }
 
 function renderRunnerPane() {
-  const height = runnerPaneFolded ? 3 : "40%"; // 40% of terminal height when unfolded
+  // Use a slightly larger percentage or Flex trick to accommodate more GPUs
+  const height = runnerPaneFolded ? 3 : (launchNumGpus > 3 ? "60%" : "40%");
 
   const foldIcon = runnerPaneFolded ? "▸" : "▾";
   const focusIndicator = runnerFocused
@@ -6789,6 +6809,8 @@ async function main() {
       prefixKeyPressed = false;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
       tabSwitcherOpen = true;
+      runnerFocused = false;
+      runnerInputTyping = false;
       tabSwitcherIdx = tabRegistry.getAllVisible().findIndex(t => t.id === tabRegistry.activeTabId);
       if (tabSwitcherIdx < 0) tabSwitcherIdx = 0;
       render();
