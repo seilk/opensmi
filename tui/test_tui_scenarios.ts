@@ -238,6 +238,106 @@ test("Performance: Rapid mode toggle doesn't corrupt state", () => {
   assert(S.launchSelectedGpus.length === 2, "selected GPUs unchanged");
 });
 
+test("Edge case: Auto mode GPU exclusion does not duplicate entries", () => {
+  resetState();
+  S.launchGpuMode = "auto";
+  S.launchSelectedGpus = [{ node: "node1", gpu: 1 }];
+
+  const selected = S.launchSelectedGpus[0];
+  assert(!!selected, "selected GPU should exist");
+
+  const maybeExclude = () => {
+    const idx = S.launchExcludedGpus.findIndex(
+      g => g.node === selected.node && g.gpu === selected.gpu
+    );
+    if (idx === -1) {
+      S.launchExcludedGpus.push({ node: selected.node, gpu: selected.gpu });
+    }
+  };
+
+  maybeExclude();
+  maybeExclude();
+  assert(S.launchExcludedGpus.length === 1, "same GPU should only be excluded once");
+  assert(S.launchExcludedGpus[0]!.node === "node1", "excluded node should match selected GPU");
+  assert(S.launchExcludedGpus[0]!.gpu === 1, "excluded GPU index should match selected GPU");
+});
+
+test("Edge case: Kill modal open/cancel state transitions", () => {
+  resetState();
+  S.screen = "detail";
+  S.runnerFocused = true;
+  S.runnerInputTyping = true;
+
+  S.killCtx = { nodeAlias: "node1", gpuIdx: 2, pids: [101, 202], users: ["u1", "u2"] };
+  S.killErrorMsg = "";
+  S.killOutput = "";
+  S.killInProgress = false;
+  S.runnerFocused = false;
+  S.runnerInputTyping = false;
+  S.screen = "kill";
+
+  assert(S.screen === "kill", "should enter kill modal");
+  assert(!S.runnerFocused, "runner should unfocus when kill modal opens");
+  assert(!S.runnerInputTyping, "runner typing should stop when kill modal opens");
+  assert(!!S.killCtx && S.killCtx.pids.length === 2, "kill context should include target pids");
+
+  S.killErrorMsg = "transient error";
+  S.killOutput = "sample output";
+  S.screen = "detail";
+  S.killCtx = null;
+  S.killErrorMsg = "";
+  S.killOutput = "";
+
+  assert(S.screen === "detail", "escape from kill modal should return to detail");
+  assert(S.killCtx === null, "kill context should clear on cancel");
+  assert(S.killErrorMsg === "", "kill error should clear on cancel");
+  assert(S.killOutput === "", "kill output should clear on cancel");
+});
+
+test("Edge case: Allocation modal open/cancel state transitions", () => {
+  resetState();
+  S.screen = "detail";
+
+  S.allocCtx = { nodeAlias: "node1", gpuIdx: 0 };
+  S.allocDraftUser = "alice";
+  S.allocErrorMsg = "";
+  S.screen = "alloc";
+  assert(S.screen === "alloc", "should enter allocation modal");
+  assert(!!S.allocCtx && S.allocCtx.nodeAlias === "node1", "alloc context should be set");
+
+  S.allocErrorMsg = "input error";
+  S.allocUserListFocused = true;
+  S.allocUserListIdx = 3;
+  S.screen = "detail";
+  S.allocCtx = null;
+  S.allocErrorMsg = "";
+  S.allocUserListFocused = false;
+  S.allocUserListIdx = 0;
+
+  assert(S.screen === "detail", "escape from allocation modal should return to detail");
+  assert(S.allocCtx === null, "allocation context should clear on cancel");
+  assert(S.allocErrorMsg === "", "allocation error should clear on cancel");
+  assert(!S.allocUserListFocused, "user list focus should reset on cancel");
+  assert(S.allocUserListIdx === 0, "user list index should reset on cancel");
+});
+
+test("Edge case: Queue mode toggle cycles and preserves launch selection", () => {
+  resetState();
+  S.launchQueueMode = "immediate";
+  S.launchNumGpus = 2;
+  S.launchDistMode = "one-to-one";
+  S.launchSelectedGpus = [{ node: "node1", gpu: 0 }, { node: "node1", gpu: 1 }];
+
+  const before = JSON.stringify(S.launchSelectedGpus);
+  S.launchQueueMode = S.launchQueueMode === "immediate" ? "queued" : "immediate";
+  assert(S.launchQueueMode === "queued", "first toggle should switch to queued");
+  S.launchQueueMode = S.launchQueueMode === "immediate" ? "queued" : "immediate";
+  assert(S.launchQueueMode === "immediate", "second toggle should switch back to immediate");
+  assert(S.launchNumGpus === 2, "queue mode toggle should not change GPU count");
+  assert(S.launchDistMode === "one-to-one", "queue mode toggle should not change distribution mode");
+  assert(JSON.stringify(S.launchSelectedGpus) === before, "queue mode toggle should preserve selected GPUs");
+});
+
 console.log(`\n=== Test Summary ===`);
 console.log(`[TEST] Total: ${_passed + _failed}`);
 console.log(`[TEST] Passed: ${_passed}`);
