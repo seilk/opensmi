@@ -86,7 +86,7 @@ export function setActiveDashboardSelectedNodeIdx(nextIdx: number): void {
 
 
 export function renderLoadingBadge() {
-  if (!bootLoading && snapshot) return null;
+  if (!S.bootLoading && S.snapshot) return null;
 
   const tick = Math.floor(Date.now() / 80);
 
@@ -129,8 +129,8 @@ export function renderLoadingBadge() {
 
 export function renderDashboard() {
   const tabs = buildDashboardTabs();
-  if (tabs.length > 0 && activeClusterTabIdx >= tabs.length) activeClusterTabIdx = 0;
-  const activeTab = tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
+  if (tabs.length > 0 && S.activeClusterTabIdx >= tabs.length) S.activeClusterTabIdx = 0;
+  const activeTab = tabs[S.activeClusterTabIdx] ?? tabs[0] ?? null;
 
 
   if (activeTab?.type === "slurm") {
@@ -177,7 +177,7 @@ export function renderDashboard() {
       content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
     }),
     Text({
-      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${S.lastPollTime || "-"}  ${S.isPolling ? fg(C.yellow)("⟳") : ""}`,
     })
   );
 
@@ -246,19 +246,19 @@ export function renderDashboard() {
 
             const now = Date.now();
             const clickKey = `NODE:${n.node_alias}`;
-            const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
-            lastNodeClickKey = clickKey;
-            lastNodeClickAt = now;
+            const isDouble = clickKey === S.lastNodeClickKey && now - S.lastNodeClickAt < 350;
+            S.lastNodeClickKey = clickKey;
+            S.lastNodeClickAt = now;
 
             setActiveDashboardSelectedNodeIdx(ni);
-            selectedGpuIdx = 0;
+            S.selectedGpuIdx = 0;
 
             if (isDouble) {
-              screen = "detail";
+              S.screen = "detail";
               void checkSudoForNode(n.node_alias);
             }
 
-            requestRender?.();
+            S.requestRender?.();
           },
         })
       );
@@ -278,7 +278,7 @@ export function renderDashboard() {
         continue;
       }
 
-      const isSelected = launchManualGpus.some(
+      const isSelected = S.launchManualGpus.some(
         (x) => x.node === n.node_alias && x.gpu === i
       );
       const dot = isSelected ? "● " : "";
@@ -294,7 +294,7 @@ export function renderDashboard() {
           Box(
             { width: w, height: 1, position: "relative" },
             Text({ content: display.padEnd(w), fg: isSelected ? C.yellow : C.textDim }),
-            runnerFocused ? Box({
+            S.runnerFocused ? Box({
               position: "absolute",
               top: 0,
               left: 0,
@@ -306,38 +306,38 @@ export function renderDashboard() {
                 e.stopPropagation?.();
 
                 const gpuKey = { node: n.node_alias, gpu: i };
-                const idx = launchManualGpus.findIndex(
+                const idx = S.launchManualGpus.findIndex(
                   (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
                 );
 
                 if (idx >= 0) {
                   // Unselect GPU
-                  launchManualGpus.splice(idx, 1);
+                  S.launchManualGpus.splice(idx, 1);
                   // Sync count and commands
-                  launchNumGpus = launchManualGpus.length;
-                  if (launchDistMode === "one-to-one") {
-                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  S.launchNumGpus = S.launchManualGpus.length;
+                  if (S.launchDistMode === "one-to-one") {
+                    S.launchCommands = S.launchCommands.slice(0, S.launchNumGpus);
                   }
                 } else {
                   // Select GPU
-                  launchManualGpus.push(gpuKey);
+                  S.launchManualGpus.push(gpuKey);
                   // Sync count: increase if selection exceeds current count
-                  if (launchManualGpus.length > launchNumGpus) {
-                    launchNumGpus = launchManualGpus.length;
-                    if (launchDistMode === "one-to-one") {
-                      while (launchCommands.length < launchNumGpus) {
-                        const cmdIdx = launchCommands.length;
-                        const gpu = launchManualGpus[cmdIdx];
-                        launchCommands.push(getGpuCommandPlaceholder(gpu));
+                  if (S.launchManualGpus.length > S.launchNumGpus) {
+                    S.launchNumGpus = S.launchManualGpus.length;
+                    if (S.launchDistMode === "one-to-one") {
+                      while (S.launchCommands.length < S.launchNumGpus) {
+                        const cmdIdx = S.launchCommands.length;
+                        const gpu = S.launchManualGpus[cmdIdx];
+                        S.launchCommands.push(getGpuCommandPlaceholder(gpu));
                       }
                     }
                   }
                 }
 
-                launchGpuMode = "selected";
-                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                S.launchGpuMode = "selected";
+                S.launchSelectedGpus = S.launchManualGpus.slice(0, S.launchNumGpus);
 
-                requestRender?.();
+                S.requestRender?.();
               },
             }) : undefined
           )
@@ -357,7 +357,7 @@ export function renderDashboard() {
               content: display.padEnd(w),
               fg: isSelected ? C.yellow : (hasViolation ? C.red : C.green),
             }),
-            runnerFocused ? Box({
+            S.runnerFocused ? Box({
               position: "absolute",
               top: 0,
               left: 0,
@@ -369,38 +369,38 @@ export function renderDashboard() {
                 e.stopPropagation?.();
 
                 const gpuKey = { node: n.node_alias, gpu: i };
-                const idx = launchManualGpus.findIndex(
+                const idx = S.launchManualGpus.findIndex(
                   (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
                 );
 
                 if (idx >= 0) {
                   // Unselect GPU
-                  launchManualGpus.splice(idx, 1);
+                  S.launchManualGpus.splice(idx, 1);
                   // Sync count and commands
-                  launchNumGpus = launchManualGpus.length;
-                  if (launchDistMode === "one-to-one") {
-                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  S.launchNumGpus = S.launchManualGpus.length;
+                  if (S.launchDistMode === "one-to-one") {
+                    S.launchCommands = S.launchCommands.slice(0, S.launchNumGpus);
                   }
                 } else {
                   // Select GPU
-                  launchManualGpus.push(gpuKey);
+                  S.launchManualGpus.push(gpuKey);
                   // Sync count: increase if selection exceeds current count
-                  if (launchManualGpus.length > launchNumGpus) {
-                    launchNumGpus = launchManualGpus.length;
-                    if (launchDistMode === "one-to-one") {
-                      while (launchCommands.length < launchNumGpus) {
-                        const cmdIdx = launchCommands.length;
-                        const gpu = launchManualGpus[cmdIdx];
-                        launchCommands.push(getGpuCommandPlaceholder(gpu));
+                  if (S.launchManualGpus.length > S.launchNumGpus) {
+                    S.launchNumGpus = S.launchManualGpus.length;
+                    if (S.launchDistMode === "one-to-one") {
+                      while (S.launchCommands.length < S.launchNumGpus) {
+                        const cmdIdx = S.launchCommands.length;
+                        const gpu = S.launchManualGpus[cmdIdx];
+                        S.launchCommands.push(getGpuCommandPlaceholder(gpu));
                       }
                     }
                   }
                 }
 
-                launchGpuMode = "selected";
-                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                S.launchGpuMode = "selected";
+                S.launchSelectedGpus = S.launchManualGpus.slice(0, S.launchNumGpus);
 
-                requestRender?.();
+                S.requestRender?.();
               },
             }) : undefined
           )
@@ -430,7 +430,7 @@ export function renderDashboard() {
         })
       ),
       // Click anywhere on the row to jump to detail (only when not runner focused)
-      !runnerFocused ? Box({
+      !S.runnerFocused ? Box({
         position: "absolute",
         top: 0,
         left: 0,
@@ -443,19 +443,19 @@ export function renderDashboard() {
 
           const now = Date.now();
           const clickKey = `NODE:${n.node_alias}`;
-          const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
-          lastNodeClickKey = clickKey;
-          lastNodeClickAt = now;
+          const isDouble = clickKey === S.lastNodeClickKey && now - S.lastNodeClickAt < 350;
+          S.lastNodeClickKey = clickKey;
+          S.lastNodeClickAt = now;
 
           setActiveDashboardSelectedNodeIdx(ni);
-          selectedGpuIdx = gpuIndicesForNode(n)[0] ?? 0;
+          S.selectedGpuIdx = gpuIndicesForNode(n)[0] ?? 0;
 
           if (isDouble) {
-            screen = "detail";
+            S.screen = "detail";
             void checkSudoForNode(n.node_alias);
           }
 
-          requestRender?.();
+          S.requestRender?.();
         },
       }) : undefined
     );
@@ -489,16 +489,16 @@ export function renderDashboard() {
       content: t`${fg(C.textDim)("Users:")} ${userSummary}`,
     }),
     Text({
-      content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
+      content: S.statusMsg ? t`${fg(C.yellow)(S.statusMsg)}` : " ",
     }),
     Box(
       { flexDirection: "row", paddingTop: 1 },
       Text({
-        content: runnerInputTyping
+        content: S.runnerInputTyping
           ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
-          : (runnerFocused
+          : (S.runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
-              : (runnerPaneFolded
+              : (S.runnerPaneFolded
                   ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
                   : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
       })
@@ -520,7 +520,7 @@ export function renderDashboard() {
 }
 
 export function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSnapshot) {
-  slurmRunPopup = {
+  S.slurmRunPopup = {
     clusterName,
     nodeName: node.name,
     partition: node.partition || "",
@@ -549,7 +549,7 @@ export function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: S
     existingJobCancelMsg: "",
   };
   tuiLog("INFO", `srun popup opened: node=${node.name} partition=${node.partition} free=${node.gpu_free}`);
-  _renderHook?.();
+  S._renderHook?.();
   // Async fetch QoS list for this partition
   if (snap?.login_node) {
     fetchQosForPartition(snap.login_node, snap.ssh_user || "", node.partition || "");
@@ -557,8 +557,8 @@ export function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: S
 }
 
 export function closeSrunPopup() {
-  slurmRunPopup = null;
-  _renderHook?.();
+  S.slurmRunPopup = null;
+  S._renderHook?.();
 }
 
 export function srunTokens(popup: SlurmRunPopup): string[] {
@@ -597,7 +597,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export function getLatestFreeGpus(nodeName: string, clusterIdx: number): number | null {
-  const snap = slurmSnapshots[clusterIdx];
+  const snap = S.slurmSnapshots[clusterIdx];
   if (!snap) return null;
   const node = snap.nodes.find(n => n.name === nodeName);
   return node ? node.gpu_free : null;
@@ -612,7 +612,7 @@ export function activeSlurmTabIdx(): number | null {
 export function slurmTabIdxForPopup(popup: SlurmRunPopup): number | null {
   const activeIdx = activeSlurmTabIdx();
   if (activeIdx !== null) return activeIdx;
-  const byName = slurmSnapshots.findIndex((s) => s.cluster_name === popup.clusterName);
+  const byName = S.slurmSnapshots.findIndex((s) => s.cluster_name === popup.clusterName);
   return byName >= 0 ? byName : null;
 }
 
@@ -818,15 +818,15 @@ export function renderSrunPopup(popup: SlurmRunPopup): any {
     Box({
       paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
       onMouseDown: () => {
-        if (popup.editMode) { popup.editMode = false; _renderHook?.(); }
-        else if (busy) { popup.jobAbortRequested = true; _renderHook?.(); }
+        if (popup.editMode) { popup.editMode = false; S._renderHook?.(); }
+        else if (busy) { popup.jobAbortRequested = true; S._renderHook?.(); }
         else closeSrunPopup();
       },
     }, Text({ content: popup.editMode ? "Esc: Done" : busy ? "Esc: Abort" : "Esc: Close", fg: C.textDim })),
   )));
   rows.push(line(Text({ content: "" })));
 
-  // Center popup on screen
+  // Center popup on S.screen
   const termW = process.stdout.columns || 80;
   const termH = process.stdout.rows || 24;
   const left = Math.max(0, Math.floor((termW - w) / 2));
@@ -839,8 +839,8 @@ export function renderSrunPopup(popup: SlurmRunPopup): any {
 }
 
 export async function submitSrunPopup() {
-  if (!slurmRunPopup) return;
-  const popup = slurmRunPopup;
+  if (!S.slurmRunPopup) return;
+  const popup = S.slurmRunPopup;
 
   // If user edited the command, skip preflight and use override directly
   const cmd = popup.cmdOverride !== null ? popup.cmdOverride : srunCommand(popup);
@@ -852,19 +852,19 @@ export async function submitSrunPopup() {
     if (latestFree === null) {
       popup.copyStatus = "stale";
       popup.errorMsg = "Node no longer found in cluster data.";
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
     if (popup.gpuCount > latestFree) {
       popup.copyStatus = "stale";
       popup.errorMsg = `Capacity changed: was ${popup.freeGpusAtOpen}, now ${latestFree}. Adjust GPUs and retry.`;
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
     if (latestFree === 0) {
       popup.copyStatus = "stale";
       popup.errorMsg = "No free GPUs available on this node.";
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
   }
@@ -878,7 +878,7 @@ export async function submitSrunPopup() {
     popup.copyStatus = "fail";
     popup.fullCmdForFallback = cmd;
   }
-  _renderHook?.();
+  S._renderHook?.();
 }
 
 export function slurmNameSafe(s: string): boolean {
@@ -886,8 +886,8 @@ export function slurmNameSafe(s: string): boolean {
 }
 
 export async function fetchQosForPartition(loginNode: string, sshUser: string, partition: string) {
-  if (!slurmRunPopup) return;
-  const popup = slurmRunPopup;
+  if (!S.slurmRunPopup) return;
+  const popup = S.slurmRunPopup;
   try {
     const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
     const proc = Bun.spawn(
@@ -909,7 +909,7 @@ export async function fetchQosForPartition(loginNode: string, sshUser: string, p
   } finally {
     popup.qosLoading = false;
   }
-  _renderHook?.();
+  S._renderHook?.();
 }
 
 export function getMyJobIdsOnNode(node: SlurmNodeInfo, sshUser: string): number[] {
@@ -936,13 +936,13 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
   }
 
   if (!snap.login_node) {
-    nodeCancelStatus = { node: node.name, status: "error", msg: "No login_node configured." };
-    _renderHook?.();
+    S.nodeCancelStatus = { node: node.name, status: "error", msg: "No login_node configured." };
+    S._renderHook?.();
     return;
   }
 
-  nodeCancelStatus = { node: node.name, status: "cancelling", msg: "" };
-  _renderHook?.();
+  S.nodeCancelStatus = { node: node.name, status: "cancelling", msg: "" };
+  S._renderHook?.();
 
   const sshTarget = snap.ssh_user ? `${snap.ssh_user}@${snap.login_node}` : snap.login_node;
 
@@ -957,13 +957,13 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
       const ownerExit = await ownerProc.exited;
       const jobOwner = (await new Response(ownerProc.stdout).text()).trim();
       if (ownerExit !== 0 || (!jobOwner && snap.ssh_user)) {
-        nodeCancelStatus = { node: node.name, status: "error", msg: `Owner check failed for job ${jobId}; blocked for safety.` };
-        _renderHook?.();
+        S.nodeCancelStatus = { node: node.name, status: "error", msg: `Owner check failed for job ${jobId}; blocked for safety.` };
+        S._renderHook?.();
         return;
       }
       if (jobOwner && snap.ssh_user && jobOwner !== snap.ssh_user) {
-        nodeCancelStatus = { node: node.name, status: "error", msg: `Job ${jobId} owned by "${jobOwner}"; cancel denied.` };
-        _renderHook?.();
+        S.nodeCancelStatus = { node: node.name, status: "error", msg: `Job ${jobId} owned by "${jobOwner}"; cancel denied.` };
+        S._renderHook?.();
         return;
       }
       const proc = Bun.spawn(
@@ -973,28 +973,28 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
       await proc.exited;
       tuiLog("INFO", `cancelJobsOnNode: scancel ${jobId} on ${node.name} done`);
     }
-    nodeCancelStatus = { node: node.name, status: "done", msg: `Cancelled: ${jobIds.join(", ")}` };
-    _renderHook?.();
+    S.nodeCancelStatus = { node: node.name, status: "done", msg: `Cancelled: ${jobIds.join(", ")}` };
+    S._renderHook?.();
     // Refresh cluster data after cancel - force render on completion
     setTimeout(async () => {
       await loadSlurmData();
-      _renderHook?.();
+      S._renderHook?.();
     }, 1500);
   } catch (e: any) {
-    nodeCancelStatus = { node: node.name, status: "error", msg: e?.message || String(e) };
-    tuiLog("ERROR", `cancelJobsOnNode failed: ${nodeCancelStatus.msg}`);
+    S.nodeCancelStatus = { node: node.name, status: "error", msg: e?.message || String(e) };
+    tuiLog("ERROR", `cancelJobsOnNode failed: ${S.nodeCancelStatus.msg}`);
   }
-  _renderHook?.();
+  S._renderHook?.();
 }
 
 export async function cancelExistingJobsInPopup() {
-  if (!slurmRunPopup) return;
-  const popup = slurmRunPopup;
+  if (!S.slurmRunPopup) return;
+  const popup = S.slurmRunPopup;
   if (!popup.existingJobIds.length || !popup.loginNode) return;
 
   popup.existingJobCancelStatus = "cancelling";
   popup.existingJobCancelMsg = "";
-  _renderHook?.();
+  S._renderHook?.();
 
   const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
   try {
@@ -1010,13 +1010,13 @@ export async function cancelExistingJobsInPopup() {
       if (ownerExit !== 0 || (!jobOwner && popup.sshUser)) {
         popup.existingJobCancelStatus = "error";
         popup.existingJobCancelMsg = `Owner check failed for job ${jobId}; blocked for safety.`;
-        _renderHook?.();
+        S._renderHook?.();
         return;
       }
       if (jobOwner && popup.sshUser && jobOwner !== popup.sshUser) {
         popup.existingJobCancelStatus = "error";
         popup.existingJobCancelMsg = `Job ${jobId} owned by "${jobOwner}"; cancel denied.`;
-        _renderHook?.();
+        S._renderHook?.();
         return;
       }
       const proc = Bun.spawn(
@@ -1029,32 +1029,32 @@ export async function cancelExistingJobsInPopup() {
     popup.existingJobCancelStatus = "done";
     popup.existingJobCancelMsg = `Cancelled: ${popup.existingJobIds.join(", ")}`;
     popup.existingJobIds = [];
-    _renderHook?.();
+    S._renderHook?.();
     // Refresh cluster data
     setTimeout(async () => {
       await loadSlurmData();
-      _renderHook?.();
+      S._renderHook?.();
     }, 1500);
   } catch (e: any) {
     popup.existingJobCancelStatus = "error";
     popup.existingJobCancelMsg = e?.message || String(e);
-    _renderHook?.();
+    S._renderHook?.();
   }
 }
 
 export async function cancelSlurmJob() {
-  if (!slurmRunPopup) return;
-  const popup = slurmRunPopup;
+  if (!S.slurmRunPopup) return;
+  const popup = S.slurmRunPopup;
   if (!popup.jobId) return;
   // jobId must be purely numeric
   if (!/^\d+$/.test(popup.jobId)) {
     tuiLog("WARNING", `cancelSlurmJob: suspicious jobId "${popup.jobId}", aborting`);
     popup.jobSubmitStatus = "idle";
-    _renderHook?.();
+    S._renderHook?.();
     return;
   }
   popup.jobSubmitStatus = "cancelling";
-  _renderHook?.();
+  S._renderHook?.();
   try {
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
     // Ownership check: verify job belongs to current user before cancelling
@@ -1071,14 +1071,14 @@ export async function cancelSlurmJob() {
       tuiLog("WARNING", `cancelSlurmJob: owner lookup failed (exit=${ownerExit} jobOwner="${jobOwner}") - blocking scancel`);
       popup.jobSubmitStatus = "error";
       popup.jobErrorMsg = `Owner check unavailable (squeue exit ${ownerExit}); cancel blocked for safety. Run: scancel ${popup.jobId}`;
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
     if (jobOwner && expectedUser && jobOwner !== expectedUser) {
       tuiLog("WARNING", `cancelSlurmJob: ownership mismatch - job ${popup.jobId} owner="${jobOwner}" expected="${expectedUser}", refusing scancel`);
       popup.jobSubmitStatus = "error";
       popup.jobErrorMsg = `Job ${popup.jobId} owned by "${jobOwner}"; cancel denied.`;
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
     const proc = Bun.spawn(
@@ -1095,17 +1095,17 @@ export async function cancelSlurmJob() {
   popup.jobId = "";
   popup.gpuIdxList = "";
   popup.jobAbortRequested = false;
-  _renderHook?.();
+  S._renderHook?.();
 }
 
 export async function submitJobToSlurm() {
-  if (!slurmRunPopup) return;
-  const popup = slurmRunPopup;
+  if (!S.slurmRunPopup) return;
+  const popup = S.slurmRunPopup;
 
   if (!popup.loginNode) {
     popup.jobSubmitStatus = "error";
     popup.jobErrorMsg = "No login_node configured for this cluster.";
-    _renderHook?.();
+    S._renderHook?.();
     return;
   }
 
@@ -1122,7 +1122,7 @@ export async function submitJobToSlurm() {
       tuiLog("WARNING", `injection guard blocked: field=${fieldName} value="${value}"`);
       popup.jobSubmitStatus = "error";
       popup.jobErrorMsg = msg;
-      _renderHook?.();
+      S._renderHook?.();
       return;
     }
   }
@@ -1131,7 +1131,7 @@ export async function submitJobToSlurm() {
   if (popup.qosLoading) {
     popup.jobSubmitStatus = "error";
     popup.jobErrorMsg = "QoS list still loading - please wait a moment.";
-    _renderHook?.();
+    S._renderHook?.();
     return;
   }
 
@@ -1140,7 +1140,7 @@ export async function submitJobToSlurm() {
   popup.gpuIdxList = "";
   popup.jobErrorMsg = "";
   popup.jobAbortRequested = false;
-  _renderHook?.();
+  S._renderHook?.();
 
   tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQosName || "(default)"} login=${popup.loginNode}`);
 
@@ -1172,7 +1172,7 @@ export async function submitJobToSlurm() {
       // Abort was requested before we even got JOBID - nothing to scancel
       if (popup.jobAbortRequested) {
         popup.jobSubmitStatus = "idle";
-        _renderHook?.();
+        S._renderHook?.();
         return;
       }
       throw new Error(`Could not parse JOBID from sbatch output: "${sbatchOut.trim()}"`);
@@ -1185,7 +1185,7 @@ export async function submitJobToSlurm() {
       return;
     }
     popup.jobSubmitStatus = "polling";
-    _renderHook?.();
+    S._renderHook?.();
     tuiLog("INFO", `job submitted: JOBID=${popup.jobId}`);
 
     // 2. Poll squeue until RUNNING - 200ms tick × 300 = 60s max; abort responsive
@@ -1196,7 +1196,7 @@ export async function submitJobToSlurm() {
     let totalTicks = 300;
     while (tickCount < totalTicks) {
       await new Promise(r => setTimeout(r, TICK_MS));
-      if (!slurmRunPopup) return; // popup closed
+      if (!S.slurmRunPopup) return; // popup closed
       if (popup.jobAbortRequested) {
         tuiLog("INFO", `abort requested for job ${popup.jobId}, cancelling`);
         await cancelSlurmJob();
@@ -1239,19 +1239,19 @@ export async function submitJobToSlurm() {
       tuiLog("WARNING", `GresUsed IDX not found in scontrol output for job ${popup.jobId}`);
     }
     popup.jobSubmitStatus = "running";
-    _renderHook?.();
+    S._renderHook?.();
     tuiLog("INFO", `job running: JOBID=${popup.jobId} GPU_IDX=${popup.gpuIdxList}`);
 
   } catch (e: any) {
     popup.jobSubmitStatus = "error";
     popup.jobErrorMsg = e?.message || String(e);
     tuiLog("ERROR", `job submit failed: ${popup.jobErrorMsg}`);
-    _renderHook?.();
+    S._renderHook?.();
   }
 }
 
 export function renderSlurmClusterTab(slurmIdx: number) {
-  const ssnap = slurmSnapshots[slurmIdx];
+  const ssnap = S.slurmSnapshots[slurmIdx];
   if (!ssnap) {
     return Box(
       { flexDirection: "column", paddingLeft: 1, backgroundColor: C.bg },
@@ -1273,12 +1273,12 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const slurmHeader = Box(
     { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
     Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name))} ${fg(C.textDim)("· slurm")}` }),
-    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
+    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${S.slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
   );
 
   // Sort nodes
   const sortedNodes = [...nodes].sort((a, b) => {
-    switch (slurmSortKey) {
+    switch (S.slurmSortKey) {
       case "name":      return a.name.localeCompare(b.name);
       case "partition": return (a.partition || "").localeCompare(b.partition || "");
       case "free_asc":  return a.gpu_free - b.gpu_free;
@@ -1293,7 +1293,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
   const partW = Math.min(22, Math.max(12, maxPartLen + 1));
   const freeW = 6;
-  // Clamp max GPU columns to fit screen - prefer showing user names legibly
+  // Clamp max GPU columns to fit S.screen - prefer showing user names legibly
   const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
   const gpuW = maxDisplayGpus > 0
     ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
@@ -1301,8 +1301,8 @@ export function renderSlurmClusterTab(slurmIdx: number) {
 
   // Sort indicator helper
   const sortArrow = (col: SlurmSortKey, altCol?: SlurmSortKey) => {
-    if (slurmSortKey === col || slurmSortKey === altCol) return fg(C.blue)(" ▲");
-    if (col === "free_asc" && slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
+    if (S.slurmSortKey === col || S.slurmSortKey === altCol) return fg(C.blue)(" ▲");
+    if (col === "free_asc" && S.slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
     return fg(C.textDim)(" ·");
   };
 
@@ -1317,11 +1317,11 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const tableHdr = Box(
     { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
     Box(
-      { width: nodeW, onMouseDown: () => { slurmSortKey = slurmSortKey === "name" ? "none" : "name"; slurmScrollOff = 0; _renderHook?.(); } },
+      { width: nodeW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "name" ? "none" : "name"; S.slurmScrollOff = 0; S._renderHook?.(); } },
       Text({ content: t`${"Node".padEnd(nodeW - 2)}${sortArrow("name")}`, fg: C.textDim }),
     ),
     Box(
-      { width: partW, onMouseDown: () => { slurmSortKey = slurmSortKey === "partition" ? "none" : "partition"; slurmScrollOff = 0; _renderHook?.(); } },
+      { width: partW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "partition" ? "none" : "partition"; S.slurmScrollOff = 0; S._renderHook?.(); } },
       Text({ content: t`${"Partition".padEnd(partW - 2)}${sortArrow("partition")}`, fg: C.textDim }),
     ),
     ...gpuHeaders,
@@ -1330,12 +1330,12 @@ export function renderSlurmClusterTab(slurmIdx: number) {
       {
         width: freeW,
         onMouseDown: () => {
-          slurmSortKey = slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
-          slurmScrollOff = 0;
-          _renderHook?.();
+          S.slurmSortKey = S.slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
+          S.slurmScrollOff = 0;
+          S._renderHook?.();
         },
       },
-      Text({ content: t`${"Free".padEnd(freeW - 2)}${slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
+      Text({ content: t`${"Free".padEnd(freeW - 2)}${S.slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : S.slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
     ),
   );
 
@@ -1349,14 +1349,14 @@ export function renderSlurmClusterTab(slurmIdx: number) {
 
   // Clamp scroll offset (non-destructive: only reduce, never over-clamp on small lists)
   const maxScroll = Math.max(0, sortedNodes.length - visibleRows);
-  if (slurmScrollOff > maxScroll) slurmScrollOff = maxScroll;
-  if (slurmScrollOff < 0) slurmScrollOff = 0;
+  if (S.slurmScrollOff > maxScroll) S.slurmScrollOff = maxScroll;
+  if (S.slurmScrollOff < 0) S.slurmScrollOff = 0;
 
   // Build all node rows first, then slice for scroll
   const allNodeRows: any[] = [];
   for (let ni = 0; ni < sortedNodes.length; ni++) {
     const snode = sortedNodes[ni]!;
-    const isSelected = ni === slurmSelectedIdx;
+    const isSelected = ni === S.slurmSelectedIdx;
     const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
 
     const gpuCells = Array.from({ length: maxDisplayGpus }, (_, gi) => {
@@ -1384,16 +1384,16 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     const capturedCluster = ssnap;
     const handleNodeClick = () => {
       const now = Date.now();
-      if (_slurmLastClickNode === capturedNode.name && now - _slurmLastClickTime < 400) {
+      if (S._slurmLastClickNode === capturedNode.name && now - S._slurmLastClickTime < 400) {
         // Double-click → open popup
         openSrunPopup(capturedNode, capturedCluster.cluster_name, capturedCluster);
       } else {
         // Single click → select
-        slurmSelectedIdx = ni;
-        _renderHook?.();
+        S.slurmSelectedIdx = ni;
+        S._renderHook?.();
       }
-      _slurmLastClickNode = capturedNode.name;
-      _slurmLastClickTime = now;
+      S._slurmLastClickNode = capturedNode.name;
+      S._slurmLastClickTime = now;
     };
 
     const myJobIds = getMyJobIdsOnNode(snode, ssnap.ssh_user || "");
@@ -1415,11 +1415,11 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   }
 
   // Apply scroll window
-  const nodeRows = allNodeRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
+  const nodeRows = allNodeRows.slice(S.slurmScrollOff, S.slurmScrollOff + visibleRows);
 
   // Scroll indicator
   const scrollInfo = sortedNodes.length > visibleRows
-    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, sortedNodes.length)}/${sortedNodes.length}]`
+    ? ` [${S.slurmScrollOff + 1}-${Math.min(S.slurmScrollOff + visibleRows, sortedNodes.length)}/${sortedNodes.length}]`
     : "";
 
   // User summary
@@ -1436,13 +1436,13 @@ export function renderSlurmClusterTab(slurmIdx: number) {
 
   // Node cancel status line
   let cancelStatusContent: any = " ";
-  if (nodeCancelStatus && nodeCancelStatus.node) {
-    if (nodeCancelStatus.status === "cancelling") {
-      cancelStatusContent = t`${fg(C.yellow)(`⟳ Cancelling job on ${nodeCancelStatus.node}...`)}`;
-    } else if (nodeCancelStatus.status === "done") {
-      cancelStatusContent = t`${fg(C.green)(`✓ ${nodeCancelStatus.msg}`)}`;
-    } else if (nodeCancelStatus.status === "error") {
-      cancelStatusContent = t`${fg(C.red)(`✗ ${nodeCancelStatus.msg}`)}`;
+  if (S.nodeCancelStatus && S.nodeCancelStatus.node) {
+    if (S.nodeCancelStatus.status === "cancelling") {
+      cancelStatusContent = t`${fg(C.yellow)(`⟳ Cancelling job on ${S.nodeCancelStatus.node}...`)}`;
+    } else if (S.nodeCancelStatus.status === "done") {
+      cancelStatusContent = t`${fg(C.green)(`✓ ${S.nodeCancelStatus.msg}`)}`;
+    } else if (S.nodeCancelStatus.status === "error") {
+      cancelStatusContent = t`${fg(C.red)(`✗ ${S.nodeCancelStatus.msg}`)}`;
     }
   }
 
@@ -1464,7 +1464,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     if (nodes.length <= visibleRows) return null;
     const trackH = visibleRows;
     const thumbH = Math.max(1, Math.round((visibleRows / nodes.length) * trackH));
-    const thumbTop = Math.round((slurmScrollOff / (nodes.length - visibleRows)) * (trackH - thumbH));
+    const thumbTop = Math.round((S.slurmScrollOff / (nodes.length - visibleRows)) * (trackH - thumbH));
     const chars = Array.from({ length: trackH }, (_, i) => {
       const inThumb = i >= thumbTop && i < thumbTop + thumbH;
       return Text({ content: inThumb ? "█" : "░", fg: inThumb ? C.blue : C.textDim });
@@ -1487,13 +1487,13 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     const visH = Math.max(1, (process.stdout.rows || 24) - 6);
     const maxSc = Math.max(0, nodes.length - visH);
     if (e.scroll.direction === "down") {
-      slurmScrollOff = Math.min(maxSc, slurmScrollOff + 3);
-      slurmSelectedIdx = Math.min(nodes.length - 1, slurmScrollOff);
+      S.slurmScrollOff = Math.min(maxSc, S.slurmScrollOff + 3);
+      S.slurmSelectedIdx = Math.min(nodes.length - 1, S.slurmScrollOff);
     } else if (e.scroll.direction === "up") {
-      slurmScrollOff = Math.max(0, slurmScrollOff - 3);
-      slurmSelectedIdx = Math.max(0, slurmScrollOff);
+      S.slurmScrollOff = Math.max(0, S.slurmScrollOff - 3);
+      S.slurmSelectedIdx = Math.max(0, S.slurmScrollOff);
     }
-    _renderHook?.();
+    S._renderHook?.();
   };
 
   return Box(
@@ -1512,16 +1512,16 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     ),
     ...(scrollbar ? [scrollbar] : []),
     // srun popup overlay (no runner pane in Slurm tab)
-    ...(slurmRunPopup ? [renderSrunPopup(slurmRunPopup)] : []),
+    ...(S.slurmRunPopup ? [renderSrunPopup(S.slurmRunPopup)] : []),
   );
 }
 
 export async function loadSlurmData(): Promise<void> {
-  if (slurmLoading) return;
-  slurmLoading = true;
+  if (S.slurmLoading) return;
+  S.slurmLoading = true;
   slurmError = null;
   tuiLog("DEBUG", `loadSlurmData: starting, OPENSMI=${JSON.stringify(OPENSMI)}, CWD=${OPENSMI_CWD}`);
-  _renderHook?.();
+  S._renderHook?.();
 
   try {
     // Use --all to load all configured Slurm clusters
@@ -1541,14 +1541,14 @@ export async function loadSlurmData(): Promise<void> {
 
     const parsed = JSON.parse(stdout);
     // --all returns an array; single returns an object
-    slurmSnapshots = Array.isArray(parsed) ? parsed : [parsed];
-    tuiLog("INFO", `slurm: loaded ${slurmSnapshots.length} cluster(s), total ${slurmSnapshots.reduce((s, c) => s + c.nodes.length, 0)} nodes`);
+    S.slurmSnapshots = Array.isArray(parsed) ? parsed : [parsed];
+    tuiLog("INFO", `slurm: loaded ${S.slurmSnapshots.length} cluster(s), total ${S.slurmSnapshots.reduce((s, c) => s + c.nodes.length, 0)} nodes`);
   } catch (e: any) {
     slurmError = e?.message || String(e);
-    slurmSnapshots = [];
+    S.slurmSnapshots = [];
     tuiLog("ERROR", `slurm load failed: ${slurmError}`);
   } finally {
-    slurmLoading = false;
-    _renderHook?.();
+    S.slurmLoading = false;
+    S._renderHook?.();
   }
 }
