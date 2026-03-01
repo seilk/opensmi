@@ -5513,19 +5513,21 @@ function renderRunnerPane() {
     );
   }
 
-  const modeInfo = Text({
-    content: `Exec: ${launchMode}  Dist: ${launchDistMode}  Queue: ${launchQueueMode}  Count: ${launchNumGpus}`,
-    fg: C.textDim
-  });
-
   const gpuInfo = launchSelectedGpus.length > 0
     ? launchSelectedGpus.map(g => `${g.node}:${g.gpu}`).join(", ")
-    : "no GPUs";
+    : "none";
 
-  const gpuText = Text({
-    content: `GPUs: ${gpuInfo}`,
-    fg: runnerInputTyping ? "#9b59d6" : (launchSelectedGpus.length > 0 ? C.green : C.yellow)
-  });
+  const statusLine = Box(
+    { flexDirection: "row", paddingBottom: 1 },
+    Text({ content: `Mode: `, fg: C.textDim }),
+    Text({ content: `${launchMode} `, fg: C.cyan }),
+    Text({ content: `| Dist: `, fg: C.textDim }),
+    Text({ content: `${launchDistMode} `, fg: C.cyan }),
+    Text({ content: `| Queue: `, fg: C.textDim }),
+    Text({ content: `${launchQueueMode} `, fg: C.cyan }),
+    Text({ content: `| GPUs (${launchNumGpus}): `, fg: C.textDim }),
+    Text({ content: gpuInfo, fg: runnerInputTyping ? "#9b59d6" : (launchSelectedGpus.length > 0 ? C.green : C.yellow) })
+  );
 
   const errorText = launchErrorMsg
     ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
