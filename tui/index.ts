@@ -3823,7 +3823,7 @@ function renderGpuAssignmentPanel() {
 
       // Build status indicators
       const isSelected = true; // All GPUs in launchSelectedGpus are selected
-      const selectionIndicator = isSelected ? "●" : "○";
+      const selectionIndicator = isSelected ? "[x]" : "[ ]";
 
       // Build reasoning text (why this GPU was selected)
       let reasoning = "";
@@ -3872,7 +3872,9 @@ function renderGpuAssignmentPanel() {
           height: 1,
           position: "relative",
         },
-        Text({ content: lineContent, fg: lineFg }),
+        Box({ width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined },
+          Text({ content: lineContent, fg: lineFg })
+        ),
         Box({
           position: "absolute",
           top: 0,
