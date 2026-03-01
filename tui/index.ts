@@ -3320,7 +3320,7 @@ function renderMyGpuView() {
       Text({ content: "• No active processes from you", fg: C.textDim }),
       Text({ content: "• No pinned GPUs", fg: C.textDim }),
       Text({ content: "" }),
-      Text({ content: "[+] Pin a GPU from dashboard (not implemented yet)", fg: C.textDim }),
+      Text({ content: "[p] Pin a GPU from dashboard or details", fg: C.textDim }),
       Text({ content: "[Esc] Back to dashboard", fg: C.textDim })
     );
   }
@@ -7611,6 +7611,21 @@ async function main() {
         render();
       } else if (key.name === "escape" || key.name === "backspace") {
         await navigateToTab("dashboard");
+        render();
+      } else if (key.name === "p") {
+        if (!_detailSnap) return;
+        const node = _detailSnap.nodes[_detailNodeIdx];
+        if (!node || node.error) return;
+        
+        const isPinned = myGpuViewState.pinnedGpus.some(g => g.node === node.node_alias && g.gpu === selectedGpuIdx);
+        if (isPinned) {
+          myGpuViewState.pinnedGpus = myGpuViewState.pinnedGpus.filter(g => !(g.node === node.node_alias && g.gpu === selectedGpuIdx));
+          setStatus(`Unpinned GPU: ${node.node_alias}:GPU${selectedGpuIdx}`);
+        } else {
+          myGpuViewState.pinnedGpus.push({ node: node.node_alias, gpu: selectedGpuIdx });
+          setStatus(`Pinned GPU: ${node.node_alias}:GPU${selectedGpuIdx}`);
+        }
+        await saveMyGpuViewState();
         render();
       } else if (key.name === "r") {
         await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
