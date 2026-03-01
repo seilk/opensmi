@@ -181,248 +181,130 @@ let killInProgress = false;
 
 // ── Global Tab Bar ─────────────────────────────────────────────────
 
-// ── State sync bridge (Phase 3 Step 2) ──────────────────────────────────────
-// Copies bare module-level globals → S before module render calls,
-// and S → bare globals after. Remove in Phase 4 when index.ts uses S directly.
-function syncStateToS(): void {
-  (_S_module as any).appVersion = appVersion;
-  (_S_module as any).latestVersion = latestVersion;
-  (_S_module as any).snapshot = snapshot;
-  (_S_module as any).extraSnapshots = extraSnapshots;
-  (_S_module as any).extraPollErrors = extraPollErrors;
-  (_S_module as any).extraClusterNames = extraClusterNames;
-  (_S_module as any).extraSelectedNodeIdx = extraSelectedNodeIdx;
-  (_S_module as any).activeClusterTabIdx = activeClusterTabIdx;
-  (_S_module as any).allocations = allocations;
-  (_S_module as any).gpuIdleStart = gpuIdleStart;
-  (_S_module as any).lastPollTime = lastPollTime;
-  (_S_module as any).pollError = pollError;
-  (_S_module as any).isPolling = isPolling;
-  (_S_module as any).bootLoading = bootLoading;
-  (_S_module as any).selectedNodeIdx = selectedNodeIdx;
-  (_S_module as any).selectedGpuIdx = selectedGpuIdx;
-  (_S_module as any).screen = screen;
-  (_S_module as any).tabSwitcherOpen = tabSwitcherOpen;
-  (_S_module as any).tabSwitcherIdx = tabSwitcherIdx;
-  (_S_module as any).lastGpuClickKey = lastGpuClickKey;
-  (_S_module as any).lastGpuClickAt = lastGpuClickAt;
-  (_S_module as any).lastNodeClickKey = lastNodeClickKey;
-  (_S_module as any).lastNodeClickAt = lastNodeClickAt;
-  (_S_module as any).allocCtx = allocCtx;
-  (_S_module as any).allocUserListFocused = allocUserListFocused;
-  (_S_module as any).allocUserListIdx = allocUserListIdx;
-  (_S_module as any).allocDraftUser = allocDraftUser;
-  (_S_module as any).allocErrorMsg = allocErrorMsg;
-  (_S_module as any).allocTypingTimer = allocTypingTimer;
-  (_S_module as any).allocUserHighlight = allocUserHighlight;
-  (_S_module as any).lastAllocUserClickKey = lastAllocUserClickKey;
-  (_S_module as any).lastAllocUserClickAt = lastAllocUserClickAt;
-  (_S_module as any).killCtx = killCtx;
-  (_S_module as any).killErrorMsg = killErrorMsg;
-  (_S_module as any).killOutput = killOutput;
-  (_S_module as any).killInProgress = killInProgress;
-  (_S_module as any).prefixKeyPressed = prefixKeyPressed;
-  (_S_module as any).prefixKeyTimeout = prefixKeyTimeout;
-  (_S_module as any).runnerPaneFolded = runnerPaneFolded;
-  (_S_module as any).runnerFocused = runnerFocused;
-  (_S_module as any).runnerInputTyping = runnerInputTyping;
-  (_S_module as any).runnerInputBuffer = runnerInputBuffer;
-  (_S_module as any).runnerFocusedInputIdx = runnerFocusedInputIdx;
-  (_S_module as any).runnerMouseDownTime = runnerMouseDownTime;
-  (_S_module as any).runnerMouseDownPos = runnerMouseDownPos;
-  (_S_module as any).runnerOpen = runnerOpen;
-  (_S_module as any).runnerHeight = runnerHeight;
-  (_S_module as any).runnerMaximized = runnerMaximized;
-  (_S_module as any).launchCommand = launchCommand;
-  (_S_module as any).launchNumGpus = launchNumGpus;
-  (_S_module as any).launchErrorMsg = launchErrorMsg;
-  (_S_module as any).launchErrorTimeout = launchErrorTimeout;
-  (_S_module as any).launchOutput = launchOutput;
-  (_S_module as any).launchSelectedGpus = launchSelectedGpus;
-  (_S_module as any).launchMode = launchMode;
-  (_S_module as any).launchTmuxSession = launchTmuxSession;
-  (_S_module as any).launchDistMode = launchDistMode;
-  (_S_module as any).launchCommands = launchCommands;
-  (_S_module as any).launchGpuMode = launchGpuMode;
-  (_S_module as any).launchManualGpus = launchManualGpus;
-  (_S_module as any).launchExcludedGpus = launchExcludedGpus;
-  (_S_module as any).launchSelectionReasoning = launchSelectionReasoning;
-  (_S_module as any).launchSourceBundle = launchSourceBundle;
-  (_S_module as any).launchQueueMode = launchQueueMode;
-  (_S_module as any).runnerState = runnerState;
-  (_S_module as any).runnerStartTime = runnerStartTime;
-  (_S_module as any).runnerStderr = runnerStderr;
-  (_S_module as any).runnerAttachCmd = runnerAttachCmd;
-  (_S_module as any).runnerTmuxSession = runnerTmuxSession;
-  (_S_module as any).runnerPreflight = runnerPreflight;
-  (_S_module as any).isAdmin = isAdmin;
-  (_S_module as any).adminHint = adminHint;
-  (_S_module as any).sudoInfoMsg = sudoInfoMsg;
-  (_S_module as any).sudoOkByNode = sudoOkByNode;
-  (_S_module as any).sudoCheckingByNode = sudoCheckingByNode;
-  (_S_module as any).myGpuViewState = myGpuViewState;
-  (_S_module as any).statusMsg = statusMsg;
-  (_S_module as any).statusMsgTimeout = statusMsgTimeout;
-  (_S_module as any).statusUntil = statusUntil;
-  (_S_module as any).systemUsers = systemUsers;
-  (_S_module as any).systemUsersLoadedAt = systemUsersLoadedAt;
-  (_S_module as any).knownUsers = knownUsers;
-  (_S_module as any).requestRender = requestRender;
-  (_S_module as any).jobList = jobList;
-  (_S_module as any).selectedJobIdx = selectedJobIdx;
-  (_S_module as any).jobDetailView = jobDetailView;
-  (_S_module as any).jobDetailSelectedCmd = jobDetailSelectedCmd;
-  (_S_module as any).jobDetailLogView = jobDetailLogView;
-  (_S_module as any).jobDetailLogSession = jobDetailLogSession;
-  (_S_module as any).jobDetailLogScroll = jobDetailLogScroll;
-  (_S_module as any).jobsLastLoadTime = jobsLastLoadTime;
-  (_S_module as any).setupNodes = setupNodes;
-  (_S_module as any).setupSelectedIdx = setupSelectedIdx;
-  (_S_module as any).setupEditingField = setupEditingField;
-  (_S_module as any).setupEditBuffer = setupEditBuffer;
-  (_S_module as any).setupMessage = setupMessage;
-  (_S_module as any).setupMessageTimeout = setupMessageTimeout;
-  (_S_module as any).setupDirtyAliases = setupDirtyAliases;
-  (_S_module as any).slurmSnapshots = slurmSnapshots;
-  (_S_module as any).slurmClusterConfigNames = slurmClusterConfigNames;
-  (_S_module as any).slurmLoading = slurmLoading;
-  (_S_module as any).slurmError = slurmError;
-  (_S_module as any).slurmSelectedIdx = slurmSelectedIdx;
-  (_S_module as any).slurmScrollOff = slurmScrollOff;
-  (_S_module as any).slurmSortKey = slurmSortKey;
-  (_S_module as any).slurmRunPopup = slurmRunPopup;
-  (_S_module as any)._slurmLastClickNode = _slurmLastClickNode;
-  (_S_module as any)._slurmLastClickTime = _slurmLastClickTime;
-  (_S_module as any).nodeCancelStatus = nodeCancelStatus;
-  (_S_module as any)._renderHook = _renderHook;
-  (_S_module as any).isDispatching = isDispatching;
-}
-function syncStateFromS(): void {
-  appVersion = (_S_module as any).appVersion;
-  latestVersion = (_S_module as any).latestVersion;
-  snapshot = (_S_module as any).snapshot;
-  extraSnapshots = (_S_module as any).extraSnapshots;
-  extraPollErrors = (_S_module as any).extraPollErrors;
-  extraClusterNames = (_S_module as any).extraClusterNames;
-  extraSelectedNodeIdx = (_S_module as any).extraSelectedNodeIdx;
-  activeClusterTabIdx = (_S_module as any).activeClusterTabIdx;
-  allocations = (_S_module as any).allocations;
-  gpuIdleStart = (_S_module as any).gpuIdleStart;
-  lastPollTime = (_S_module as any).lastPollTime;
-  pollError = (_S_module as any).pollError;
-  isPolling = (_S_module as any).isPolling;
-  bootLoading = (_S_module as any).bootLoading;
-  selectedNodeIdx = (_S_module as any).selectedNodeIdx;
-  selectedGpuIdx = (_S_module as any).selectedGpuIdx;
-  screen = (_S_module as any).screen;
-  tabSwitcherOpen = (_S_module as any).tabSwitcherOpen;
-  tabSwitcherIdx = (_S_module as any).tabSwitcherIdx;
-  lastGpuClickKey = (_S_module as any).lastGpuClickKey;
-  lastGpuClickAt = (_S_module as any).lastGpuClickAt;
-  lastNodeClickKey = (_S_module as any).lastNodeClickKey;
-  lastNodeClickAt = (_S_module as any).lastNodeClickAt;
-  allocCtx = (_S_module as any).allocCtx;
-  allocUserListFocused = (_S_module as any).allocUserListFocused;
-  allocUserListIdx = (_S_module as any).allocUserListIdx;
-  allocDraftUser = (_S_module as any).allocDraftUser;
-  allocErrorMsg = (_S_module as any).allocErrorMsg;
-  allocTypingTimer = (_S_module as any).allocTypingTimer;
-  allocUserHighlight = (_S_module as any).allocUserHighlight;
-  lastAllocUserClickKey = (_S_module as any).lastAllocUserClickKey;
-  lastAllocUserClickAt = (_S_module as any).lastAllocUserClickAt;
-  killCtx = (_S_module as any).killCtx;
-  killErrorMsg = (_S_module as any).killErrorMsg;
-  killOutput = (_S_module as any).killOutput;
-  killInProgress = (_S_module as any).killInProgress;
-  prefixKeyPressed = (_S_module as any).prefixKeyPressed;
-  prefixKeyTimeout = (_S_module as any).prefixKeyTimeout;
-  runnerPaneFolded = (_S_module as any).runnerPaneFolded;
-  runnerFocused = (_S_module as any).runnerFocused;
-  runnerInputTyping = (_S_module as any).runnerInputTyping;
-  runnerInputBuffer = (_S_module as any).runnerInputBuffer;
-  runnerFocusedInputIdx = (_S_module as any).runnerFocusedInputIdx;
-  runnerMouseDownTime = (_S_module as any).runnerMouseDownTime;
-  runnerMouseDownPos = (_S_module as any).runnerMouseDownPos;
-  runnerOpen = (_S_module as any).runnerOpen;
-  runnerHeight = (_S_module as any).runnerHeight;
-  runnerMaximized = (_S_module as any).runnerMaximized;
-  launchCommand = (_S_module as any).launchCommand;
-  launchNumGpus = (_S_module as any).launchNumGpus;
-  launchErrorMsg = (_S_module as any).launchErrorMsg;
-  launchErrorTimeout = (_S_module as any).launchErrorTimeout;
-  launchOutput = (_S_module as any).launchOutput;
-  launchSelectedGpus = (_S_module as any).launchSelectedGpus;
-  launchMode = (_S_module as any).launchMode;
-  launchTmuxSession = (_S_module as any).launchTmuxSession;
-  launchDistMode = (_S_module as any).launchDistMode;
-  launchCommands = (_S_module as any).launchCommands;
-  launchGpuMode = (_S_module as any).launchGpuMode;
-  launchManualGpus = (_S_module as any).launchManualGpus;
-  launchExcludedGpus = (_S_module as any).launchExcludedGpus;
-  launchSelectionReasoning = (_S_module as any).launchSelectionReasoning;
-  launchSourceBundle = (_S_module as any).launchSourceBundle;
-  launchQueueMode = (_S_module as any).launchQueueMode;
-  runnerState = (_S_module as any).runnerState;
-  runnerStartTime = (_S_module as any).runnerStartTime;
-  runnerStderr = (_S_module as any).runnerStderr;
-  runnerAttachCmd = (_S_module as any).runnerAttachCmd;
-  runnerTmuxSession = (_S_module as any).runnerTmuxSession;
-  runnerPreflight = (_S_module as any).runnerPreflight;
-  isAdmin = (_S_module as any).isAdmin;
-  adminHint = (_S_module as any).adminHint;
-  sudoInfoMsg = (_S_module as any).sudoInfoMsg;
-  sudoOkByNode = (_S_module as any).sudoOkByNode;
-  sudoCheckingByNode = (_S_module as any).sudoCheckingByNode;
-  Object.assign(myGpuViewState, (_S_module as any).myGpuViewState);
-  statusMsg = (_S_module as any).statusMsg;
-  statusMsgTimeout = (_S_module as any).statusMsgTimeout;
-  statusUntil = (_S_module as any).statusUntil;
-  systemUsers = (_S_module as any).systemUsers;
-  systemUsersLoadedAt = (_S_module as any).systemUsersLoadedAt;
-  knownUsers = (_S_module as any).knownUsers;
-  requestRender = (_S_module as any).requestRender;
-  jobList = (_S_module as any).jobList;
-  selectedJobIdx = (_S_module as any).selectedJobIdx;
-  jobDetailView = (_S_module as any).jobDetailView;
-  jobDetailSelectedCmd = (_S_module as any).jobDetailSelectedCmd;
-  jobDetailLogView = (_S_module as any).jobDetailLogView;
-  jobDetailLogSession = (_S_module as any).jobDetailLogSession;
-  jobDetailLogScroll = (_S_module as any).jobDetailLogScroll;
-  jobsLastLoadTime = (_S_module as any).jobsLastLoadTime;
-  setupNodes = (_S_module as any).setupNodes;
-  setupSelectedIdx = (_S_module as any).setupSelectedIdx;
-  setupEditingField = (_S_module as any).setupEditingField;
-  setupEditBuffer = (_S_module as any).setupEditBuffer;
-  setupMessage = (_S_module as any).setupMessage;
-  setupMessageTimeout = (_S_module as any).setupMessageTimeout;
-  setupDirtyAliases = (_S_module as any).setupDirtyAliases;
-  slurmSnapshots = (_S_module as any).slurmSnapshots;
-  slurmClusterConfigNames = (_S_module as any).slurmClusterConfigNames;
-  slurmLoading = (_S_module as any).slurmLoading;
-  slurmError = (_S_module as any).slurmError;
-  slurmSelectedIdx = (_S_module as any).slurmSelectedIdx;
-  slurmScrollOff = (_S_module as any).slurmScrollOff;
-  slurmSortKey = (_S_module as any).slurmSortKey;
-  slurmRunPopup = (_S_module as any).slurmRunPopup;
-  _slurmLastClickNode = (_S_module as any)._slurmLastClickNode;
-  _slurmLastClickTime = (_S_module as any)._slurmLastClickTime;
-  nodeCancelStatus = (_S_module as any).nodeCancelStatus;
-  _renderHook = (_S_module as any)._renderHook;
-  isDispatching = (_S_module as any).isDispatching;
-}
-
 function renderGlobalTabBar() {
-  syncStateToS();
-  const _r = _mod_renderGlobalTabBar();
-  syncStateFromS();
-  return _r;
+  const tabs = tabRegistry.getAllVisible();
+  
+  // App-level Tabs
+  const appTabBoxes = tabs.map((tab, i) => {
+    const isActive = tab.id === tabRegistry.activeTabId;
+    return Box(
+      {
+        backgroundColor: isActive ? C.blue : C.bgAlt,
+        paddingLeft: 1,
+        paddingRight: 1,
+        onMouseUp: async () => {
+          if (!isActive) {
+            await tabRegistry.switchTo(tab.id);
+            screen = tabRegistry.activeTabId as typeof screen;
+            requestRender?.();
+          }
+        },
+      },
+      Text({
+        content: isActive
+          ? t`${bold(fg("#ffffff")(` ${tab.label} `))}`
+          : t`${fg(C.textDim)(` ${tab.label} `)}`,
+      }),
+    );
+  });
+
+  // If we are on dashboard, show Cluster-level inner tabs as well
+  let clusterTabBoxes: any[] = [];
+  if (screen === "dashboard" || screen === "detail") {
+    const clusterTabs = buildDashboardTabs();
+    if (clusterTabs.length > 1) {
+      clusterTabBoxes.push(Text({ content: "  |  ", fg: C.textDim }));
+      
+      const cBoxes = clusterTabs.map((ctab, i) => {
+        const isCActive = i === activeClusterTabIdx;
+        const label = ctab.name.length > 18 ? ctab.name.slice(0, 17) + "..." : ctab.name;
+        return Box(
+          {
+            backgroundColor: isCActive ? C.green : C.bgAlt,
+            paddingLeft: 1,
+            paddingRight: 1,
+            onMouseUp: async () => {
+              if (activeClusterTabIdx === i) return;
+              activeClusterTabIdx = i;
+              slurmSelectedIdx = 0;
+              slurmScrollOff = 0;
+              slurmSortKey = "none";
+              slurmRunPopup = null;
+              if (ctab.type === "slurm" && !slurmSnapshots[ctab.idx]?.nodes?.length) {
+                await loadSlurmData();
+              }
+              if (screen === "detail") await navigateToTab("dashboard");
+              requestRender?.();
+            }
+          },
+          Text({
+            content: isCActive
+              ? t`${bold(fg("#ffffff")(label))}`
+              : t`${fg(C.textDim)(label)}`,
+          })
+        );
+      });
+      clusterTabBoxes.push(...cBoxes);
+    }
+  }
+
+  return Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+    ...appTabBoxes,
+    ...clusterTabBoxes,
+    Box({ flexGrow: 1 }),
+    Box(
+      { paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: latestVersion
+          ? t`${fg(C.yellow)(`opensmi@${appVersion} → ${latestVersion} ↑`)}` 
+          : t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
+      })
+    )
+  );
 }
 
 function renderGlobalFooter() {
-  syncStateToS();
-  const _r = _mod_renderGlobalFooter();
-  syncStateFromS();
-  return _r;
+  let helpContent = "";
+  
+  if (runnerFocused) {
+    helpContent = runnerInputTyping
+      ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
+      : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`;
+  } else {
+    switch (screen) {
+      case "dashboard":
+        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh`;
+        break;
+      case "detail":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} GPU  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[*]")} Open-to-all  ${fg(C.textDim)("[x]")} Clear  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      case "my-gpu-view":
+        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Bundles  ${fg(C.textDim)("[Enter]")} Expand  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      case "jobs":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Logs  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh`;
+        break;
+      case "setup":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+s]")} Save  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      default:
+        helpContent = t`${fg(C.textDim)("[Esc]")} Back`;
+    }
+  }
+
+  return Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({ content: helpContent }),
+    Text({ content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " " })
+  );
 }
 
 let isPolling = false;
@@ -2415,17 +2297,86 @@ const C = {
 // ── Rendering ──────────────────────────────────────────────────────
 
 function renderToast() {
-  syncStateToS();
-  const _r = _mod_renderToast();
-  syncStateFromS();
-  return _r;
+  if (!statusMsg) return null;
+
+  return Box(
+    {
+      position: "absolute",
+      right: 2,
+      bottom: 1,
+      paddingLeft: 1,
+      paddingRight: 1,
+      paddingTop: 0,
+      paddingBottom: 0,
+      backgroundColor: C.bgAlt,
+      borderStyle: "rounded",
+      borderColor: C.border,
+      zIndex: 10_000,
+    },
+    Text({ content: statusMsg, fg: C.yellow })
+  );
 }
 
 function renderTabSwitcher() {
-  syncStateToS();
-  const _r = _mod_renderTabSwitcher();
-  syncStateFromS();
-  return _r;
+  if (!tabSwitcherOpen) return null;
+
+  const tabs = tabRegistry.getAllVisible();
+  if (tabs.length === 0) return null;
+
+  const maxWidth = 55;
+  // rows: title + blank + N tabs + blank + help = N + 4
+  // plus border (2) + padding (2) = N + 8
+  const boxHeight = tabs.length + 8;
+
+  const rows: any[] = [];
+  rows.push(Text({ content: t`${bold(fg(C.blue)("Select Tab"))}` }));
+  rows.push(Text({ content: "" }));
+
+  for (let i = 0; i < tabs.length; i++) {
+    const tab = tabs[i]!;
+    const isSelected = i === tabSwitcherIdx;
+    const isActive = tab.id === tabRegistry.activeTabId;
+    const shortcutLabel = tab.shortcut ? `[${tab.shortcut.toUpperCase()}] ` : "    ";
+    const activeLabel = isActive ? " ◀ Active" : "";
+    const content = `${shortcutLabel}${tab.label}${activeLabel}`;
+
+    rows.push(
+      Text({
+        content: isSelected ? `▸ ${content}` : `  ${content}`,
+        fg: isSelected ? C.yellow : (isActive ? C.green : C.text),
+      })
+    );
+  }
+
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: "[↑↓] Navigate  [Enter] Switch  [Shortcut] Jump  [Esc] Cancel",
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
+    {
+      position: "absolute",
+      left: "50%",
+      top: "50%",
+      width: maxWidth,
+      height: boxHeight,
+      marginLeft: -Math.floor(maxWidth / 2),
+      marginTop: -Math.floor(boxHeight / 2),
+      paddingLeft: 2,
+      paddingRight: 2,
+      paddingTop: 1,
+      paddingBottom: 1,
+      backgroundColor: C.bgAlt,
+      borderStyle: "rounded",
+      borderColor: C.blue,
+      zIndex: 20_000,
+      flexDirection: "column",
+    },
+    ...rows
+  );
 }
 
 function requireAdminUI(action: string): boolean {
@@ -2490,31 +2441,605 @@ async function checkSudoForNode(nodeAlias: string): Promise<void> {
 }
 
 function renderLoadingBadge() {
-  syncStateToS();
-  const _r = _mod_renderLoadingBadge();
-  syncStateFromS();
-  return _r;
+  if (!bootLoading && snapshot) return null;
+
+  const tick = Math.floor(Date.now() / 80);
+
+  // Flowing glyph at spinner position (3-char)
+  const flowGlyphs = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
+  const glyph = flowGlyphs[tick % flowGlyphs.length] || "░▒▓";
+  const text = "opensmi: I'm coordinating with your GPUs...";
+
+  // Prefer showing full message when terminal width allows.
+  const termW = process.stdout.columns || 80;
+  const maxBadgeW = Math.max(20, termW - 2);
+  const minNeededW = text.length + 1 + glyph.length;
+  const badgeW = Math.min(maxBadgeW, Math.max(44, minNeededW));
+  const textMax = Math.max(0, badgeW - 4); // one space + 3-char glyph
+  const textClamped = (() => {
+    if (text.length <= textMax) return text;
+    if (textMax <= 3) return text.slice(0, textMax);
+    return `${text.slice(0, textMax - 3)}...`;
+  })();
+  const gap = " ";
+  const tailPadW = Math.max(0, badgeW - (textClamped.length + gap.length + glyph.length));
+  const tailPad = " ".repeat(tailPadW);
+
+  return Box(
+    {
+      position: "absolute",
+      left: 1,
+      top: 0,
+      width: badgeW,
+      height: 1,
+      flexDirection: "row",
+      backgroundColor: C.bg,
+      zIndex: 10_000,
+    },
+    Text({ content: `${textClamped}${gap}`, fg: C.blue }),
+    Text({ content: glyph, fg: tick % 2 === 0 ? C.cyan : C.blue }),
+    Text({ content: tailPad, fg: C.blue })
+  );
 }
 
 function renderDashboard() {
-  syncStateToS();
-  const _r = _mod_renderDashboard();
-  syncStateFromS();
-  return _r;
+  const tabs = buildDashboardTabs();
+  if (tabs.length > 0 && activeClusterTabIdx >= tabs.length) activeClusterTabIdx = 0;
+  const activeTab = tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
+
+
+  if (activeTab?.type === "slurm") {
+    return renderSlurmClusterTab(activeTab.idx);
+  }
+
+  const viewSnapshot = activeDashboardSnapshot();
+  const viewPollError = activeDashboardPollError();
+  const currentSelectedNodeIdx = activeDashboardSelectedNodeIdx();
+
+  if (!viewSnapshot) {
+    const msg = viewPollError || "opensmi: I'm coordinating with your GPUs...";
+    return Box({ flexDirection: "column" }, Text({ content: msg }));
+  }
+
+  const totalGpus = viewSnapshot.nodes.reduce((s, n) => s + n.gpus.length, 0);
+  const usedGpus = viewSnapshot.nodes.reduce((s, n) => {
+    return s + n.gpus.filter((g) => usersOnGpu(n, g.uuid).length > 0).length;
+  }, 0);
+
+  // Count violations
+  let violationCount = 0;
+  for (const n of viewSnapshot.nodes) {
+    if (n.error) continue;
+    for (const g of n.gpus) {
+      const users = usersOnGpu(n, g.uuid);
+      for (const u of users) {
+        if (isViolation(n.node_alias, g.index, u)) violationCount++;
+      }
+    }
+  }
+
+  // Header
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
+    }),
+    Text({
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+    })
+  );
+
+  const gpuCols = gpuIndicesForSnapshot(viewSnapshot);
+
+  // Dynamic column widths: scale proportionally with terminal width.
+  // GPU cells and Free cells are given explicit Box widths to prevent the
+  // last column from absorbing leftover flex space.
+  const termWidth = process.stdout.columns || 80;
+  const minNodeW = 10;
+  const minGpuW  = 16;
+  const freeW    = 8;
+  const padLeft  = 1; // paddingLeft on each row
+  const totalMin = padLeft + minNodeW + gpuCols.length * minGpuW + freeW;
+  const extra    = Math.max(0, termWidth - totalMin);
+  // Node gets up to 14 extra chars (capped; wider names are truncated anyway).
+  // GPU columns absorb all remaining extra space to show more username detail.
+  const nodeBonus = Math.min(14, Math.floor(extra * 0.25));
+  const gpuBonus  = gpuCols.length > 0 ? Math.floor((extra - nodeBonus) / gpuCols.length) : 0;
+  const nodeW = minNodeW + nodeBonus;
+  const gpuW  = minGpuW + gpuBonus;
+  const colW  = [nodeW, ...gpuCols.map(() => gpuW), freeW];
+  const errorW = Math.max(10, termWidth - padLeft - colW[0]!);
+
+  const tableHeader = Box(
+    {
+      flexDirection: "row",
+      paddingLeft: 1,
+      width: "100%",
+      backgroundColor: C.bgAlt,
+    },
+    Box({ width: colW[0]! }, Text({ content: "Node".padEnd(colW[0]!), fg: C.textDim })),
+    ...gpuCols.map((gi, j) =>
+      Box({ width: colW[1 + j]! }, Text({ content: `GPU ${gi}`.padEnd(colW[1 + j]!), fg: C.textDim }))
+    ),
+    Box({ width: colW[colW.length - 1]! }, Text({ content: "Free".padEnd(colW[colW.length - 1]!), fg: C.textDim }))
+  );
+
+  // Table rows
+  const rows = viewSnapshot.nodes.map((n, ni) => {
+    const isSelected = ni === currentSelectedNodeIdx;
+    const rowBg = isSelected ? "#33467c" : ni % 2 === 0 ? C.bg : C.bgAlt;
+
+    if (n.error) {
+      return Box(
+        {
+          flexDirection: "row",
+          paddingLeft: 1,
+          backgroundColor: rowBg,
+          width: "100%",
+          position: "relative",
+        },
+        Box({ width: colW[0]! }, Text({ content: truncateText(n.node_alias, colW[0]!).padEnd(colW[0]!), fg: isSelected ? "#ffffff" : C.text })),
+        Box({ width: errorW }, Text({ content: truncateText(`ERROR: ${n.error}`, errorW).padEnd(errorW), fg: C.red })),
+        // Click anywhere on the row to jump to detail.
+        Box({
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 1, // Low zIndex to allow text selection
+          onMouseDown: (e: any) => {
+            e.preventDefault?.();
+            e.stopPropagation?.();
+
+            const now = Date.now();
+            const clickKey = `NODE:${n.node_alias}`;
+            const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
+            lastNodeClickKey = clickKey;
+            lastNodeClickAt = now;
+
+            setActiveDashboardSelectedNodeIdx(ni);
+            selectedGpuIdx = 0;
+
+            if (isDouble) {
+              screen = "detail";
+              void checkSudoForNode(n.node_alias);
+            }
+
+            requestRender?.();
+          },
+        })
+      );
+    }
+
+    const idxToGpu: Record<number, GPUInfo> = {};
+    for (const g of n.gpus) idxToGpu[g.index] = g;
+
+    const gpuCells: any[] = [];
+    let free = 0;
+
+    for (const [j, i] of gpuCols.entries()) {
+      const w = colW[1 + j]!;
+      const g = idxToGpu[i];
+      if (!g) {
+        gpuCells.push(Text({ content: "-".padEnd(w), fg: C.textDim }));
+        continue;
+      }
+
+      const isSelected = launchManualGpus.some(
+        (x) => x.node === n.node_alias && x.gpu === i
+      );
+      const dot = isSelected ? "● " : "";
+
+      const users = usersOnGpu(n, g.uuid);
+      if (users.length === 0) {
+        const alloc = getAllocation(n.node_alias, i);
+        const remain = expiresInShort(alloc?.expires_at);
+        const spark = createSparkline(gpuUtilPct(g));
+        const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : `idle ${spark}`;
+        const display = (dot + label).length > w - 1 ? (dot + label).slice(0, w - 2) + "…" : (dot + label);
+        gpuCells.push(
+          Box(
+            { width: w, height: 1, position: "relative" },
+            Text({ content: display.padEnd(w), fg: isSelected ? C.yellow : C.textDim }),
+            runnerFocused ? Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 1000,
+              onMouseDown: (e: any) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+
+                const gpuKey = { node: n.node_alias, gpu: i };
+                const idx = launchManualGpus.findIndex(
+                  (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+                );
+
+                if (idx >= 0) {
+                  // Unselect GPU
+                  launchManualGpus.splice(idx, 1);
+                  // Sync count and commands
+                  launchNumGpus = launchManualGpus.length;
+                  if (launchDistMode === "one-to-one") {
+                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  }
+                } else {
+                  // Select GPU
+                  launchManualGpus.push(gpuKey);
+                  // Sync count: increase if selection exceeds current count
+                  if (launchManualGpus.length > launchNumGpus) {
+                    launchNumGpus = launchManualGpus.length;
+                    if (launchDistMode === "one-to-one") {
+                      while (launchCommands.length < launchNumGpus) {
+                        const cmdIdx = launchCommands.length;
+                        const gpu = launchManualGpus[cmdIdx];
+                        launchCommands.push(getGpuCommandPlaceholder(gpu));
+                      }
+                    }
+                  }
+                }
+
+                launchGpuMode = "selected";
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+
+                requestRender?.();
+              },
+            }) : undefined
+          )
+        );
+        free++;
+      } else {
+        const hasViolation = users.some((u) => isViolation(n.node_alias, i, u));
+        const cell = users.join("+");
+        const utilVal = gpuUtilPct(g);
+        const util = utilVal !== null ? ` ${utilVal}%` : "";
+        const label = `${cell}${util}`;
+        const display = (dot + label).length > w - 1 ? (dot + label).slice(0, w - 2) + "…" : (dot + label);
+        gpuCells.push(
+          Box(
+            { width: w, height: 1, position: "relative" },
+            Text({
+              content: display.padEnd(w),
+              fg: isSelected ? C.yellow : (hasViolation ? C.red : C.green),
+            }),
+            runnerFocused ? Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 1000,
+              onMouseDown: (e: any) => {
+                e.preventDefault?.();
+                e.stopPropagation?.();
+
+                const gpuKey = { node: n.node_alias, gpu: i };
+                const idx = launchManualGpus.findIndex(
+                  (x) => x.node === gpuKey.node && x.gpu === gpuKey.gpu
+                );
+
+                if (idx >= 0) {
+                  // Unselect GPU
+                  launchManualGpus.splice(idx, 1);
+                  // Sync count and commands
+                  launchNumGpus = launchManualGpus.length;
+                  if (launchDistMode === "one-to-one") {
+                    launchCommands = launchCommands.slice(0, launchNumGpus);
+                  }
+                } else {
+                  // Select GPU
+                  launchManualGpus.push(gpuKey);
+                  // Sync count: increase if selection exceeds current count
+                  if (launchManualGpus.length > launchNumGpus) {
+                    launchNumGpus = launchManualGpus.length;
+                    if (launchDistMode === "one-to-one") {
+                      while (launchCommands.length < launchNumGpus) {
+                        const cmdIdx = launchCommands.length;
+                        const gpu = launchManualGpus[cmdIdx];
+                        launchCommands.push(getGpuCommandPlaceholder(gpu));
+                      }
+                    }
+                  }
+                }
+
+                launchGpuMode = "selected";
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+
+                requestRender?.();
+              },
+            }) : undefined
+          )
+        );
+      }
+    }
+
+    return Box(
+      {
+        flexDirection: "row",
+        paddingLeft: 1,
+        backgroundColor: rowBg,
+        width: "100%",
+        position: "relative",
+      },
+      Box({ width: colW[0]! },
+        Text({
+          content: truncateText(n.node_alias, colW[0]!).padEnd(colW[0]!),
+          fg: isSelected ? "#ffffff" : C.cyan,
+        })
+      ),
+      ...gpuCells,
+      Box({ width: colW[colW.length - 1]! },
+        Text({
+          content: `${free}/${n.gpus.length}`.padEnd(colW[colW.length - 1]!),
+          fg: free > 0 ? C.green : C.yellow,
+        })
+      ),
+      // Click anywhere on the row to jump to detail (only when not runner focused)
+      !runnerFocused ? Box({
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        zIndex: 1, // Low zIndex to allow text selection
+        onMouseDown: (e: any) => {
+          e.preventDefault?.();
+          e.stopPropagation?.();
+
+          const now = Date.now();
+          const clickKey = `NODE:${n.node_alias}`;
+          const isDouble = clickKey === lastNodeClickKey && now - lastNodeClickAt < 350;
+          lastNodeClickKey = clickKey;
+          lastNodeClickAt = now;
+
+          setActiveDashboardSelectedNodeIdx(ni);
+          selectedGpuIdx = gpuIndicesForNode(n)[0] ?? 0;
+
+          if (isDouble) {
+            screen = "detail";
+            void checkSudoForNode(n.node_alias);
+          }
+
+          requestRender?.();
+        },
+      }) : undefined
+    );
+  });
+
+  // User summary
+  const userMap = new Map<string, number>();
+  for (const n of viewSnapshot.nodes) {
+    if (n.error) continue;
+    for (const g of n.gpus) {
+      const users = new Set(usersOnGpu(n, g.uuid));
+      for (const u of users) {
+        userMap.set(u, (userMap.get(u) || 0) + 1);
+      }
+    }
+  }
+
+  const userSummary = [...userMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([u, count]) => `${u}:${count}`)
+    .join("  ");
+
+  const footer = Box(
+    {
+      width: "100%",
+      flexDirection: "column",
+      paddingLeft: 1,
+      paddingTop: 1,
+    },
+    Text({
+      content: t`${fg(C.textDim)("Users:")} ${userSummary}`,
+    }),
+    Text({
+      content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
+    }),
+    Box(
+      { flexDirection: "row", paddingTop: 1 },
+      Text({
+        content: runnerInputTyping
+          ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
+          : (runnerFocused
+              ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
+              : (runnerPaneFolded
+                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
+                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
+      })
+    )
+  );
+
+  return Box(
+    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+      unifiedTabBar,
+      header,
+      tableHeader,
+      ...rows,
+      footer
+    ),
+    renderRunnerPane()
+  );
 }
 
 function renderDetail() {
-  syncStateToS();
-  const _r = _mod_renderDetail();
-  syncStateFromS();
-  return _r;
+  const activeSnap = activeDashboardSnapshot();
+  const activeNodeIdx = activeDashboardSelectedNodeIdx();
+  if (!activeSnap) return Text({ content: "No data" });
+
+  const node = activeSnap.nodes[activeNodeIdx];
+  if (!node) return Text({ content: "No node selected" });
+
+  if (node.error) {
+    return Box(
+      { flexDirection: "column", backgroundColor: C.bg, padding: 1 },
+      Text({ content: `${node.node_alias} - ERROR`, fg: C.red }),
+      Text({ content: node.error, fg: C.red }),
+      Text({ content: "" }),
+      Text({ content: "[Esc/Backspace] Back", fg: C.textDim })
+    );
+  }
+
+  const nodeGpuIdxs = gpuIndicesForNode(node);
+  if (nodeGpuIdxs.length && !nodeGpuIdxs.includes(selectedGpuIdx)) {
+    selectedGpuIdx = nodeGpuIdxs[0]!;
+  }
+
+  const children: any[] = [];
+
+  // Header
+  children.push(
+    Text({ content: `${node.node_alias} (${node.hostname || node.address}) - ${node.os || ""}`, fg: C.blue }),
+    Text({ content: "" })
+  );
+
+  // Per-GPU sections
+  for (const g of node.gpus) {
+    const procs = node.processes.filter((p) => p.gpu_uuid === g.uuid);
+    const alloc = getAllocation(node.node_alias, g.index);
+    const allocTarget = alloc?.target || "*";
+    const remain = expiresInShort(alloc?.expires_at);
+    const allocStr = `Alloc: ${allocTarget}${remain ? ` (exp ${remain})` : ""}`;
+    const utilVal = gpuUtilPct(g);
+    const utilStr = utilVal !== null ? `Load ${String(utilVal).padStart(3)}% ${createSparkline(utilVal)}` : "Load   ?  ";
+    const memBar = createMemBar(g.memory_used_mib ?? null, g.memory_total_mib ?? null);
+    const activityStr = gpuActivityStatus(node, g.index, g.uuid);
+
+    const isSel = g.index === selectedGpuIdx;
+    const inLaunchSelection = launchManualGpus.some(
+      (x) => x.node === node.node_alias && x.gpu === g.index
+    );
+    const prefix = isSel ? "▸" : (inLaunchSelection ? "●" : " ");
+    children.push(
+      Box(
+        {
+          width: "100%",
+          height: 1,
+          position: "relative",
+        },
+        Text({
+          content: ` ${prefix} GPU ${g.index}  |  ${g.name.padEnd(16)}  |  ${memBar} ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr.padEnd(15)}  | ${activityStr}`,
+          fg: isSel ? "#ffffff" : (inLaunchSelection ? C.yellow : C.cyan),
+        }),
+        Box({
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 1, // Low zIndex to allow text selection
+          onMouseDown: (e: any) => {
+            e.preventDefault?.();
+            e.stopPropagation?.();
+
+            selectedGpuIdx = g.index;
+
+            // Double-click to open Allocate modal
+            const now = Date.now();
+            const clickKey = `${node.node_alias}:GPU${g.index}`;
+            const isDouble = clickKey === lastGpuClickKey && now - lastGpuClickAt < 350;
+            lastGpuClickKey = clickKey;
+            lastGpuClickAt = now;
+
+            if (isDouble) {
+              openAllocModal(node, g.index);
+              return;
+            }
+
+            requestRender?.();
+          },
+        })
+      )
+    );
+
+    if (procs.length === 0) {
+      children.push(Text({ content: "    (idle)", fg: C.textDim }));
+    } else {
+      for (const p of procs) {
+        const viol = isViolation(node.node_alias, g.index, p.user);
+        const mem = p.used_memory_mib !== null ? `${p.used_memory_mib} MiB` : "?";
+        const violMark = viol ? " ⚠" : "";
+        const rt = runtimeStr(p.runtime_s);
+        const rtCol = rt ? rt.padStart(6) : " ".repeat(6);
+        children.push(
+          Text({
+            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  ${p.process_name}${violMark}`,
+            fg: viol ? C.red : C.text,
+          })
+        );
+      }
+    }
+
+    children.push(Text({ content: "" }));
+  }
+
+  // (Footer replaced by global footer)
+  if (sudoInfoMsg) {
+    children.push(Text({ content: `(Sudo: ${sudoInfoMsg})`, fg: C.textDim }));
+  }
+
+  return Box(
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
+    ...children
+  );
 }
 
 function renderHelp() {
-  syncStateToS();
-  const _r = _mod_renderHelp();
-  syncStateFromS();
-  return _r;
+  return Box(
+    {
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      padding: 1,
+      backgroundColor: C.bg,
+    },
+    Text({ content: t`${bold("Help - Keyboard Shortcuts")}`, fg: C.text }),
+    Text({ content: " " }),
+    Text({ content: "Navigation:", fg: C.text }),
+    Text({ content: "  ↑/↓ or j/k    Move selection", fg: C.textDim }),
+    Text({ content: "  Enter         Open detail / action", fg: C.textDim }),
+    Text({ content: "  Esc           Back to dashboard", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Tabs (Switcher: Ctrl+X, T):", fg: C.text }),
+    Text({ content: "  d             Dashboard", fg: C.textDim }),
+    Text({ content: "  n             Node detail (in Dashboard)", fg: C.textDim }),
+    Text({ content: "  g             My GPU View", fg: C.textDim }),
+    Text({ content: "  j             Jobs", fg: C.textDim }),
+    Text({ content: "  h             Help", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Dashboard Actions:", fg: C.text }),
+    Text({ content: "  a             Allocate GPU to user", fg: C.textDim }),
+    Text({ content: "  x             Clear GPU allocation", fg: C.textDim }),
+    Text({ content: "  Shift+K       Kill violator processes", fg: C.textDim }),
+    Text({ content: "  r             Refresh cluster data", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Command Runner:", fg: C.text }),
+    Text({ content: "  Ctrl+X ↓      Focus runner pane", fg: C.textDim }),
+    Text({ content: "  Ctrl+X F      Fold/unfold runner pane", fg: C.textDim }),
+    Text({ content: "  Ctrl+X Enter  Execute command", fg: C.textDim }),
+    Text({ content: "  Tab/Shift+Tab Toggle mode/distribution", fg: C.textDim }),
+    Text({ content: "  Q             Toggle queue mode", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Setup (Ctrl+X T → Setup):", fg: C.text }),
+    Text({ content: "  ↑/↓           Select node", fg: C.textDim }),
+    Text({ content: "  Enter         Edit node env config", fg: C.textDim }),
+    Text({ content: "  Tab           Next field", fg: C.textDim }),
+    Text({ content: "  S             Save to opensmi.json", fg: C.textDim }),
+    Text({ content: " " }),
+    Text({ content: "Quit:  q", fg: C.text }),
+  );
 }
 
 /** Sanitize a string for use as a tmux session name.
@@ -2596,52 +3121,913 @@ function formatJobGpus(job: Job): string {
 }
 
 function renderJobsView() {
-  syncStateToS();
-  const _r = _mod_renderJobsView();
-  syncStateFromS();
-  return _r;
+  if (jobDetailView) {
+    return renderJobDetailView();
+  }
+  return renderJobsListView();
 }
 
 function renderJobsListView() {
-  syncStateToS();
-  const _r = _mod_renderJobsListView();
-  syncStateFromS();
-  return _r;
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)("Jobs"))}`,
+    }),
+    Text({
+      content: t`Total: ${jobList.length}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      fg: C.text,
+    })
+  );
+
+  if (jobList.length === 0) {
+    return Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
+      header,
+      Text({ content: "" }),
+      Text({ content: "" }),
+      Text({ content: "  No jobs yet.", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "  How to submit:", fg: C.cyan }),
+      Text({ content: "    ctrl+x ↓      Focus runner pane, type command, ctrl+x Enter to run", fg: C.textDim }),
+      Text({ content: "    CLI           opensmi job submit <node> --gpus 0 --command \"...\"", fg: C.textDim }),
+      Text({ content: "    CLI (queue)   opensmi job submit --auto-gpus 2 --command \"...\" --queue", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "  Jobs submitted from any source appear here with live status tracking.", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: t`  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back to dashboard`, fg: C.textDim })
+    );
+  }
+
+  const termWidth = process.stdout.columns || 80;
+  const rows: any[] = [];
+  rows.push(
+    Text({
+      content: t`${fg(C.cyan)("  ID        Status      GPUs              Command           Runtime")}`,
+      fg: C.cyan,
+    })
+  );
+
+  // Dynamic column: command gets remaining space after fixed columns
+  // Fixed: prefix(2) + id(9) + status(12) + gpus(18) + runtime(10) + spacing(5) = ~56
+  const cmdWidth = Math.max(termWidth - 56, 10);
+
+  for (let i = 0; i < jobList.length; i++) {
+    const job = jobList[i];
+    const selected = i === selectedJobIdx;
+    const statusInfo = getJobStatusIcon(job.status);
+
+    const commandDisplay = job.dist_mode === "single"
+      ? job.command.slice(0, cmdWidth)
+      : `[${job.commands.length} cmds]`;
+
+    const gpuDisplay = formatJobGpus(job).slice(0, 17).padEnd(17);
+    const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
+
+    const prefix = selected ? "▶ " : "  ";
+    const idDisplay = job.id.padEnd(8);
+    const statusDisplay = `${statusInfo.icon} ${job.status}`.padEnd(11);
+
+    const line = `${prefix}${idDisplay} ${statusDisplay} ${gpuDisplay} ${commandDisplay.padEnd(cmdWidth)} ${runtime}`;
+
+    rows.push(
+      Text({
+        content: line,
+        fg: selected ? C.yellow : statusInfo.color,
+      })
+    );
+  }
+
+  rows.push(Text({ content: "" }));
+  // footer replaced by global footer
+
+  return Box(
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
+    header,
+    Text({ content: "" }),
+    ...rows
+  );
 }
 
 function renderJobDetailView() {
-  syncStateToS();
-  const _r = _mod_renderJobDetailView();
-  syncStateFromS();
-  return _r;
+  if (!jobDetailView) return renderJobsListView();
+
+  // Log view mode: show captured tmux pane output
+  if (jobDetailLogView !== null) {
+    const logLines = jobDetailLogView.split("\n");
+    const termHeight = process.stdout.rows || 40;
+    const termWidth = process.stdout.columns || 80;
+    const visibleLines = termHeight - 4;
+    const maxScroll = Math.max(0, logLines.length - visibleLines);
+    jobDetailLogScroll = Math.min(jobDetailLogScroll, maxScroll);
+
+    const displayLines = logLines.slice(jobDetailLogScroll, jobDetailLogScroll + visibleLines);
+
+    const rows: any[] = [];
+    rows.push(Text({
+      content: t`${bold(fg(C.blue)("Log"))} - ${jobDetailLogSession}  ${fg(C.textDim)(`(${jobDetailLogScroll + 1}-${jobDetailLogScroll + displayLines.length}/${logLines.length} lines)`)}`,
+    }));
+    rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(Math.max(termWidth - 2, 20)))}` }));
+
+    for (const line of displayLines) {
+      rows.push(Text({ content: line, fg: C.text }));
+    }
+
+    rows.push(Text({ content: t`${fg(C.textDim)("─".repeat(Math.max(termWidth - 2, 20)))}` }));
+    rows.push(Text({
+      content: t`${fg(C.textDim)("[↑↓]")} Scroll  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back to detail`,
+      fg: C.textDim,
+    }));
+
+    return Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, paddingLeft: 1, paddingRight: 1 },
+      ...rows
+    );
+  }
+
+  const job = jobDetailView;
+  const statusInfo = getJobStatusIcon(job.status);
+  const liveness = gpuLivenessCache.get(job.id) || {};
+  const termWidth = process.stdout.columns || 80;
+  const contentWidth = Math.max(termWidth - 6, 30);  // padding=2 each side + some margin
+
+  // Build list of sessions for navigation
+  const sessionEntries: Array<{ label: string; session: string | null; color: string }> = [];
+
+  if (job.dist_mode === "single") {
+    // Single command → one or more sessions
+    for (let i = 0; i < job.gpus.length; i++) {
+      const [node, gpu] = job.gpus[i];
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      const session = job.tmux_sessions[i] || null;
+      let color: string;
+      if (job.status !== "running") {
+        color = job.status === "done" ? C.green : job.status === "failed" ? C.red : C.textDim;
+      } else {
+        color = alive === true ? C.green : alive === false ? C.red : C.yellow;
+      }
+      sessionEntries.push({ label: `${node}:GPU${gpu}`, session, color });
+    }
+  } else {
+    // One-to-one: each command has its own session
+    for (let i = 0; i < job.commands.length; i++) {
+      const [node, gpu] = job.gpus[i] || ["?", i];
+      const key = `${node}:${gpu}`;
+      const alive = liveness[key];
+      const session = job.tmux_sessions[i] || null;
+      let color: string;
+      if (job.status !== "running") {
+        color = job.status === "done" ? C.green : job.status === "failed" ? C.red : C.textDim;
+      } else {
+        color = alive === true ? C.green : alive === false ? C.red : C.yellow;
+      }
+      const cmdPreview = job.commands[i]?.slice(0, Math.max(contentWidth - 30, 20)) || "";
+      sessionEntries.push({ label: `${node}:GPU${gpu} → ${cmdPreview}`, session, color });
+    }
+  }
+
+  // Clamp selection
+  if (sessionEntries.length > 0) {
+    jobDetailSelectedCmd = Math.min(jobDetailSelectedCmd, sessionEntries.length - 1);
+  }
+
+  const rows: any[] = [];
+  rows.push(
+    Text({ content: t`${bold(fg(C.blue)(`Job ${job.id}`))} - ${job.command.slice(0, contentWidth - 16)}` })
+  );
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Status:    ${fg(statusInfo.color)(statusInfo.icon + " " + job.status)}` }));
+  rows.push(Text({ content: t`User:      ${fg(C.cyan)(job.user)}` }));
+
+  if (job.started_at) {
+    const runtime = formatJobDuration(job.started_at, job.status === "running" ? null : job.finished_at);
+    rows.push(Text({ content: t`Runtime:   ${fg(job.status === "running" ? C.green : C.text)(runtime)}` }));
+  }
+
+  rows.push(Text({ content: t`Mode:      ${job.exec_mode} / ${job.dist_mode}  Queue: ${job.queue_mode}` }));
+  rows.push(Text({ content: t`Restart:   ${job.restart_policy}${job.retry_count > 0 ? ` (${job.retry_count}/${job.max_retries})` : ""}` }));
+
+  // GPU/Command list with selection cursor
+  if (sessionEntries.length > 0) {
+    rows.push(Text({ content: "" }));
+    const liveCount = Object.values(liveness).filter(v => v).length;
+    const totalCount = Object.keys(liveness).length;
+    const livenessStr = totalCount > 0 ? ` (${liveCount}/${totalCount} active)` : "";
+    rows.push(Text({ content: t`${fg(C.cyan)("Sessions:")}${livenessStr}` }));
+
+    for (let i = 0; i < sessionEntries.length; i++) {
+      const entry = sessionEntries[i];
+      const selected = i === jobDetailSelectedCmd;
+      const prefix = selected ? "▸ " : "  ";
+      const statusDot = entry.session ? "●" : "○";
+      const entryColor = selected ? C.yellow : entry.color;
+      const hasLog = entry.session ? "" : fg(C.textDim)(" (no session)");
+      rows.push(Text({ content: t`${fg(entryColor)(`${prefix}${statusDot} ${entry.label}`)}${hasLog}` }));
+    }
+  }
+
+  // Command display
+  if (job.dist_mode === "single" && job.command) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.cyan)("Command:")}` }));
+    rows.push(Text({ content: `  ${job.command}`, fg: C.textDim }));
+  }
+
+  // Timestamps
+  rows.push(Text({ content: "" }));
+  rows.push(Text({ content: t`Submitted: ${job.submitted_at}` }));
+  if (job.started_at) rows.push(Text({ content: t`Started:   ${job.started_at}` }));
+  if (job.finished_at) rows.push(Text({ content: t`Finished:  ${job.finished_at}` }));
+
+  if (job.error) {
+    rows.push(Text({ content: "" }));
+    rows.push(Text({ content: t`${fg(C.red)("Error:")} ${job.error}`, fg: C.red }));
+  }
+
+  rows.push(Text({ content: "" }));
+  rows.push(
+    Text({
+      content: t`${fg(C.textDim)("[↑↓]")} Select  ${fg(C.textDim)("[Enter]")} View log  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Retry selected  ${fg(C.textDim)("[Shift+r]")} Retry all  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[Esc]")} Back`,
+      fg: C.textDim,
+    })
+  );
+
+  return Box(
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
+    ...rows
+  );
 }
 
 function renderMyGpuView() {
-  syncStateToS();
-  const _r = _mod_renderMyGpuView();
-  syncStateFromS();
-  return _r;
+  const bundles = computeGpuBundles();
+  myGpuViewState.bundles = bundles;
+
+  if (bundles.length === 0) {
+    return Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
+      Text({ content: t`${bold(fg(C.blue)("My GPUs"))} · Operator: ${fg(C.cyan)(OPERATOR)}`, fg: C.text }),
+      Text({ content: "" }),
+      Text({ content: "No GPUs found", fg: C.yellow }),
+      Text({ content: "" }),
+      Text({ content: "• No allocations to you", fg: C.textDim }),
+      Text({ content: "• No active processes from you", fg: C.textDim }),
+      Text({ content: "• No pinned GPUs", fg: C.textDim }),
+      Text({ content: "" }),
+      Text({ content: "[p] Pin a GPU from dashboard or details", fg: C.textDim }),
+      Text({ content: "[Esc] Back to dashboard", fg: C.textDim })
+    );
+  }
+
+  const header = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({
+      content: t`${bold(fg(C.blue)("My GPUs"))} ${fg(C.textDim)("· Operator:")} ${fg(C.cyan)(OPERATOR)}`,
+    }),
+    Text({
+      content: t`Bundles: ${bundles.length}  Poll: ${lastPollTime || "-"}  ${isPolling ? fg(C.yellow)("⟳") : ""}`,
+      fg: C.text,
+    })
+  );
+
+  const bundleRows: any[] = [];
+  bundleRows.push(
+    Text({
+      content: t`${fg(C.cyan)("GPU Bundles")}`,
+      fg: C.cyan,
+    })
+  );
+  bundleRows.push(Text({ content: "" }));
+
+  for (let i = 0; i < bundles.length; i++) {
+    const bundle = bundles[i]!;
+    const isSelected = i === myGpuViewState.selectedBundleIdx;
+    const prefix = isSelected ? "▸ " : "  ";
+    const shortcutLabel = bundle.shortcut ? ` [${bundle.shortcut}]` : "";
+
+    bundleRows.push(
+      Text({
+        content: `${prefix}${bundle.label}${shortcutLabel}`,
+        fg: isSelected ? C.yellow : C.text,
+      })
+    );
+  }
+
+  const selectedBundle = bundles[myGpuViewState.selectedBundleIdx];
+  const gpuDetails: any[] = [];
+
+  if (selectedBundle && snapshot) {
+    gpuDetails.push(
+      Text({
+        content: t`${bold(fg(C.cyan)(selectedBundle.label))}`,
+      })
+    );
+    gpuDetails.push(Text({ content: "" }));
+
+    for (const gpuRef of selectedBundle.gpus) {
+      const node = snapshot.nodes.find(n => n.node_alias === gpuRef.node);
+      if (!node || node.error) {
+        gpuDetails.push(
+          Text({
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} - ERROR`,
+            fg: C.red,
+          })
+        );
+        continue;
+      }
+
+      const gpu = node.gpus.find(g => g.index === gpuRef.gpu);
+      if (!gpu) {
+        gpuDetails.push(
+          Text({
+            content: `  ${gpuRef.node}:GPU${gpuRef.gpu} - NOT FOUND`,
+            fg: C.red,
+          })
+        );
+        continue;
+      }
+
+      const procs = node.processes.filter(p => p.gpu_uuid === gpu.uuid);
+      const alloc = getAllocation(gpuRef.node, gpuRef.gpu);
+      const allocStr = alloc ? alloc.target : "*";
+      const utilVal = gpuUtilPct(gpu);
+      const utilStr = utilVal !== null ? `Load ${String(utilVal).padStart(3)}% ${createSparkline(utilVal)}` : "Load   ?  ";
+      const memBar = createMemBar(gpu.memory_used_mib ?? null, gpu.memory_total_mib ?? null);
+      const activityStr = gpuActivityStatus(node, gpuRef.gpu, gpu.uuid);
+
+      gpuDetails.push(
+        Text({
+          content: `  ${gpuRef.node}:GPU${gpuRef.gpu}  |  ${gpu.name.padEnd(16)}  |  ${memBar} ${gpuMemStr(gpu.memory_used_mib)}/${gpuMemStr(gpu.memory_total_mib)}  |  ${utilStr}  |  ${activityStr}`,
+          fg: procs.length > 0 ? C.green : C.textDim,
+        })
+      );
+
+      for (const p of procs) {
+        const mem = p.used_memory_mib !== null ? `${p.used_memory_mib} MiB` : "?";
+        const rt = runtimeStr(p.runtime_s);
+        gpuDetails.push(
+          Text({
+            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rt.padStart(6)}  ${p.process_name}`,
+            fg: C.text,
+          })
+        );
+      }
+    }
+  }
+
+  const footer = Box(
+    {
+      width: "100%",
+      flexDirection: "column",
+      paddingLeft: 1,
+      paddingTop: 1,
+    },
+    Text({
+      content: runnerInputTyping
+        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
+        : (runnerFocused
+            ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`
+            : t`[↑↓] Navigate Bundles  [ctrl+x r] Run Command  [ctrl+x ↓] Runner  [ctrl+x t] Switch Tab  [Esc] Dashboard`),
+      fg: C.textDim,
+    }),
+    Text({
+      content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " ",
+    })
+  );
+
+  return Box(
+    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
+      header,
+      ...bundleRows,
+      ...gpuDetails,
+      footer
+    ),
+  );
 }
 
 function renderAlloc() {
-  syncStateToS();
-  const _r = _mod_renderAlloc();
-  syncStateFromS();
-  return _r;
+  const ctx = allocCtx;
+  if (!ctx) return Text({ content: "No allocation context", fg: C.red });
+
+  const nodeSnap = snapshot?.nodes.find((n) => n.node_alias === ctx.nodeAlias) || null;
+  const gpuInfo = nodeSnap?.gpus.find((g) => g.index === ctx.gpuIdx) || null;
+  const liveUsers = nodeSnap && gpuInfo ? usersOnGpu(nodeSnap, gpuInfo.uuid) : [];
+
+  const currentAlloc = getAllocTarget(ctx.nodeAlias, ctx.gpuIdx);
+  const currentAllocStr = currentAlloc ? currentAlloc : "*";
+  const liveStr = liveUsers.length ? liveUsers.join(", ") : "(idle)";
+
+  const universe = knownUsers.length ? knownUsers : liveUsers;
+  const universeSet = new Set(universe);
+
+  // For multi-user draft (comma-separated), filter only by the last segment being typed.
+  const lastSegRaw = (allocDraftUser.split(",").pop() || "");
+  const filterToken = lastSegRaw.trim().toLowerCase();
+
+  const filteredUsers = filterToken
+    ? universe.filter((u) => u.toLowerCase().includes(filterToken))
+    : universe;
+
+  const input = Input({
+    id: "alloc-user-input",
+    width: "100%",
+    value: allocDraftUser,
+    placeholder: "* (default) or username",
+    backgroundColor: C.bgAlt,
+    focusedBackgroundColor: "#3b4261",
+    textColor: "#ffffff",
+    cursorColor: C.green,
+  });
+  input.focus();
+
+  const errorNode = allocErrorMsg
+    ? Text({ content: `Error: ${allocErrorMsg}`, fg: C.red })
+    : Text({ content: " ", fg: C.textDim });
+
+  const userRows: any[] = [];
+  if (!universe.length) {
+    userRows.push(Text({ content: "(no users yet)", fg: C.textDim }));
+  } else if (!filteredUsers.length) {
+    userRows.push(Text({ content: "(no matches)", fg: C.textDim }));
+  } else {
+    const currentSet = new Set(_filteredDraftList(allocDraftUser, universeSet));
+
+    for (let idx = 0; idx < filteredUsers.length; idx++) {
+      const u = filteredUsers[idx];
+      const isSel = currentSet.has(u);
+      const isFocused = allocUserListFocused && idx === allocUserListIdx;
+      userRows.push(
+        Box(
+          {
+            width: "100%",
+            height: 1,
+            position: "relative",
+            paddingLeft: 1,
+            backgroundColor: isFocused ? C.green : (allocUserHighlight === u ? "#33467c" : isSel ? "#3b4261" : C.bg),
+          },
+          Text({ content: `${isSel ? "▸" : " "} ${u}`, fg: isFocused ? "#000000" : (isSel ? "#ffffff" : C.text) }),
+          // Overlay to make the row reliably clickable without triggering text selection.
+          Box({
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 1, // Low zIndex to allow text selection
+            onMouseDown: (_e: any) => {
+              _e.preventDefault?.();
+              _e.stopPropagation?.();
+
+              // Single click: highlight and focus list. Double click: select user.
+              const now = Date.now();
+              const clickKey = `USER:${u}`;
+              const isDouble = clickKey === lastAllocUserClickKey && now - lastAllocUserClickAt < 350;
+              lastAllocUserClickKey = clickKey;
+              lastAllocUserClickAt = now;
+
+              // Set focus to user list and highlight this user
+              allocUserListFocused = true;
+              allocUserListIdx = idx;
+              allocUserHighlight = u;
+
+              if (!isDouble) {
+                requestRender?.();
+                return;
+              }
+
+              // Double-click: select user and return to input
+              allocDraftUser = u;
+              allocUserListFocused = false;
+              allocErrorMsg = "";
+              requestRender?.();
+            },
+          })
+        )
+      );
+    }
+  }
+
+  const matchesLine = universe.length
+    ? `Filter: ${filterToken || "(empty)"}   Matches: ${filteredUsers.length}/${universe.length}`
+    : "Filter: (no users)";
+
+  const leftPanel = Box(
+    {
+      width: 24,
+      height: "100%",
+      flexDirection: "column",
+      gap: 0,
+      backgroundColor: C.bgAlt,
+      padding: 1,
+      overflow: "hidden",
+    },
+    Text({ content: "Users (scroll)  Click=highlight  DblClick=toggle", fg: C.textDim }),
+    ScrollBox(
+      {
+        id: "alloc-users-scroll",
+        flexGrow: 1,
+        width: "100%",
+        overflow: "hidden",
+        scrollY: true,
+        // Force scrollbar visible so it's obvious there are more users.
+        verticalScrollbarOptions: {
+          visible: true,
+          showArrows: false,
+        },
+      },
+      ...userRows
+    )
+  );
+
+  const selectedUsers = _filteredDraftList(allocDraftUser, universeSet);
+  const selectedRows: any[] = selectedUsers.length
+    ? selectedUsers.map((u) => Text({ content: `  ${u}`, fg: C.text }))
+    : [Text({ content: "  (none)", fg: C.textDim })];
+
+  const rightPanel = Box(
+    { flexDirection: "column", flexGrow: 1, height: "100%", gap: 1, overflow: "hidden" },
+    Text({
+      content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}${gpuInfo ? ` - ${gpuInfo.name} (${gpuMemStr(gpuInfo.memory_total_mib)})` : ""}`,
+      fg: C.cyan,
+    }),
+    Text({ content: `Current allocation: ${currentAllocStr}`, fg: C.textDim }),
+    Text({ content: `Live users: ${liveStr}`, fg: C.textDim }),
+    Text({ content: "Selected users:", fg: C.textDim }),
+    ScrollBox(
+      {
+        id: "alloc-selected-scroll",
+        height: 6,
+        width: "100%",
+        overflow: "hidden",
+        scrollY: true,
+        verticalScrollbarOptions: { visible: true, showArrows: false },
+      },
+      ...selectedRows
+    ),
+    Text({ content: "Enter username (default: * for everyone):", fg: C.textDim }),
+    input,
+    Text({ content: "[Tab] Autocomplete last segment", fg: C.textDim }),
+    Text({ content: matchesLine, fg: C.textDim }),
+    errorNode,
+    Text({ content: "[Enter] Save    [Esc] Cancel", fg: C.textDim })
+  );
+
+  const modal = Box(
+    {
+      width: 92,
+      maxHeight: "90%",
+      borderStyle: "rounded",
+      borderColor: C.border,
+      title: "Allocate GPU",
+      titleAlignment: "center",
+      padding: 1,
+      flexDirection: "column",
+      gap: 1,
+      backgroundColor: C.bg,
+      overflow: "hidden",
+    },
+    Box(
+      { flexDirection: "row", gap: 2, flexGrow: 1, width: "100%", overflow: "hidden" },
+      leftPanel,
+      rightPanel
+    ),
+    // replaced by global footer
+  );
+
+  return Box(
+    {
+      width: "100%",
+      height: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: C.bg,
+    },
+    modal
+  );
 }
 
 function renderKill() {
-  syncStateToS();
-  const _r = _mod_renderKill();
-  syncStateFromS();
-  return _r;
+  const ctx = killCtx;
+  if (!ctx) return Text({ content: "No kill context", fg: C.red });
+
+  const header = Text({
+    content: `Target: ${ctx.nodeAlias} GPU${ctx.gpuIdx}`,
+    fg: C.cyan,
+  });
+
+  const pidNodes: any[] = [];
+  if (!ctx.pids.length) {
+    pidNodes.push(Text({ content: "(no violators)", fg: C.textDim }));
+  } else {
+    for (let i = 0; i < ctx.pids.length; i++) {
+      const pid = ctx.pids[i]!;
+      const user = ctx.users[i] || "unknown";
+      pidNodes.push(Text({ content: `  PID ${pid} (${user})`, fg: C.text }));
+    }
+  }
+
+  const errorNode = killErrorMsg
+    ? Text({ content: `Error: ${killErrorMsg}`, fg: C.red })
+    : Text({ content: " ", fg: C.textDim });
+
+  const outPreview = (killOutput || "")
+    .split("\n")
+    .filter((l) => l.trim() && !l.includes("__OPENSMI_KILL_"))
+    .slice(-6)
+    .join("\n");
+
+  const outNode = outPreview
+    ? Text({ content: outPreview, fg: C.textDim })
+    : Text({ content: " ", fg: C.textDim });
+
+  const hint = Text({
+    content:
+      "Note: killing other users' processes usually requires passwordless sudo on the node (sudo -n).",
+    fg: C.textDim,
+  });
+
+  const footer = killInProgress
+    ? Text({ content: "Killing...", fg: C.yellow })
+    : Text({ content: "[Enter] Confirm kill    [Esc] Cancel", fg: C.textDim });
+
+  const modal = Box(
+    {
+      width: 80,
+      borderStyle: "rounded",
+      borderColor: C.border,
+      title: "Kill violator processes",
+      titleAlignment: "center",
+      padding: 1,
+      flexDirection: "column",
+      gap: 1,
+      backgroundColor: C.bg,
+    },
+    header,
+    Text({ content: "PIDs to signal (TERM):", fg: C.textDim }),
+    ...pidNodes,
+    hint,
+    errorNode,
+    outNode,
+    footer
+  );
+
+  return Box(
+    {
+      width: "100%",
+      height: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: C.bg,
+    },
+    modal
+  );
 }
 
 function renderGpuAssignmentPanel() {
-  syncStateToS();
-  const _r = _mod_renderGpuAssignmentPanel();
-  syncStateFromS();
-  return _r;
+  if (!snapshot) {
+    return Box(
+      { flexDirection: "column", width: "100%", gap: 0 },
+      Text({ content: "GPU Assignment", fg: C.textDim }),
+      Text({ content: "  No snapshot available", fg: C.red })
+    );
+  }
+
+  let modeText = launchGpuMode === "auto"
+    ? "(Auto-ranked)              [click to exclude]  [g] manual"
+    : "(Manual selection)         [click to toggle]  [g] auto";
+
+  if (launchSourceBundle) {
+    modeText = `(From bundle: ${launchSourceBundle})         [g] auto`;
+  }
+
+  const headerNode = Text({
+    content: `GPU Assignment  ${modeText}`,
+    fg: C.textDim
+  });
+
+  const gpuRows: any[] = [];
+
+  if (launchSelectedGpus.length === 0) {
+    gpuRows.push(
+      Text({
+        content: "  No GPUs selected. Press [+] to add GPUs.",
+        fg: C.yellow
+      })
+    );
+  }
+
+  const gpuInfoMap = new Map<string, { gpu: GPUInfo; node: NodeSnapshot; allocated: boolean; allocTarget: string }>();
+  for (const node of snapshot.nodes) {
+    for (const gpu of node.gpus) {
+      const key = `${node.node_alias}:${gpu.index}`;
+      const alloc = allocations.find(a => a.node_alias === node.node_alias && a.gpu_index === gpu.index);
+      gpuInfoMap.set(key, {
+        gpu,
+        node,
+        allocated: !!alloc,
+        allocTarget: alloc?.target || ""
+      });
+    }
+  }
+
+  if (launchSelectedGpus.length > 0) {
+
+    for (let i = 0; i < launchSelectedGpus.length; i++) {
+      const selectedGpu = launchSelectedGpus[i]!;
+      const key = `${selectedGpu.node}:${selectedGpu.gpu}`;
+      const gpuData = gpuInfoMap.get(key);
+
+      if (!gpuData) {
+        gpuRows.push(
+          Text({
+            content: `  [${i + 1}] ● ${key}  (GPU not found in snapshot)`,
+            fg: C.red
+          })
+        );
+        continue;
+      }
+
+      const { gpu, node, allocated, allocTarget } = gpuData;
+
+      // Calculate GPU info
+      const memFree = gpu.memory_free_mib ?? 0;
+      const memTotal = gpu.memory_total_mib ?? 0;
+      const memFreeG = Math.floor(memFree / 1024);
+      const util = gpu.utilization_gpu_percent ?? gpu.utilization_gpu ?? 0;
+
+      // Calculate idle time
+      const gpuIdleKey = `${node.node_alias}:${gpu.uuid}`;
+      const idleStartTime = gpuIdleStart[gpuIdleKey] || Date.now();
+      const idleMs = Date.now() - idleStartTime;
+      const idleHours = Math.floor(idleMs / (1000 * 60 * 60));
+      const idleMinutes = Math.floor((idleMs % (1000 * 60 * 60)) / (1000 * 60));
+      const idleDisplay = idleHours > 0 ? `${idleHours}h` : `${idleMinutes}m`;
+
+      // Count processes on this GPU
+      const procCount = node.processes.filter(p => p.gpu_uuid === gpu.uuid).length;
+
+      // Build status indicators
+      const isSelected = true; // All GPUs in launchSelectedGpus are selected
+      const selectionIndicator = isSelected ? "[x]" : "[ ]";
+
+      // Build reasoning text (why this GPU was selected)
+      let reasoning = "";
+      let reasoningColor = C.green; // Default good state
+
+      if (launchGpuMode === "auto") {
+        if (procCount === 0 && util < 10) {
+          reasoning = "✓ idle, unused";
+          reasoningColor = C.green;
+        } else if (procCount === 0) {
+          reasoning = "✓ no processes";
+          reasoningColor = C.green;
+        } else if (procCount < 3) {
+          reasoning = "✓ few processes";
+          reasoningColor = C.yellow;
+        } else {
+          reasoning = "⚠ busy";
+          reasoningColor = C.red;
+        }
+      }
+
+      // Allocation warning
+      let allocWarning = "";
+      let hasAllocConflict = false;
+      if (allocated && allocTarget !== OPERATOR && !allocTarget.split(",").includes(OPERATOR)) {
+        allocWarning = `  ✗ allocated to ${allocTarget}`;
+        reasoning = `${reasoning}  ${allocWarning}`;
+        hasAllocConflict = true;
+        reasoningColor = C.red; // Override with red for allocation conflict
+      }
+
+      // Build line content
+      const linePrefix = launchDistMode === "one-to-one"
+        ? `Command ${i + 1} → `
+        : `  `;
+
+      const lineContent = `${linePrefix}[${i + 1}] ${selectionIndicator} ${node.node_alias}:GPU${gpu.index}  [${allocTarget || OPERATOR}]  ${memFreeG}G free  idle ${idleDisplay}  ${reasoning}`;
+
+      // Color logic: red for conflicts, yellow for warnings, green for good, textDim for neutral
+      const lineFg = hasAllocConflict ? C.red : (procCount > 2 ? C.yellow : (procCount === 0 ? C.green : C.textDim));
+
+      // Create clickable GPU row
+      const gpuRow = Box(
+        {
+          width: "100%",
+          height: 1,
+          position: "relative",
+        },
+        Box({ width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined },
+          Text({ content: lineContent, fg: lineFg })
+        ),
+        Box({
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 1,
+          onMouseDown: (e: any) => {
+            runnerMouseDownTime = Date.now();
+            runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+          },
+          onMouseUp: (e: any) => {
+            const elapsed = Date.now() - runnerMouseDownTime;
+            const moved = runnerMouseDownPos && (
+              Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+              Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+            );
+
+            if (moved || elapsed > 300) {
+              return; // Was a drag, don't trigger click
+            }
+
+            // Handle GPU click based on mode
+            if (launchGpuMode === "auto") {
+              const idx = launchExcludedGpus.findIndex(
+                g => g.node === selectedGpu.node && g.gpu === selectedGpu.gpu
+              );
+              if (idx === -1) {
+                launchExcludedGpus.push({ node: selectedGpu.node, gpu: selectedGpu.gpu });
+                setStatus(`Excluded ${key} from auto selection`);
+                // Use a non-blocking refresh so we don't stall the UI thread
+                setTimeout(() => {
+                  refreshLaunchGpuSelection().then(() => {
+                    if (requestRender) requestRender();
+                  });
+                }, 10);
+              }
+            } else {
+              // In selected mode, clicking removes GPU
+              const idx = launchManualGpus.findIndex(
+                g => g.node === selectedGpu.node && g.gpu === selectedGpu.gpu
+              );
+              if (idx !== -1) {
+                launchManualGpus.splice(idx, 1);
+                launchNumGpus = launchManualGpus.length;
+                launchSelectedGpus = launchManualGpus.slice(0, launchNumGpus);
+                setStatus(`Removed ${key} from selection`);
+              }
+            }
+            requestRender?.();
+          },
+        })
+      );
+
+      gpuRows.push(gpuRow);
+    }
+  }
+
+  const numSelected = launchSelectedGpus.length;
+  const numWithConflicts = launchSelectedGpus.filter((gpu, i) => {
+    const key = `${gpu.node}:${gpu.gpu}`;
+    const gpuData = gpuInfoMap.get(key);
+    if (!gpuData) return false;
+    const { allocated, allocTarget } = gpuData;
+    return allocated && allocTarget !== OPERATOR && !allocTarget.split(",").includes(OPERATOR);
+  }).length;
+
+  const summaryText = numSelected === 0
+    ? Text({ content: `  Selected: 0 GPUs`, fg: C.textDim })
+    : (numWithConflicts > 0
+      ? Text({ content: `  Selected: ${numSelected} GPUs  (${numWithConflicts} with allocation conflicts)`, fg: C.red })
+      : Text({ content: `  Selected: ${numSelected} GPUs  ✓ All available`, fg: C.green }));
+
+  const helpText = launchGpuMode === "auto"
+    ? Text({ content: "  [click GPU] toggle  [+/-] adjust count  [g] switch to manual", fg: C.textDim })
+    : Text({ content: "  [click GPU] remove  [+/-] adjust  [g] switch to auto", fg: C.textDim });
+
+  return Box(
+    {
+      flexDirection: "column",
+      width: "100%",
+      gap: 0,
+      borderStyle: "single",
+      borderColor: C.border,
+      padding: 0,
+      paddingLeft: 1,
+      paddingRight: 1,
+    },
+    headerNode,
+    ...gpuRows,
+    summaryText,
+    helpText
+  );
 }
 
 // ── Setup Tab ──────────────────────────────────────────────────────
@@ -2931,11 +4317,226 @@ function wrapTextWithCursor(text: string, cursorPos: number, maxWidth: number): 
   return wrapText(withCursor, maxWidth);
 }
 
-function renderSrunPopup(popup: SlurmRunPopup) {
-  syncStateToS();
-  const _r = _mod_renderSrunPopup(popup);
-  syncStateFromS();
-  return _r;
+function renderSrunPopup(popup: SlurmRunPopup): any {
+  const autoCmd = srunCommand(popup);
+  const cmd = popup.cmdOverride !== null ? popup.cmdOverride : autoCmd;
+  const isEdited = popup.cmdOverride !== null;
+  const popupSlurmIdx = slurmTabIdxForPopup(popup);
+  const currentFree = popupSlurmIdx === null ? null : getLatestFreeGpus(popup.nodeName, popupSlurmIdx);
+  const isStale = popup.copyStatus === "stale";
+  const gpuInvalid = !isEdited && (popup.gpuCount < 1 || popup.gpuCount > popup.freeGpusAtOpen
+    || !Number.isInteger(popup.gpuCount));
+  const canCopy = !gpuInvalid && !isStale && !(isEdited && cmd.trim() === "");
+  const busy = popup.jobSubmitStatus === "submitting" || popup.jobSubmitStatus === "polling" || popup.jobSubmitStatus === "cancelling";
+
+  const w = Math.min(62, (process.stdout.columns || 80) - 4);
+  const innerW = w - 2; // padding 1 each side
+
+  const line = (content: any) => Box({ width: w, paddingLeft: 1, paddingRight: 1 }, content);
+
+  const rows: any[] = [
+    // Title bar
+    Box({ width: w, backgroundColor: C.blue, paddingLeft: 1 },
+      Text({ content: t`${bold(fg("#ffffff")("srun Job Submit"))} - ${bold(popup.nodeName)}` })
+    ),
+    line(Text({ content: "" })),
+    // Existing my-job section
+    ...(() => {
+      if (popup.existingJobCancelStatus === "done") {
+        return [
+          line(Text({ content: t`${fg(C.green)(`✓ Cancelled: ${popup.existingJobCancelMsg.replace("Cancelled: ", "")}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "error") {
+        return [
+          line(Text({ content: t`${fg(C.red)(`✗ ${popup.existingJobCancelMsg}`)}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobCancelStatus === "cancelling") {
+        return [
+          line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling existing job(s)...")}` })),
+          line(Text({ content: "" })),
+        ];
+      }
+      if (popup.existingJobIds.length > 0) {
+        return [
+          line(Box({ flexDirection: "row" },
+            Text({ content: t`${fg(C.yellow)(`⚠ Active job(s): ${popup.existingJobIds.join(", ")}  `)}` }),
+            Box({
+              paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+              onMouseDown: () => { cancelExistingJobsInPopup(); },
+            }, Text({ content: "X: Cancel", fg: "#ffffff" })),
+          )),
+          line(Text({ content: "" })),
+        ];
+      }
+      return [];
+    })(),
+    // Node info (read-only)
+    line(Text({ content: t`${fg(C.textDim)("Partition :")} ${popup.partition}` })),
+    line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })),
+    line(Text({ content: t`${fg(C.textDim)("Free GPUs :")} ${popup.freeGpusAtOpen}${currentFree !== null && currentFree !== popup.freeGpusAtOpen ? fg(C.yellow)(` → now ${currentFree}`) : ""}` })),
+    line(Text({ content: "" })),
+    // GPU count input
+    line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("GPUs      :")} ` }),
+      Text({ content: `[${popup.gpuCount}]`, fg: gpuInvalid ? C.red : C.green }),
+      Text({ content: t`  ${fg(C.textDim)("← / → to adjust")}` }),
+    )),
+  ];
+
+  // QoS selector
+  if (popup.qosLoading) {
+    rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("⟳ loading...")}` })));
+  } else if (popup.qosFetchFailed) {
+    rows.push(line(Text({ content: t`${fg(C.red)("QoS       :")} ${fg(C.red)("unavailable - use 'e' to add --qos manually")}` })));
+  } else if (popup.qosList.length > 0) {
+    const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
+    rows.push(line(Box({ flexDirection: "row" },
+      Text({ content: t`${fg(C.textDim)("QoS       :")} ` }),
+      Text({ content: `[${qosLabel}]`, fg: C.cyan }),
+      Text({ content: t`  ${fg(C.textDim)("Q to cycle")}` }),
+    )));
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Command preview / edit (with line wrap)
+  rows.push(line(Box({ flexDirection: "row" },
+    Text({ content: t`${fg(C.textDim)("Command:")}` }),
+    isEdited ? Text({ content: t`  ${fg(C.yellow)("[edited]")}` }) : Text({ content: "" }),
+    popup.editMode
+      ? Text({ content: t`  ${fg(C.cyan)("editing - Enter/Esc to confirm")}` })
+      : Text({ content: t`  ${fg(C.textDim)("e: edit  r: reset cmd")}` }),
+  )));
+
+  if (popup.editMode) {
+    const wrapW = innerW - 2; // "▶ " prefix
+    const wrapped = wrapTextWithCursor(cmd, popup.cursorPos, wrapW);
+    for (let i = 0; i < wrapped.length; i++) {
+      rows.push(line(Box({ flexDirection: "row" },
+        Text({ content: i === 0 ? "▶ " : "  ", fg: C.cyan }),
+        Text({ content: wrapped[i]!, fg: C.cyan }),
+      )));
+    }
+  } else {
+    const wrapW = innerW;
+    const wrapped = wrapText(cmd, wrapW);
+    for (const wline of wrapped) {
+      rows.push(line(Text({ content: wline, fg: canCopy ? C.text : C.red })));
+    }
+  }
+
+  rows.push(line(Text({ content: "" })));
+
+  // Copy status
+  if (isStale) {
+    rows.push(line(Text({ content: t`${fg(C.red)("⚠ " + popup.errorMsg)}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+  if (popup.copyStatus === "fail" && popup.fullCmdForFallback) {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("Clipboard unavailable - copy manually:")}` })));
+    for (const wl of wrapText(popup.fullCmdForFallback, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.text })));
+    }
+    rows.push(line(Text({ content: "" })));
+  }
+  if (popup.copyStatus === "ok") {
+    rows.push(line(Text({ content: t`${fg(C.green)("✓ Copied to clipboard!")}` })));
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Submit note + capacity warning
+  rows.push(line(Text({ content: t`${fg(C.textDim)("ℹ  Reserves GPUs only - run workload after ssh attach.")}` })));
+  rows.push(line(Text({ content: t`${fg(C.textDim)("⚠  Capacity is real-time and may change.")}` })));
+  rows.push(line(Text({ content: "" })));
+
+  // Job submit status / result
+  if (popup.jobSubmitStatus === "submitting") {
+    rows.push(line(Text({ content: t`${fg(C.cyan)("⟳ Submitting job...")}  ${fg(C.textDim)("Esc to abort")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "polling") {
+    rows.push(line(Text({ content: t`${fg(C.cyan)(`⟳ Waiting for job ${popup.jobId} to start...`)}  ${fg(C.textDim)("Esc to abort")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "cancelling") {
+    rows.push(line(Text({ content: t`${fg(C.yellow)("⟳ Cancelling job...")}` })));
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "running") {
+    rows.push(line(Text({ content: t`${fg(C.green)(`✓ Job ${popup.jobId} is RUNNING`)}` })));
+    rows.push(line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })));
+    if (popup.gpuIdxList) {
+      rows.push(line(Text({ content: t`${fg(C.textDim)("GPU IDX   :")} ${fg(C.green)(popup.gpuIdxList)}` })));
+      rows.push(line(Text({ content: "" })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
+      rows.push(line(Text({ content: `export CUDA_VISIBLE_DEVICES=${popup.gpuIdxList}`, fg: C.text })));
+      rows.push(line(Text({ content: `# then run: python train.py  (or your workload)`, fg: C.textDim })));
+    } else {
+      rows.push(line(Text({ content: t`${fg(C.yellow)("GPU IDX   : unavailable (check scontrol manually)")}` })));
+      rows.push(line(Text({ content: "" })));
+      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
+      rows.push(line(Text({ content: `# check: scontrol -d show job ${popup.jobId} | grep IDX`, fg: C.textDim })));
+    }
+    rows.push(line(Text({ content: "" })));
+  } else if (popup.jobSubmitStatus === "error") {
+    for (const wl of wrapText(`✗ ${popup.jobErrorMsg}`, innerW)) {
+      rows.push(line(Text({ content: wl, fg: C.red })));
+    }
+    rows.push(line(Text({ content: "" })));
+  }
+
+  // Action bar
+  const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && !popup.qosFetchFailed && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
+  const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
+  const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
+
+  rows.push(line(Box({ flexDirection: "row" },
+    Box({
+      paddingLeft: 1, paddingRight: 1,
+      backgroundColor: canCopy && !popup.editMode && !busy ? C.blue : C.bgAlt,
+      onMouseDown: canCopy && !popup.editMode && !busy ? async () => { await submitSrunPopup(); } : undefined,
+    }, Text({ content: "c/Enter: Copy", fg: canCopy && !popup.editMode && !busy ? "#ffffff" : C.textDim })),
+    Text({ content: "  " }),
+    canCancel
+      ? Box({
+          paddingLeft: 1, paddingRight: 1, backgroundColor: C.red,
+          onMouseDown: () => { cancelSlurmJob(); },
+        }, Text({ content: "X: Cancel Job", fg: "#ffffff" }))
+      : canResubmit
+        ? Box({
+            paddingLeft: 1, paddingRight: 1, backgroundColor: C.yellow,
+            onMouseDown: () => { submitJobToSlurm(); },
+          }, Text({ content: "R: Resubmit", fg: "#000000" }))
+        : Box({
+            paddingLeft: 1, paddingRight: 1,
+            backgroundColor: canSubmit ? C.green : C.bgAlt,
+            onMouseDown: canSubmit ? () => { submitJobToSlurm(); } : undefined,
+          }, Text({ content: busy ? "…" : "S: Submit", fg: canSubmit ? "#000000" : C.textDim })),
+    Text({ content: "  " }),
+    Box({
+      paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt,
+      onMouseDown: () => {
+        if (popup.editMode) { popup.editMode = false; _renderHook?.(); }
+        else if (busy) { popup.jobAbortRequested = true; _renderHook?.(); }
+        else closeSrunPopup();
+      },
+    }, Text({ content: popup.editMode ? "Esc: Done" : busy ? "Esc: Abort" : "Esc: Close", fg: C.textDim })),
+  )));
+  rows.push(line(Text({ content: "" })));
+
+  // Center popup on screen
+  const termW = process.stdout.columns || 80;
+  const termH = process.stdout.rows || 24;
+  const left = Math.max(0, Math.floor((termW - w) / 2));
+  const top = Math.max(0, Math.floor((termH - rows.length) / 2));
+
+  return Box(
+    { position: "absolute", left, top, width: w, flexDirection: "column", backgroundColor: C.bg, zIndex: 100 },
+    ...rows,
+  );
 }
 
 async function submitSrunPopup() {
@@ -3359,10 +4960,269 @@ async function submitJobToSlurm() {
 // ── Slurm Cluster Tab Renderer ───────────────────────────────────
 
 function renderSlurmClusterTab(slurmIdx: number) {
-  syncStateToS();
-  const _r = _mod_renderSlurmClusterTab(slurmIdx);
-  syncStateFromS();
-  return _r;
+  const ssnap = slurmSnapshots[slurmIdx];
+  if (!ssnap) {
+    return Box(
+      { flexDirection: "column", paddingLeft: 1, backgroundColor: C.bg },
+      Box({ height: 0 }), // removed old tab bar
+      Text({ content: "No data for this Slurm cluster.", fg: C.textDim }),
+    );
+  }
+
+  const nodes = ssnap.nodes || [];
+  const totalGpus = nodes.reduce((s, n) => s + n.gpu_total, 0);
+  const usedGpus = nodes.reduce((s, n) => s + n.gpu_used, 0);
+  const maxGpus = nodes.reduce((m, n) => Math.max(m, n.gpu_total), 0);
+
+  const termWidth = process.stdout.columns || 80;
+
+  // Tab bar handled globally
+
+  // Header
+  const slurmHeader = Box(
+    { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
+    Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name))} ${fg(C.textDim)("· slurm")}` }),
+    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
+  );
+
+  // Sort nodes
+  const sortedNodes = [...nodes].sort((a, b) => {
+    switch (slurmSortKey) {
+      case "name":      return a.name.localeCompare(b.name);
+      case "partition": return (a.partition || "").localeCompare(b.partition || "");
+      case "free_asc":  return a.gpu_free - b.gpu_free;
+      case "free_desc": return b.gpu_free - a.gpu_free;
+      default:          return 0;
+    }
+  });
+
+  // Column widths
+  const nodeW = 12;
+  // Dynamic partition width: fit longest name, min 12, max 22
+  const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
+  const partW = Math.min(22, Math.max(12, maxPartLen + 1));
+  const freeW = 6;
+  // Clamp max GPU columns to fit screen - prefer showing user names legibly
+  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
+  const gpuW = maxDisplayGpus > 0
+    ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
+    : 8;
+
+  // Sort indicator helper
+  const sortArrow = (col: SlurmSortKey, altCol?: SlurmSortKey) => {
+    if (slurmSortKey === col || slurmSortKey === altCol) return fg(C.blue)(" ▲");
+    if (col === "free_asc" && slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
+    return fg(C.textDim)(" ·");
+  };
+
+  // Table header with clickable sort columns
+  const gpuHeaders = Array.from({ length: maxDisplayGpus }, (_, i) =>
+    Box({ width: gpuW }, Text({ content: `GPU${i}`.padEnd(gpuW), fg: C.textDim }))
+  );
+  const moreGpusHdr = maxGpus > maxDisplayGpus
+    ? Box({ width: 4 }, Text({ content: `+${maxGpus - maxDisplayGpus}`, fg: C.textDim }))
+    : null;
+
+  const tableHdr = Box(
+    { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
+    Box(
+      { width: nodeW, onMouseDown: () => { slurmSortKey = slurmSortKey === "name" ? "none" : "name"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Node".padEnd(nodeW - 2)}${sortArrow("name")}`, fg: C.textDim }),
+    ),
+    Box(
+      { width: partW, onMouseDown: () => { slurmSortKey = slurmSortKey === "partition" ? "none" : "partition"; slurmScrollOff = 0; _renderHook?.(); } },
+      Text({ content: t`${"Partition".padEnd(partW - 2)}${sortArrow("partition")}`, fg: C.textDim }),
+    ),
+    ...gpuHeaders,
+    ...(moreGpusHdr ? [moreGpusHdr] : []),
+    Box(
+      {
+        width: freeW,
+        onMouseDown: () => {
+          slurmSortKey = slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
+          slurmScrollOff = 0;
+          _renderHook?.();
+        },
+      },
+      Text({ content: t`${"Free".padEnd(freeW - 2)}${slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
+    ),
+  );
+
+  const stateIcon: Record<string, string> = {
+    idle: "🟢", mixed: "🟡", allocated: "🔴", down: "⚫", drain: "⚫", drained: "⚫",
+  };
+
+  const termHeight = process.stdout.rows || 24;
+  // tabBar(1) + slurmHeader(1) + tableHdr(1) + footer(3) = 6 fixed lines
+  const visibleRows = Math.max(1, termHeight - 6);
+
+  // Clamp scroll offset (non-destructive: only reduce, never over-clamp on small lists)
+  const maxScroll = Math.max(0, sortedNodes.length - visibleRows);
+  if (slurmScrollOff > maxScroll) slurmScrollOff = maxScroll;
+  if (slurmScrollOff < 0) slurmScrollOff = 0;
+
+  // Build all node rows first, then slice for scroll
+  const allNodeRows: any[] = [];
+  for (let ni = 0; ni < sortedNodes.length; ni++) {
+    const snode = sortedNodes[ni]!;
+    const isSelected = ni === slurmSelectedIdx;
+    const icon = stateIcon[snode.state?.toLowerCase()?.replace("*", "") || ""] || "⚪";
+
+    const gpuCells = Array.from({ length: maxDisplayGpus }, (_, gi) => {
+      const slot = snode.gpus?.[gi];
+      if (!slot) return Box({ width: gpuW }, Text({ content: "".padEnd(gpuW), fg: C.textDim }));
+      if (slot.user === "???") {
+        // Occupied but owner unidentifiable (Slurm visibility/policy limit)
+        return Box({ width: gpuW }, Text({ content: "👤".padEnd(gpuW), fg: C.yellow }));
+      }
+      if (slot.user) {
+        const label = slot.user.length > gpuW - 1 ? slot.user.slice(0, gpuW - 2) + "…" : slot.user;
+        return Box({ width: gpuW }, Text({ content: label.padEnd(gpuW), fg: C.yellow }));
+      }
+      return Box({ width: gpuW }, Text({ content: "·".padEnd(gpuW), fg: C.textDim }));
+    });
+
+    // Extra GPU count for truncated columns
+    const hiddenGpus = maxGpus > maxDisplayGpus ? snode.gpus.slice(maxDisplayGpus) : [];
+    const hiddenUsed = hiddenGpus.filter(g => g?.user).length;
+    const moreCell = maxGpus > maxDisplayGpus
+      ? Box({ width: 4 }, Text({ content: hiddenUsed > 0 ? `+${hiddenUsed}` : "   ", fg: hiddenUsed > 0 ? C.red : C.textDim }))
+      : null;
+
+    const capturedNode = snode;
+    const capturedCluster = ssnap;
+    const handleNodeClick = () => {
+      const now = Date.now();
+      if (_slurmLastClickNode === capturedNode.name && now - _slurmLastClickTime < 400) {
+        // Double-click → open popup
+        openSrunPopup(capturedNode, capturedCluster.cluster_name, capturedCluster);
+      } else {
+        // Single click → select
+        slurmSelectedIdx = ni;
+        _renderHook?.();
+      }
+      _slurmLastClickNode = capturedNode.name;
+      _slurmLastClickTime = now;
+    };
+
+    const myJobIds = getMyJobIdsOnNode(snode, ssnap.ssh_user || "");
+    const hasMyJob = myJobIds.length > 0;
+
+    allNodeRows.push(
+      Box(
+        { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined, onMouseDown: handleNodeClick },
+        Box({ width: nodeW }, Text({ content: `${hasMyJob ? "★" : icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: hasMyJob ? C.cyan : isSelected ? "#ffffff" : C.text })),
+        Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
+        ...gpuCells,
+        ...(moreCell ? [moreCell] : []),
+        Box({ width: freeW }, Text({
+          content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
+          fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
+        })),
+      )
+    );
+  }
+
+  // Apply scroll window
+  const nodeRows = allNodeRows.slice(slurmScrollOff, slurmScrollOff + visibleRows);
+
+  // Scroll indicator
+  const scrollInfo = sortedNodes.length > visibleRows
+    ? ` [${slurmScrollOff + 1}-${Math.min(slurmScrollOff + visibleRows, sortedNodes.length)}/${sortedNodes.length}]`
+    : "";
+
+  // User summary
+  const userCounts: Record<string, number> = {};
+  for (const sn of nodes) {
+    for (const sg of (sn.gpus || [])) {
+      if (sg.user) userCounts[sg.user] = (userCounts[sg.user] || 0) + 1;
+    }
+  }
+  const userParts = Object.entries(userCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([u, c]) => u === "???" ? `👤:${c}` : `${u}:${c}`)
+    .join("  ");
+
+  // Node cancel status line
+  let cancelStatusContent: any = " ";
+  if (nodeCancelStatus && nodeCancelStatus.node) {
+    if (nodeCancelStatus.status === "cancelling") {
+      cancelStatusContent = t`${fg(C.yellow)(`⟳ Cancelling job on ${nodeCancelStatus.node}...`)}`;
+    } else if (nodeCancelStatus.status === "done") {
+      cancelStatusContent = t`${fg(C.green)(`✓ ${nodeCancelStatus.msg}`)}`;
+    } else if (nodeCancelStatus.status === "error") {
+      cancelStatusContent = t`${fg(C.red)(`✗ ${nodeCancelStatus.msg}`)}`;
+    }
+  }
+
+  const footer = Box(
+    { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
+    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
+    Text({ content: cancelStatusContent }),
+    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
+  );
+
+  // Error rows
+  const errorRows: any[] = [];
+  if (ssnap.errors?.length) {
+    errorRows.push(Box({ paddingLeft: 1 }, Text({ content: t`⚠ ${ssnap.errors.join("; ")}`, fg: C.red })));
+  }
+
+  // Thin scrollbar (1 char wide, right edge)
+  const scrollbar = (() => {
+    if (nodes.length <= visibleRows) return null;
+    const trackH = visibleRows;
+    const thumbH = Math.max(1, Math.round((visibleRows / nodes.length) * trackH));
+    const thumbTop = Math.round((slurmScrollOff / (nodes.length - visibleRows)) * (trackH - thumbH));
+    const chars = Array.from({ length: trackH }, (_, i) => {
+      const inThumb = i >= thumbTop && i < thumbTop + thumbH;
+      return Text({ content: inThumb ? "█" : "░", fg: inThumb ? C.blue : C.textDim });
+    });
+    return Box(
+      {
+        position: "absolute",
+        right: 0,
+        top: 3, // below tabBar + header + tableHdr
+        width: 1,
+        flexDirection: "column",
+      },
+      ...chars,
+    );
+  })();
+
+  // Mouse scroll handler for the node list area
+  const onMouseScroll = (e: any) => {
+    if (!e.scroll) return;
+    const visH = Math.max(1, (process.stdout.rows || 24) - 6);
+    const maxSc = Math.max(0, nodes.length - visH);
+    if (e.scroll.direction === "down") {
+      slurmScrollOff = Math.min(maxSc, slurmScrollOff + 3);
+      slurmSelectedIdx = Math.min(nodes.length - 1, slurmScrollOff);
+    } else if (e.scroll.direction === "up") {
+      slurmScrollOff = Math.max(0, slurmScrollOff - 3);
+      slurmSelectedIdx = Math.max(0, slurmScrollOff);
+    }
+    _renderHook?.();
+  };
+
+  return Box(
+    {
+      position: "relative", width: "100%", height: "100%", backgroundColor: C.bg,
+      onMouseScroll,
+    },
+    Box(
+      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
+      
+      slurmHeader,
+      tableHdr,
+      ...nodeRows,
+      ...errorRows,
+      footer,
+    ),
+    ...(scrollbar ? [scrollbar] : []),
+    // srun popup overlay (no runner pane in Slurm tab)
+    ...(slurmRunPopup ? [renderSrunPopup(slurmRunPopup)] : []),
+  );
 }
 
 // ── Slurm Tab ────────────────────────────────────────────────────
@@ -3492,17 +5352,452 @@ async function loadSlurmData(): Promise<void> {
 
 
 function renderSetupView() {
-  syncStateToS();
-  const _r = _mod_renderSetupView();
-  syncStateFromS();
-  return _r;
+  tuiLog("INFO", `renderSetupView called: setupNodes.length=${setupNodes.length}, setupSelectedIdx=${setupSelectedIdx}`);
+  const rows: any[] = [];
+
+  rows.push(Text({ content: t`${bold("Setup")} - Per-Node Environment Configuration`, fg: C.text }));
+  rows.push(Text({ content: t`${fg(C.textDim)("Configure conda/micromamba/venv and work directory per node. Saved to opensmi.json.")}` }));
+  rows.push(Text({ content: " " }));
+
+  if (setupNodes.length === 0) {
+    rows.push(Text({ content: "  No nodes found in opensmi.json.", fg: C.textDim }));
+    rows.push(Text({ content: `  Config search paths:`, fg: C.textDim }));
+    const paths = [
+      process.env.OPENSMI_CONFIG,
+      `${getStateDir()}/opensmi.json`,
+    ].filter(Boolean) as string[];
+    for (const p of paths) {
+      const exists = existsSync(p);
+      rows.push(Text({ content: `    ${exists ? "✓" : "✗"} ${p}`, fg: exists ? C.green : C.textDim }));
+    }
+    rows.push(Text({ content: " " }));
+    rows.push(Text({ content: "  Run 'opensmi init' to create a config, or set OPENSMI_CONFIG.", fg: C.textDim }));
+  }
+
+  for (let i = 0; i < setupNodes.length; i++) {
+    const n = setupNodes[i];
+    const selected = i === setupSelectedIdx;
+    const prefix = selected ? "▸ " : "  ";
+    const color = selected ? C.green : C.text;
+
+    const envStr = n.env_manager && n.env_name
+      ? `${n.env_manager}:${n.env_name}`
+      : "(none)";
+    const dirStr = n.work_dir || "(none)";
+
+    rows.push(Text({
+      content: t`${fg(color)(`${prefix}${n.alias.padEnd(14)} env: ${envStr.padEnd(25)} dir: ${dirStr}`)}`,
+    }));
+
+    // Show edit fields for selected node
+    if (selected && setupEditingField) {
+      const fields: Array<{ label: string; key: "env_manager" | "env_name" | "work_dir"; hint: string }> = [
+        { label: "Env Manager", key: "env_manager", hint: "conda / miniconda / micromamba / venv" },
+        { label: "Env Name   ", key: "env_name", hint: "e.g. ml, torch2" },
+        { label: "Work Dir   ", key: "work_dir", hint: "e.g. ~/projects" },
+      ];
+      for (const f of fields) {
+        const editing = setupEditingField === f.key;
+        const val = String(editing ? setupEditBuffer : (n[f.key] ?? ""));
+        const lineColor = editing ? "#9b59d6" : C.textDim;
+        const cursor = editing ? "█" : "";
+        const hint = editing ? "" : ` (${f.hint})`;
+        rows.push(Text({
+          content: `    ${f.label}: ${val}${cursor}${hint}`,
+          fg: lineColor,
+        }));
+      }
+    }
+  }
+
+  rows.push(Text({ content: " " }));
+  rows.push(Text({ content: t`${fg(C.textDim)("↑↓ select  Enter edit  Tab next field  Esc cancel  s: save")}` }));
+  if (setupMessage) {
+    rows.push(Text({ content: t`${fg(C.green)(setupMessage)}` }));
+  }
+
+  return Box(
+    {
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      padding: 1,
+      backgroundColor: C.bg,
+    },
+    ...rows
+  );
 }
 
 function renderRunnerPane() {
-  syncStateToS();
-  const _r = _mod_renderRunnerPane();
-  syncStateFromS();
-  return _r;
+  // Use a slightly larger percentage or Flex trick to accommodate more GPUs
+  const height = runnerPaneFolded ? 3 : (launchNumGpus > 3 ? "60%" : "40%");
+
+  const foldIcon = runnerPaneFolded ? "▸" : "▾";
+  const focusIndicator = runnerFocused
+    ? (runnerInputTyping ? "⌨ typing" : "● focused")
+    : "○ idle";
+
+  const headerText = Text({
+    content: `${foldIcon} Command Runner  ${focusIndicator}`,
+    fg: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.cyan)
+  });
+
+  const helpText = Text({
+    content: runnerInputTyping
+      ? "[Enter] Execute  [Esc] Cancel"
+      : (runnerFocused
+          ? "[Enter] Edit  [ctrl+x Enter] Execute  [Esc] Unfocus  [Tab/+/-/Q] Options"
+          : "[click/ctrl+x ↓] Focus  [ctrl+x f] Fold"),
+    fg: C.textDim
+  });
+
+  const headerBox = Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        if (runnerInputTyping) return; // Don't toggle while typing
+        if (runnerFocused) {
+          runnerFocused = false;
+          runnerInputTyping = false;
+        } else {
+          runnerFocused = true;
+          runnerFocusedInputIdx = 0;
+          runnerInputBuffer = launchCommand;
+        }
+        requestRender?.();
+      },
+    },
+    headerText,
+    helpText
+  );
+
+  if (runnerPaneFolded) {
+    return Box(
+      {
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        width: "100%",
+        height: height,
+        borderStyle: "rounded",
+        borderColor: C.border,
+        backgroundColor: C.bgAlt,
+        zIndex: 1000,
+        onMouseDown: () => {
+          runnerPaneFolded = false;
+          requestRender?.();
+        },
+      },
+      headerBox
+    );
+  }
+
+  const gpuInfo = launchSelectedGpus.length > 0
+    ? launchSelectedGpus.map(g => `${g.node}:${g.gpu}`).join(", ")
+    : "none";
+
+  const statusLine = Box(
+    { flexDirection: "row", paddingBottom: 1 },
+    Text({ content: `Mode: `, fg: C.textDim }),
+    Text({ content: `${launchMode} `, fg: C.cyan }),
+    Text({ content: `| Dist: `, fg: C.textDim }),
+    Text({ content: `${launchDistMode} `, fg: C.cyan }),
+    Text({ content: `| Queue: `, fg: C.textDim }),
+    Text({ content: `${launchQueueMode} `, fg: C.cyan }),
+    Text({ content: `| GPUs (${launchNumGpus}): `, fg: C.textDim }),
+    Text({ content: gpuInfo, fg: runnerInputTyping ? "#9b59d6" : (launchSelectedGpus.length > 0 ? C.green : C.yellow) })
+  );
+
+  const errorText = launchErrorMsg
+    ? Text({ content: `Error: ${launchErrorMsg}`, fg: C.red })
+    : null;
+
+  const commandNodes: any[] = [];
+
+  // Show hint if no GPUs selected
+  if (launchSelectedGpus.length === 0) {
+    commandNodes.push(Text({ content: " ", fg: C.textDim }));
+    commandNodes.push(Text({
+      content: "No GPUs selected. Press [+] or click GPU cells to add.",
+      fg: C.yellow
+    }));
+  } else if (launchDistMode === "single") {
+    commandNodes.push(Text({ content: "Command:", fg: C.textDim }));
+
+    const isCmdFocused = runnerFocused && runnerFocusedInputIdx === 0;
+
+    if (runnerInputTyping && isCmdFocused) {
+      commandNodes.push(Input({
+        id: "runner-cmd-input",
+        width: "100%",
+        value: runnerInputBuffer,
+        placeholder: "type command and press Enter...",
+        backgroundColor: C.bgAlt,
+        focusedBackgroundColor: "#3b4261",
+        textColor: "#ffffff",
+        cursorColor: C.green,
+      }));
+    } else {
+      commandNodes.push(
+        Box(
+          { width: "100%", height: 1, position: "relative" },
+          Text({
+            content: `> ${launchCommand || "(click to edit)"}`,
+            fg: (runnerInputTyping && isCmdFocused) ? "#9b59d6" : (isCmdFocused ? C.green : C.textDim),
+          }),
+          Box({
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 1, // Low zIndex to allow text selection
+            onMouseDown: (e: any) => {
+              e?.stopPropagation?.();
+              runnerMouseDownTime = Date.now();
+              runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+            },
+            onMouseUp: (e: any) => {
+              e?.stopPropagation?.();
+              const elapsed = Date.now() - runnerMouseDownTime;
+              const moved = runnerMouseDownPos && (
+                Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+              );
+
+              if (moved || elapsed > 300) {
+                return; // Was a drag, don't trigger click
+              }
+
+              if (!runnerFocused) {
+                runnerFocused = true;
+                runnerInputBuffer = launchCommand;
+                runnerFocusedInputIdx = 0;
+              } else if (runnerFocusedInputIdx === 0 && !runnerInputTyping) {
+                // Second click on same line → typing mode
+                runnerInputTyping = true;
+                runnerInputBuffer = launchCommand;
+              }
+              requestRender?.();
+            },
+          })
+        )
+      );
+    }
+  } else {
+    // one-to-one mode
+    commandNodes.push(Text({
+      content: `Commands (${launchNumGpus} lines, one per GPU):`,
+      fg: C.textDim
+    }));
+
+    if (runnerFocused && runnerInputTyping) {
+      for (let i = 0; i < launchNumGpus; i++) {
+        const value = launchCommands[i] || "";
+        const gpu = launchSelectedGpus[i];
+        const label = gpu ? `${gpu.node}:GPU${gpu.gpu}` : `GPU ${i}`;
+        commandNodes.push(Input({
+          id: `runner-cmd-input-${i}`,
+          value,
+          width: "100%",
+          backgroundColor: C.bgAlt,
+          focusedBackgroundColor: "#3b4261",
+          textColor: "#ffffff",
+          cursorColor: C.green,
+          placeholder: `${label} command...`,
+        }));
+      }
+    } else {
+      for (let i = 0; i < launchNumGpus; i++) {
+        const cmd = launchCommands[i] || "";
+        const gpu = launchSelectedGpus[i];
+        const label = gpu ? `${gpu.node}:GPU${gpu.gpu}` : `GPU ${i}`;
+        const isFocusedLine = runnerFocused && i === runnerFocusedInputIdx;
+        commandNodes.push(
+          Box(
+            { width: "100%", height: 1, position: "relative" },
+            Text({
+              content: `${label}: ${cmd || "(click to edit)"}`,
+              fg: (runnerInputTyping && isFocusedLine) ? "#9b59d6" : (isFocusedLine ? C.green : (cmd.trim() ? C.textDim : C.red)),
+            }),
+            Box({
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              zIndex: 1, // Low zIndex to allow text selection
+              onMouseDown: (e: any) => {
+                e?.stopPropagation?.();
+                // Track mousedown for drag detection
+                runnerMouseDownTime = Date.now();
+                runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+              },
+              onMouseUp: (e: any) => {
+                e?.stopPropagation?.();
+                // Check if this was a drag (long press or moved)
+                const elapsed = Date.now() - runnerMouseDownTime;
+                const moved = runnerMouseDownPos && (
+                  Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                  Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+                );
+
+                // If dragged, don't trigger click behavior (allow copy)
+                if (moved || elapsed > 300) {
+                  return;
+                }
+
+                // This was a click, not a drag
+                if (!runnerFocused) {
+                  runnerFocused = true;
+                  runnerFocusedInputIdx = i;
+                } else if (runnerFocusedInputIdx === i && !runnerInputTyping) {
+                  // Second click on same line → typing mode
+                  runnerInputTyping = true;
+                } else {
+                  runnerFocusedInputIdx = i;
+                }
+                requestRender?.();
+              },
+            })
+          )
+        );
+      }
+    }
+  }
+
+  const tmuxNodes: any[] = [];
+  if (launchMode === "tmux") {
+    tmuxNodes.push(Text({ content: " " }));
+    tmuxNodes.push(Text({ content: "Tmux session (empty = auto):", fg: C.textDim }));
+
+    const isTmuxFocused = runnerFocused && runnerFocusedInputIdx === -1;
+
+    if (runnerInputTyping && isTmuxFocused) {
+      tmuxNodes.push(Input({
+        id: "runner-tmux-session-input",
+        value: launchTmuxSession,
+        width: "100%",
+        backgroundColor: C.bgAlt,
+        focusedBackgroundColor: "#3b4261",
+        textColor: "#ffffff",
+        cursorColor: C.green,
+        placeholder: "session name (optional)...",
+      }));
+    } else {
+      tmuxNodes.push(
+        Box(
+          { width: "100%", height: 1, position: "relative" },
+          Text({
+            content: `> ${launchTmuxSession || "(click to edit)"}`,
+            fg: (runnerInputTyping && isTmuxFocused) ? "#9b59d6" : (isTmuxFocused ? C.green : C.textDim),
+          }),
+          Box({
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            zIndex: 1, // Low zIndex to allow text selection
+            onMouseDown: (e: any) => {
+              e?.stopPropagation?.();
+              runnerMouseDownTime = Date.now();
+              runnerMouseDownPos = { x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+            },
+            onMouseUp: (e: any) => {
+              e?.stopPropagation?.();
+              const elapsed = Date.now() - runnerMouseDownTime;
+              const moved = runnerMouseDownPos && (
+                Math.abs((e?.clientX ?? 0) - runnerMouseDownPos.x) > 5 ||
+                Math.abs((e?.clientY ?? 0) - runnerMouseDownPos.y) > 5
+              );
+
+              if (moved || elapsed > 300) {
+                return; // Was a drag, don't trigger click
+              }
+
+              if (!runnerFocused) {
+                runnerFocused = true;
+                runnerFocusedInputIdx = -1;
+              } else if (runnerFocusedInputIdx === -1 && !runnerInputTyping) {
+                // Second click on tmux session → typing mode
+                runnerInputTyping = true;
+              } else {
+                runnerFocusedInputIdx = -1;
+              }
+              requestRender?.();
+            },
+          })
+        )
+      );
+    }
+  }
+
+  const contentNodes = [
+    headerBox,
+    modeInfo,
+    gpuText,
+    Text({ content: " " }),
+    Text({ content: " " }),
+    renderGpuAssignmentPanel(),
+
+    ...commandNodes,
+    ...tmuxNodes,
+  ];
+
+  const errorBox = errorText ? Box(
+    {
+      position: "absolute",
+      bottom: 1,
+      right: 2,
+      backgroundColor: C.bgAlt,
+      padding: 0,
+      zIndex: 1001,
+    },
+    errorText
+  ) : null;
+
+  return Box(
+    {
+      position: "absolute",
+      bottom: 0,
+      left: 0,
+      width: "100%",
+      height: height,
+      borderStyle: "rounded",
+      borderColor: runnerInputTyping ? "#9b59d6" : (runnerFocused ? C.green : C.border),
+      backgroundColor: C.bgAlt,
+      padding: 1,
+      flexDirection: "column",
+      gap: 0,
+      zIndex: 1000,
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        if (runnerInputTyping) return;
+        if (runnerFocused) {
+          runnerFocused = false;
+          runnerInputTyping = false;
+          requestRender?.();
+          return;
+        }
+        if (!runnerFocused) {
+          e?.preventDefault?.();
+          runnerFocused = true;
+          runnerInputBuffer = launchCommand;
+          runnerInputTyping = false;
+          requestRender?.();
+        }
+      },
+    },
+    ...contentNodes,
+    ...(errorBox ? [errorBox] : [])
+  );
 }
 
 
@@ -3826,17 +6121,6 @@ async function executeLaunch(): Promise<void> {
 
     const updateScript = `
 import sys, json
-// ── Extracted Module Imports (Phase 3 Step 2) ──
-import { S as _S_module } from "./src/state/global";
-import { renderAlloc as _mod_renderAlloc } from "./src/components/AllocModal";
-import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher } from "./src/components/Layout";
-import { renderGpuAssignmentPanel as _mod_renderGpuAssignmentPanel, renderRunnerPane as _mod_renderRunnerPane } from "./src/components/Runner";
-import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab } from "./src/views/Dashboard";
-import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from "./src/views/Detail";
-import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from "./src/views/Jobs";
-import { renderMyGpuView as _mod_renderMyGpuView } from "./src/views/MyGpus";
-import { renderSetupView as _mod_renderSetupView } from "./src/views/Setup";
-
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
 from opensmi.launch_history import update_history
 from opensmi.state import get_state_dir
