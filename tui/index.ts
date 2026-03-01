@@ -7607,6 +7607,8 @@ async function main() {
         killErrorMsg = "";
         killOutput = "";
         killInProgress = false;
+        runnerFocused = false;
+        runnerInputTyping = false;
         screen = "kill";
         render();
       } else if (key.name === "escape" || key.name === "backspace") {
