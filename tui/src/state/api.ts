@@ -208,8 +208,24 @@ export async function pollCluster(): Promise<void> {
       hour12: false,
       timeZone: "Asia/Seoul",
     });
-    // recomputeKnownUsers is in format.ts — call via S.requestRender side-effect if needed
-    // (Phase 3 will wire this properly; for now just mark dirty)
+    // Update GPU idle tracking using the fresh snapshot
+    if (S.snapshot) {
+      const now = Date.now();
+      for (const node of S.snapshot.nodes) {
+        if (node.error) continue;
+        for (const gpu of node.gpus) {
+          const key = `${node.node_alias}:${gpu.uuid}`;
+          const procs = node.processes.filter((p) => p.gpu_uuid === gpu.uuid);
+          if (procs.length === 0) {
+            if (!S.gpuIdleStart[key]) {
+              S.gpuIdleStart[key] = now;
+            }
+          } else {
+            delete S.gpuIdleStart[key];
+          }
+        }
+      }
+    }
   } catch (e: any) {
     S.pollError = e.message || String(e);
   } finally {

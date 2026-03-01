@@ -825,13 +825,13 @@ with open("${allocFile}", "r") as f:
 with open("${operatorFile}", "r") as f:
     current_user = json.loads(f.read())["operator"]
 excluded_nodes = set([g["node"] + ":" + str(g["gpu"]) for g in json.loads('${JSON.stringify(launchExcludedGpus)}')])
-    all_ranked_gpus = select_top_gpus(snap, 9999, history, alloc_data, current_user)
-    gpus = []
-    for n, g in all_ranked_gpus:
-        if n + ":" + str(g) not in excluded_nodes:
-            gpus.append((n, g))
-            if len(gpus) >= ${launchNumGpus}:
-                break
+all_ranked_gpus = select_top_gpus(snap, 9999, history, alloc_data, current_user)
+gpus = []
+for n, g in all_ranked_gpus:
+    if n + ":" + str(g) not in excluded_nodes:
+        gpus.append((n, g))
+        if len(gpus) >= ${launchNumGpus}:
+            break
 print(json.dumps([{"node": n, "gpu": g} for n, g in gpus]))
 `;
 
@@ -905,8 +905,9 @@ async function killPids(
 // ── Data fetching ──────────────────────────────────────────────────
 
 async function pollCluster(): Promise<void> {
-  if (isPolling) return;
+  if (isPolling || (_S_module as any).isPolling) return;
   isPolling = true;
+  (_S_module as any).isPolling = true;
   pollError = "";
   tuiLog("DEBUG", "pollCluster start");
 
@@ -955,6 +956,7 @@ async function pollCluster(): Promise<void> {
     pollError = e.message || String(e);
   } finally {
     isPolling = false;
+    (_S_module as any).isPolling = false;
   }
 }
 
@@ -993,7 +995,7 @@ async function pollExtraCluster(idx: number): Promise<void> {
     }
     if (next.nodes.length === 0) {
       extraSelectedNodeIdx[idx] = 0;
-    } else if (selectedIdx >= next.nodes.length) {
+    } else if (extraSelectedNodeIdx[idx] >= next.nodes.length) {
       extraSelectedNodeIdx[idx] = next.nodes.length - 1;
     }
   } catch (e: any) {
@@ -1277,6 +1279,8 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
       continue;
     }
 
+    const origGpus = job.gpus.slice();
+    const origStatus = job.status;
     try {
       if (!hasExplicitGpus) {
         // No GPUs specified - auto-assign from available pool
@@ -1315,6 +1319,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
     } catch (e: any) {
       tuiLog("ERROR", `dispatch failed job=${job.id}: ${e?.message || String(e)}`);
 
+      job.gpus = origGpus;
       job.status = "failed";
       job.finished_at = new Date().toISOString();
       job.error = `Dispatch failed: ${e?.message || String(e)}`;
@@ -2998,6 +3003,7 @@ function slurmNameSafe(s: string): boolean {
 async function fetchQosForPartition(loginNode: string, sshUser: string, partition: string) {
   if (!slurmRunPopup) return;
   const popup = slurmRunPopup;
+  let currentPopup = popup;
   try {
     const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
     const proc = Bun.spawn(
@@ -3007,17 +3013,19 @@ async function fetchQosForPartition(loginNode: string, sshUser: string, partitio
     );
     const out = await new Response(proc.stdout).text();
     await proc.exited;
+    // Re-read popup after await in case it was closed+reopened
+    currentPopup = slurmRunPopup ?? popup;
     // Parse "AllowQos=normal,high" or "QoS=normal"
     const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
     if (m && m[1] !== "N/A" && m[1] !== "(null)") {
-      popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
+      currentPopup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
     }
-    tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
+    tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(currentPopup.qosList)}`);
   } catch (e) {
     tuiLog("DEBUG", `fetchQos failed: ${e}`);
-    popup.qosFetchFailed = true;
+    currentPopup.qosFetchFailed = true;
   } finally {
-    popup.qosLoading = false;
+    currentPopup.qosLoading = false;
   }
   _renderHook?.();
 }
@@ -3269,9 +3277,9 @@ async function submitJobToSlurm() {
 
     const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
     const sbatchOut = await new Response(sbatchProc.stdout).text();
+    const sbatchErr = await new Response(sbatchProc.stderr).text();
     const sbatchExit = await sbatchProc.exited;
     if (sbatchExit !== 0) {
-      const sbatchErr = await new Response(sbatchProc.stderr).text();
       throw new Error(`sbatch failed: ${sbatchErr.trim() || `exit ${sbatchExit}`}`);
     }
 
@@ -3279,8 +3287,7 @@ async function submitJobToSlurm() {
     let jobIdMatch = sbatchOut.match(/Submitted batch job (\d+)/);
     if (!jobIdMatch) {
       // Some clusters emit delayed output; retry stderr+stdout combination
-      const sbatchErr2 = await new Response(sbatchProc.stderr).text();
-      const combined = sbatchOut + sbatchErr2;
+      const combined = sbatchOut + sbatchErr;
       jobIdMatch = combined.match(/Submitted batch job (\d+)/);
     }
     if (!jobIdMatch) {
