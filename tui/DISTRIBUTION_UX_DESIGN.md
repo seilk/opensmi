@@ -284,28 +284,28 @@ Render GPU Assignment Panel with new state
 - [x] No missing edge cases
 
 ### Task 2: Implementation
-- [ ] GPU Assignment Panel renders correctly
-- [ ] Click handlers work (toggle selection)
-- [ ] Visual indicators update in real-time
-- [ ] Mode switching (auto ↔ selected) works
-- [ ] No regressions in existing runner functionality
+- [x] GPU Assignment Panel renders correctly
+- [x] Click handlers work (toggle selection)
+- [x] Visual indicators update in real-time
+- [x] Mode switching (auto ↔ selected) works
+- [x] No regressions in existing runner functionality
 
 ### Task 3: Visual Feedback
-- [ ] GPU status indicators visible (●/○/✓/✗)
-- [ ] Reasoning text shows why GPU selected/excluded
-- [ ] Command-GPU mapping clear (one-to-one mode)
-- [ ] Color coding consistent with theme
+- [x] GPU status indicators visible (●/○/✓/✗)
+- [x] Reasoning text shows why GPU selected/excluded
+- [x] Command-GPU mapping clear (one-to-one mode)
+- [x] Color coding consistent with theme
 
 ### Task 4: My GPU View Integration
-- [ ] Opening runner from My GPU View pre-selects bundle GPUs
-- [ ] `launchGpuMode` set to "selected" automatically
-- [ ] Bundle context shown in panel
+- [x] Opening runner from My GPU View pre-selects bundle GPUs
+- [x] `launchGpuMode` set to "selected" automatically
+- [x] Bundle context shown in panel
 
 ### Task 5: Testing
-- [ ] All test scenarios pass
-- [ ] No regressions in existing workflows
-- [ ] Multi-process deployment works end-to-end
-- [ ] Error cases handled gracefully (no GPUs, allocation conflicts)
+- [x] All test scenarios pass
+- [x] No regressions in existing workflows
+- [x] Multi-process deployment works end-to-end
+- [x] Error cases handled gracefully (no GPUs, allocation conflicts)
 
 ## Edge Cases
 
