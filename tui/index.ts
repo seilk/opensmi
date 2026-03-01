@@ -2642,7 +2642,8 @@ function renderDashboard() {
       if (users.length === 0) {
         const alloc = getAllocation(n.node_alias, i);
         const remain = expiresInShort(alloc?.expires_at);
-        const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : "idle";
+        const spark = createSparkline(gpuUtilPct(g));
+        const label = alloc ? `[${alloc.target}${remain ? ` ${remain}` : ""}]` : `idle ${spark}`;
         const display = (dot + label).length > w - 1 ? (dot + label).slice(0, w - 2) + "…" : (dot + label);
         gpuCells.push(
           Box(
@@ -2912,7 +2913,8 @@ function renderDetail() {
     const remain = expiresInShort(alloc?.expires_at);
     const allocStr = `Alloc: ${allocTarget}${remain ? ` (exp ${remain})` : ""}`;
     const utilVal = gpuUtilPct(g);
-    const utilStr = utilVal !== null ? `Load ${utilVal}%` : "Load ?";
+    const utilStr = utilVal !== null ? `Load ${String(utilVal).padStart(3)}% ${createSparkline(utilVal)}` : "Load   ?  ";
+    const memBar = createMemBar(g.memory_used_mib ?? null, g.memory_total_mib ?? null);
     const activityStr = gpuActivityStatus(node, g.index, g.uuid);
 
     const isSel = g.index === selectedGpuIdx;
@@ -2928,7 +2930,7 @@ function renderDetail() {
           position: "relative",
         },
         Text({
-          content: ` ${prefix} GPU ${g.index}  |  ${g.name}  |  Mem ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr}  |  ${activityStr}`,
+          content: ` ${prefix} GPU ${g.index}  |  ${g.name.padEnd(16)}  |  ${memBar} ${gpuMemStr(g.memory_used_mib)}/${gpuMemStr(g.memory_total_mib)}  |  ${utilStr}  |  ${allocStr.padEnd(15)}  | ${activityStr}`,
           fg: isSel ? "#ffffff" : (inLaunchSelection ? C.yellow : C.cyan),
         }),
         Box({
@@ -3477,12 +3479,13 @@ function renderMyGpuView() {
       const alloc = getAllocation(gpuRef.node, gpuRef.gpu);
       const allocStr = alloc ? alloc.target : "*";
       const utilVal = gpuUtilPct(gpu);
-      const utilStr = utilVal !== null ? `${utilVal}%` : "?";
+      const utilStr = utilVal !== null ? `Load ${String(utilVal).padStart(3)}% ${createSparkline(utilVal)}` : "Load   ?  ";
+      const memBar = createMemBar(gpu.memory_used_mib ?? null, gpu.memory_total_mib ?? null);
       const activityStr = gpuActivityStatus(node, gpuRef.gpu, gpu.uuid);
 
       gpuDetails.push(
         Text({
-          content: `  ${gpuRef.node}:GPU${gpuRef.gpu}  |  ${gpu.name}  |  ${gpuMemStr(gpu.memory_used_mib)}/${gpuMemStr(gpu.memory_total_mib)}  |  Load ${utilStr}  |  ${activityStr}`,
+          content: `  ${gpuRef.node}:GPU${gpuRef.gpu}  |  ${gpu.name.padEnd(16)}  |  ${memBar} ${gpuMemStr(gpu.memory_used_mib)}/${gpuMemStr(gpu.memory_total_mib)}  |  ${utilStr}  |  ${activityStr}`,
           fg: procs.length > 0 ? C.green : C.textDim,
         })
       );
