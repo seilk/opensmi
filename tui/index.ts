@@ -2985,25 +2985,10 @@ function renderDetail() {
     children.push(Text({ content: "" }));
   }
 
-  children.push(
-    Text({
-      content: runnerInputTyping
-        ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
-        : (runnerFocused
-            ? (isAdmin
-                ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`
-                : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Esc]")} Back`)
-            : (isAdmin
-                ? "[↑↓] GPU  [Enter/a] Allocate  [*] Open-to-all  [x] Clear  [Shift+k] Kill  [ctrl+x ↓] Runner  [Esc] Back"
-                : "[↑↓] GPU  [ctrl+x ↓] Runner  [Esc] Back  [r] Refresh   (read-only)")),
-      fg: C.textDim,
-    }),
-    Text({
-      content: adminHint + (sudoInfoMsg ? ` · ${sudoInfoMsg}` : ""),
-      fg: C.textDim,
-    }),
-    Text({ content: statusMsg ? ` ${statusMsg}` : " ", fg: statusMsg ? C.yellow : C.textDim })
-  );
+  // (Footer replaced by global footer)
+  if (sudoInfoMsg) {
+    children.push(Text({ content: `(Sudo: ${sudoInfoMsg})`, fg: C.textDim }));
+  }
 
   return Box(
     { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
