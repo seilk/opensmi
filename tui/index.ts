@@ -15,6 +15,15 @@ import { existsSync, appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { tabRegistry, type Tab } from "./tabRegistry";
+import { S as _S_module } from './src/state/global';
+import { renderAlloc as _mod_renderAlloc } from './src/components/AllocModal';
+import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher } from './src/components/Layout';
+import { renderGpuAssignmentPanel as _mod_renderGpuAssignmentPanel, renderRunnerPane as _mod_renderRunnerPane } from './src/components/Runner';
+import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab } from './src/views/Dashboard';
+import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from './src/views/Detail';
+import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from './src/views/Jobs';
+import { renderMyGpuView as _mod_renderMyGpuView } from './src/views/MyGpus';
+import { renderSetupView as _mod_renderSetupView } from './src/views/Setup';
 
 // ── TUI Logger ─────────────────────────────────────────────────────
 
@@ -3826,16 +3835,6 @@ async function executeLaunch(): Promise<void> {
 
     const updateScript = `
 import sys, json
-// ── Extracted Module Imports (Phase 3 Step 2) ──
-import { S as _S_module } from "./src/state/global";
-import { renderAlloc as _mod_renderAlloc } from "./src/components/AllocModal";
-import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher } from "./src/components/Layout";
-import { renderGpuAssignmentPanel as _mod_renderGpuAssignmentPanel, renderRunnerPane as _mod_renderRunnerPane } from "./src/components/Runner";
-import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab } from "./src/views/Dashboard";
-import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from "./src/views/Detail";
-import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from "./src/views/Jobs";
-import { renderMyGpuView as _mod_renderMyGpuView } from "./src/views/MyGpus";
-import { renderSetupView as _mod_renderSetupView } from "./src/views/Setup";
 
 sys.path.insert(0, "${BASE_DIR}/src" if "${BASE_DIR}" else "")
 from opensmi.launch_history import update_history

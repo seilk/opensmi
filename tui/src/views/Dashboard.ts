@@ -22,7 +22,10 @@ import {
   createSparkline, expiresInShort, truncateText, setStatus,
   stripAnsi, wrapText, wrapTextWithCursor, shellQuote,
 } from "../utils/format";
-import { runOpensmi } from "../state/api";
+import { runOpensmi, tuiLog, OPENSMI, OPENSMI_CWD, OPENSMI_ENV } from "../state/api";
+import { checkSudoForNode } from "../components/AllocModal";
+import { getGpuCommandPlaceholder, renderRunnerPane } from "../components/Runner";
+import { renderGlobalTabBar } from "../components/Layout";
 
 // ── Dashboard Tab Helpers ────────────────────────────────────────
 
@@ -509,7 +512,7 @@ export function renderDashboard() {
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-      unifiedTabBar,
+      renderGlobalTabBar(),
       header,
       tableHeader,
       ...rows,
@@ -566,12 +569,6 @@ export function srunTokens(popup: SlurmRunPopup): string[] {
           "--gres", `gpu:${popup.gpuCount}`, "--pty", "bash"];
 }
 
-export function shellQuote(token: string): string {
-  if (token.length === 0) return "''";
-  if (/^[A-Za-z0-9_./:=+-]+$/.test(token)) return token;
-  // POSIX-safe single-quote escaping: ' -> '\''
-  return `'${token.replace(/'/g, `'\\''`)}'`;
-}
 
 export function srunCommand(popup: SlurmRunPopup): string {
   return srunTokens(popup).map(shellQuote).join(" ");
@@ -1519,7 +1516,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
 export async function loadSlurmData(): Promise<void> {
   if (S.slurmLoading) return;
   S.slurmLoading = true;
-  slurmError = null;
+  S.slurmError = null;
   tuiLog("DEBUG", `loadSlurmData: starting, OPENSMI=${JSON.stringify(OPENSMI)}, CWD=${OPENSMI_CWD}`);
   S._renderHook?.();
 
@@ -1544,9 +1541,9 @@ export async function loadSlurmData(): Promise<void> {
     S.slurmSnapshots = Array.isArray(parsed) ? parsed : [parsed];
     tuiLog("INFO", `slurm: loaded ${S.slurmSnapshots.length} cluster(s), total ${S.slurmSnapshots.reduce((s, c) => s + c.nodes.length, 0)} nodes`);
   } catch (e: any) {
-    slurmError = e?.message || String(e);
+    S.slurmError = e?.message || String(e);
     S.slurmSnapshots = [];
-    tuiLog("ERROR", `slurm load failed: ${slurmError}`);
+    tuiLog("ERROR", `slurm load failed: ${S.slurmError}`);
   } finally {
     S.slurmLoading = false;
     S._renderHook?.();
