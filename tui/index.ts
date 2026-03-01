@@ -1280,7 +1280,6 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
     }
 
     const origGpus = job.gpus.slice();
-    const origStatus = job.status;
     try {
       if (!hasExplicitGpus) {
         // No GPUs specified - auto-assign from available pool
