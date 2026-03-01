@@ -5661,6 +5661,9 @@ function renderRunnerPane() {
     modeInfo,
     gpuText,
     Text({ content: " " }),
+    Text({ content: " " }),
+    renderGpuAssignmentPanel(),
+
     ...commandNodes,
     ...tmuxNodes,
   ];
