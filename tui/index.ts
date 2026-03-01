@@ -3350,6 +3350,7 @@ function renderMyGpuView() {
       fg: C.cyan,
     })
   );
+  bundleRows.push(Text({ content: "" }));
 
   for (let i = 0; i < bundles.length; i++) {
     const bundle = bundles[i]!;
@@ -3364,8 +3365,6 @@ function renderMyGpuView() {
       })
     );
   }
-
-  bundleRows.push(Text({ content: "" }));
 
   const selectedBundle = bundles[myGpuViewState.selectedBundleIdx];
   const gpuDetails: any[] = [];
