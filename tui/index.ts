@@ -178,6 +178,135 @@ let killCtx: { nodeAlias: string; gpuIdx: number; pids: number[]; users: string[
 let killErrorMsg = "";
 let killOutput = "";
 let killInProgress = false;
+
+// ── Global Tab Bar ─────────────────────────────────────────────────
+
+function renderGlobalTabBar() {
+  const tabs = tabRegistry.getAllVisible();
+  
+  // App-level Tabs
+  const appTabBoxes = tabs.map((tab, i) => {
+    const isActive = tab.id === tabRegistry.activeTabId;
+    return Box(
+      {
+        backgroundColor: isActive ? C.blue : C.bgAlt,
+        paddingLeft: 1,
+        paddingRight: 1,
+        onMouseUp: async () => {
+          if (!isActive) {
+            await tabRegistry.switchTo(tab.id);
+            screen = tabRegistry.activeTabId as typeof screen;
+            requestRender?.();
+          }
+        },
+      },
+      Text({
+        content: isActive
+          ? t`${bold(fg("#ffffff")(` ${tab.label} `))}`
+          : t`${fg(C.textDim)(` ${tab.label} `)}`,
+      }),
+    );
+  });
+
+  // If we are on dashboard, show Cluster-level inner tabs as well
+  let clusterTabBoxes: any[] = [];
+  if (screen === "dashboard" || screen === "detail") {
+    const clusterTabs = buildDashboardTabs();
+    if (clusterTabs.length > 1) {
+      clusterTabBoxes.push(Text({ content: "  |  ", fg: C.textDim }));
+      
+      const cBoxes = clusterTabs.map((ctab, i) => {
+        const isCActive = i === activeClusterTabIdx;
+        const label = ctab.name.length > 18 ? ctab.name.slice(0, 17) + "..." : ctab.name;
+        return Box(
+          {
+            backgroundColor: isCActive ? C.green : C.bgAlt,
+            paddingLeft: 1,
+            paddingRight: 1,
+            onMouseUp: async () => {
+              if (activeClusterTabIdx === i) return;
+              activeClusterTabIdx = i;
+              slurmSelectedIdx = 0;
+              slurmScrollOff = 0;
+              slurmSortKey = "none";
+              slurmRunPopup = null;
+              if (ctab.type === "slurm" && !slurmSnapshots[ctab.idx]?.nodes?.length) {
+                await loadSlurmData();
+              }
+              if (screen === "detail") await navigateToTab("dashboard");
+              requestRender?.();
+            }
+          },
+          Text({
+            content: isCActive
+              ? t`${bold(fg("#ffffff")(label))}`
+              : t`${fg(C.textDim)(label)}`,
+          })
+        );
+      });
+      clusterTabBoxes.push(...cBoxes);
+    }
+  }
+
+  return Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+    ...appTabBoxes,
+    ...clusterTabBoxes,
+    Box({ flexGrow: 1 }),
+    Box(
+      { paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: latestVersion
+          ? t`${fg(C.yellow)(`opensmi@${appVersion} → ${latestVersion} ↑`)}` 
+          : t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
+      })
+    )
+  );
+}
+
+function renderGlobalFooter() {
+  let helpContent = "";
+  
+  if (runnerFocused) {
+    helpContent = runnerInputTyping
+      ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
+      : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`;
+  } else {
+    switch (screen) {
+      case "dashboard":
+        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh`;
+        break;
+      case "detail":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} GPU  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[*]")} Open-to-all  ${fg(C.textDim)("[x]")} Clear  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      case "my-gpu-view":
+        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Bundles  ${fg(C.textDim)("[Enter]")} Expand  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      case "jobs":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Logs  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[r]")} Refresh`;
+        break;
+      case "setup":
+        helpContent = t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+s]")} Save  ${fg(C.textDim)("[Esc]")} Back`;
+        break;
+      default:
+        helpContent = t`${fg(C.textDim)("[Esc]")} Back`;
+    }
+  }
+
+  return Box(
+    {
+      width: "100%",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      paddingLeft: 1,
+      paddingRight: 1,
+      backgroundColor: C.bgAlt,
+    },
+    Text({ content: helpContent }),
+    Text({ content: statusMsg ? t`${fg(C.yellow)(statusMsg)}` : " " })
+  );
+}
+
 let isPolling = false;
 let bootLoading = true;
 
@@ -1747,55 +1876,7 @@ function activeDashboardTab(): DashboardTab | null {
   return tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
 }
 
-function renderDashboardTabBar() {
-  const tabs = buildDashboardTabs();
-  if (tabs.length <= 1) return Box({ height: 0 });
 
-  const tabBoxes = tabs.map((tab, i) => {
-    const isActive = i === activeClusterTabIdx;
-    const label = tab.name.length > 18 ? tab.name.slice(0, 17) + "..." : tab.name;
-    return Box(
-      {
-        backgroundColor: isActive ? C.blue : C.bgAlt,
-        paddingLeft: 1,
-        paddingRight: 1,
-        onMouseUp: async () => {
-          if (activeClusterTabIdx === i) return;
-          activeClusterTabIdx = i;
-          slurmSelectedIdx = 0;
-          slurmScrollOff = 0;
-          slurmSortKey = "none";
-          slurmRunPopup = null;
-          if (tab.type === "slurm" && !slurmSnapshots[tab.idx]?.nodes?.length) {
-            await loadSlurmData();
-          }
-          requestRender?.();
-        },
-      },
-      Text({
-        content: isActive
-          ? t`${bold(fg("#ffffff")(label))}`
-          : t`${fg(C.textDim)(label)}`,
-      }),
-    );
-  });
-
-  return Box(
-    { flexDirection: "row", width: "100%", paddingLeft: 0 },
-    ...tabBoxes,
-    Box(
-      { flexGrow: 1, backgroundColor: C.bgAlt },
-    ),
-    Box(
-      { backgroundColor: C.bgAlt, paddingLeft: 1, paddingRight: 1 },
-      Text({
-        content: latestVersion
-          ? t`${fg(C.yellow)(`opensmi@${appVersion} → ${latestVersion} ↑`)}` 
-          : t`${fg(C.textDim)(appVersion ? `opensmi@${appVersion}` : "opensmi")}`,
-      }),
-    ),
-  );
-}
 
 function activeManualTabIdx(): number | null {
   const tab = activeDashboardTab();
@@ -2405,10 +2486,10 @@ function renderDashboard() {
   const tabs = buildDashboardTabs();
   if (tabs.length > 0 && activeClusterTabIdx >= tabs.length) activeClusterTabIdx = 0;
   const activeTab = tabs[activeClusterTabIdx] ?? tabs[0] ?? null;
-  const unifiedTabBar = renderDashboardTabBar();
+
 
   if (activeTab?.type === "slurm") {
-    return renderSlurmClusterTab(activeTab.idx, unifiedTabBar);
+    return renderSlurmClusterTab(activeTab.idx);
   }
 
   const viewSnapshot = activeDashboardSnapshot();
@@ -3140,12 +3221,7 @@ function renderJobsListView() {
   }
 
   rows.push(Text({ content: "" }));
-  rows.push(
-    Text({
-      content: t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[c]")} Cancel  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[Shift+r]")} Retry  ${fg(C.textDim)("[x]")} Clean tmux  ${fg(C.textDim)("[d]")} Delete  ${fg(C.textDim)("[Esc]")} Back`,
-      fg: C.textDim,
-    })
-  );
+  // footer replaced by global footer
 
   return Box(
     { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 2 },
@@ -4898,12 +4974,12 @@ async function submitJobToSlurm() {
 
 // ── Slurm Cluster Tab Renderer ───────────────────────────────────
 
-function renderSlurmClusterTab(slurmIdx: number, unifiedTabBar?: any) {
+function renderSlurmClusterTab(slurmIdx: number) {
   const ssnap = slurmSnapshots[slurmIdx];
   if (!ssnap) {
     return Box(
       { flexDirection: "column", paddingLeft: 1, backgroundColor: C.bg },
-      unifiedTabBar || renderDashboardTabBar(),
+      Box({ height: 0 }), // removed old tab bar
       Text({ content: "No data for this Slurm cluster.", fg: C.textDim }),
     );
   }
@@ -4915,8 +4991,7 @@ function renderSlurmClusterTab(slurmIdx: number, unifiedTabBar?: any) {
 
   const termWidth = process.stdout.columns || 80;
 
-  // Tab bar
-  const tabBar = unifiedTabBar || renderDashboardTabBar();
+  // Tab bar handled globally
 
   // Header
   const slurmHeader = Box(
@@ -5152,7 +5227,7 @@ function renderSlurmClusterTab(slurmIdx: number, unifiedTabBar?: any) {
     },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-      tabBar,
+      
       slurmHeader,
       tableHdr,
       ...nodeRows,
