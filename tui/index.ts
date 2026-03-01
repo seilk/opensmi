@@ -3004,11 +3004,8 @@ function renderDetail() {
   );
 
   return Box(
-    { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
-    Box(
-      { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
-      ...children
-    ),
+    { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg, padding: 1 },
+    ...children
   );
 }
 
@@ -3721,7 +3718,7 @@ function renderAlloc() {
       leftPanel,
       rightPanel
     ),
-    Text({ content: "Tip: click users to toggle. Multi-user saved as comma-separated list.", fg: C.textDim })
+    // replaced by global footer
   );
 
   return Box(
