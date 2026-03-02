@@ -166,7 +166,7 @@ export interface SlurmRunPopup {
   existingJobCancelMsg: string;
 }
 
-export type SlurmSortKey = "none" | "name" | "partition" | "free_asc" | "free_desc";
+export type SlurmSortKey = "none" | "name" | "state" | "gpu_used" | "gpu_free";
 
 // ── Dashboard Tabs ─────────────────────────────────────────────────
 

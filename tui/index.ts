@@ -18,7 +18,7 @@ import { tabRegistry, type Tab } from "./tabRegistry";
 import { S as _S_module } from './src/state/global';
 import { renderAlloc as _mod_renderAlloc } from './src/components/AllocModal';
 import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher } from './src/components/Layout';
-import { renderGpuAssignmentPanel as _mod_renderGpuAssignmentPanel, renderRunnerPane as _mod_renderRunnerPane } from './src/components/Runner';
+import { renderRunnerPane as _mod_renderRunnerPane } from './src/components/Runner';
 import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab } from './src/views/Dashboard';
 import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from './src/views/Detail';
 import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from './src/views/Jobs';
@@ -2650,12 +2650,6 @@ function renderKill() {
   return _r;
 }
 
-function renderGpuAssignmentPanel() {
-  syncStateToS();
-  const _r = _mod_renderGpuAssignmentPanel();
-  syncStateFromS();
-  return _r;
-}
 
 // ── Setup Tab ──────────────────────────────────────────────────────
 
@@ -3421,7 +3415,7 @@ let slurmLoading = false;
 let slurmError: string | null = null;
 let slurmSelectedIdx = 0;
 let slurmScrollOff = 0;
-type SlurmSortKey = "none" | "name" | "partition" | "free_asc" | "free_desc";
+type SlurmSortKey = "none" | "name" | "state" | "gpu_used" | "gpu_free";
 let slurmSortKey: SlurmSortKey = "none";
 
 // srun popup state
@@ -5171,14 +5165,23 @@ async function main() {
           const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
             switch (slurmSortKey) {
               case "name": return a.name.localeCompare(b.name);
-              case "partition": return (a.partition||"").localeCompare(b.partition||"");
-              case "free_asc": return a.gpu_free - b.gpu_free;
-              case "free_desc": return b.gpu_free - a.gpu_free;
+              case "state": return (a.state||"").localeCompare(b.state||"");
+              case "gpu_used": return b.gpu_used - a.gpu_used;
+              case "gpu_free": return b.gpu_free - a.gpu_free;
               default: return 0;
             }
           });
           const node = sortedN[slurmSelectedIdx];
           if (node && snap) openSrunPopup(node, snap.cluster_name, snap);
+          render();
+          return;
+        } else if (key.sequence === "s" || key.sequence === "S") {
+          const cycle: SlurmSortKey[] = ["none", "name", "state", "gpu_used", "gpu_free"];
+          const idx = cycle.indexOf(slurmSortKey);
+          const next = cycle[(idx + 1) % cycle.length] ?? "none";
+          slurmSortKey = next;
+          slurmScrollOff = 0;
+          slurmSelectedIdx = 0;
           render();
           return;
         }

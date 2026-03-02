@@ -1277,9 +1277,9 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const sortedNodes = [...nodes].sort((a, b) => {
     switch (S.slurmSortKey) {
       case "name":      return a.name.localeCompare(b.name);
-      case "partition": return (a.partition || "").localeCompare(b.partition || "");
-      case "free_asc":  return a.gpu_free - b.gpu_free;
-      case "free_desc": return b.gpu_free - a.gpu_free;
+      case "state":     return (a.state || "").localeCompare(b.state || "");
+      case "gpu_used":  return b.gpu_used - a.gpu_used;
+      case "gpu_free":  return b.gpu_free - a.gpu_free;
       default:          return 0;
     }
   });
@@ -1289,17 +1289,22 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   // Dynamic partition width: fit longest name, min 12, max 22
   const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
   const partW = Math.min(22, Math.max(12, maxPartLen + 1));
+  const stateW = 10;
+  const usedW = 6;
   const freeW = 6;
   // Clamp max GPU columns to fit S.screen - prefer showing user names legibly
-  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - freeW - 3) / 8));
+  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - stateW - usedW - freeW - 3) / 8));
   const gpuW = maxDisplayGpus > 0
-    ? Math.max(8, Math.floor((termWidth - nodeW - partW - freeW - 3) / maxDisplayGpus))
+    ? Math.max(8, Math.floor((termWidth - nodeW - partW - stateW - usedW - freeW - 3) / maxDisplayGpus))
     : 8;
 
   // Sort indicator helper
-  const sortArrow = (col: SlurmSortKey, altCol?: SlurmSortKey) => {
-    if (S.slurmSortKey === col || S.slurmSortKey === altCol) return fg(C.blue)(" ▲");
-    if (col === "free_asc" && S.slurmSortKey === "free_desc") return fg(C.blue)(" ▼");
+  // Descending sorts (higher value first) use ▼; ascending sorts use ▲
+  const DESCENDING_SORT_KEYS: SlurmSortKey[] = ["gpu_used", "gpu_free"];
+  const sortArrow = (col: SlurmSortKey) => {
+    if (S.slurmSortKey === col) {
+      return DESCENDING_SORT_KEYS.includes(col) ? fg(C.blue)(" ▼") : fg(C.blue)(" ▲");
+    }
     return fg(C.textDim)(" ·");
   };
 
@@ -1314,25 +1319,34 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const tableHdr = Box(
     { flexDirection: "row", paddingLeft: 1, backgroundColor: C.bgAlt },
     Box(
-      { width: nodeW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "name" ? "none" : "name"; S.slurmScrollOff = 0; S._renderHook?.(); } },
+      { width: nodeW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "name" ? "none" : "name"; S.slurmScrollOff = 0; S.slurmSelectedIdx = 0; S._renderHook?.(); } },
       Text({ content: t`${"Node".padEnd(nodeW - 2)}${sortArrow("name")}`, fg: C.textDim }),
     ),
     Box(
-      { width: partW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "partition" ? "none" : "partition"; S.slurmScrollOff = 0; S._renderHook?.(); } },
-      Text({ content: t`${"Partition".padEnd(partW - 2)}${sortArrow("partition")}`, fg: C.textDim }),
+      { width: partW },
+      Text({ content: "Partition".padEnd(partW), fg: C.textDim }),
+    ),
+    Box(
+      { width: stateW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "state" ? "none" : "state"; S.slurmScrollOff = 0; S.slurmSelectedIdx = 0; S._renderHook?.(); } },
+      Text({ content: t`${"State".padEnd(stateW - 2)}${sortArrow("state")}`, fg: C.textDim }),
     ),
     ...gpuHeaders,
     ...(moreGpusHdr ? [moreGpusHdr] : []),
     Box(
+      { width: usedW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "gpu_used" ? "none" : "gpu_used"; S.slurmScrollOff = 0; S.slurmSelectedIdx = 0; S._renderHook?.(); } },
+      Text({ content: t`${"Used".padEnd(usedW - 2)}${sortArrow("gpu_used")}`, fg: C.textDim }),
+    ),
+    Box(
       {
         width: freeW,
         onMouseDown: () => {
-          S.slurmSortKey = S.slurmSortKey === "free_desc" ? "free_asc" : "free_desc";
+          S.slurmSortKey = S.slurmSortKey === "gpu_free" ? "none" : "gpu_free";
           S.slurmScrollOff = 0;
+          S.slurmSelectedIdx = 0;
           S._renderHook?.();
         },
       },
-      Text({ content: t`${"Free".padEnd(freeW - 2)}${S.slurmSortKey === "free_asc" ? fg(C.blue)(" ▲") : S.slurmSortKey === "free_desc" ? fg(C.blue)(" ▼") : fg(C.textDim)(" ·")}`, fg: C.textDim }),
+      Text({ content: t`${"Free".padEnd(freeW - 2)}${sortArrow("gpu_free")}`, fg: C.textDim }),
     ),
   );
 
@@ -1401,8 +1415,13 @@ export function renderSlurmClusterTab(slurmIdx: number) {
         { flexDirection: "row", paddingLeft: 1, width: "100%", backgroundColor: isSelected ? C.bgAlt : undefined, onMouseDown: handleNodeClick },
         Box({ width: nodeW }, Text({ content: `${hasMyJob ? "★" : icon}${snode.name}`.slice(0, nodeW).padEnd(nodeW), fg: hasMyJob ? C.cyan : isSelected ? "#ffffff" : C.text })),
         Box({ width: partW }, Text({ content: (snode.partition || "").slice(0, partW - 1).padEnd(partW), fg: C.textDim })),
+        Box({ width: stateW }, Text({ content: (snode.state || "").replace("*", "").slice(0, stateW - 1).padEnd(stateW), fg: C.textDim })),
         ...gpuCells,
         ...(moreCell ? [moreCell] : []),
+        Box({ width: usedW }, Text({
+          content: `${snode.gpu_used}/${snode.gpu_total}`.padEnd(usedW),
+          fg: snode.gpu_used > 0 ? C.yellow : C.textDim,
+        })),
         Box({ width: freeW }, Text({
           content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
           fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
@@ -1447,7 +1466,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
     Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
+    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
