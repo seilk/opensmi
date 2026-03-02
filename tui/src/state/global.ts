@@ -59,6 +59,8 @@ export const S = {
   lastPollTime: "",
   pollError: "",
   isPolling: false,
+  isRefreshing: false,
+  autoRefreshSec: 30 as 0 | 10 | 30 | 60,
   bootLoading: true,
 
   // Navigation
@@ -163,6 +165,7 @@ export const S = {
   // Render hook
   requestRender: null as (() => void) | null,
   openSrunPopup: undefined as ((nodeName: string) => void) | undefined,
+  openDetailView: undefined as ((nodeAlias: string) => void) | undefined,
 
   // Jobs view
   jobList: [] as Job[],

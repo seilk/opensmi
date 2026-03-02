@@ -23,9 +23,7 @@ import {
   stripAnsi, wrapText, wrapTextWithCursor, shellQuote,
 } from "../utils/format";
 import { runOpensmi, tuiLog, OPENSMI, OPENSMI_CWD, OPENSMI_ENV } from "../state/api";
-import { checkSudoForNode } from "../components/AllocModal";
 import { getGpuCommandPlaceholder, renderRunnerPane } from "../components/Runner";
-import { renderGlobalTabBar } from "../components/Layout";
 
 // ── Dashboard Tab Helpers ────────────────────────────────────────
 
@@ -189,10 +187,10 @@ export function renderDashboard() {
       backgroundColor: C.bgAlt,
     },
     Text({
-      content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
+      content: t`${bold(fg(C.blue)("Dashboard"))}`,
     }),
     Text({
-      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${S.lastPollTime || "-"}  ${S.isPolling ? fg(C.yellow)("⟳") : ""}`,
+      content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${S.lastPollTime || "-"}`,
     })
   );
 
@@ -269,8 +267,8 @@ export function renderDashboard() {
             S.selectedGpuIdx = 0;
 
             if (isDouble) {
-              S.screen = "detail";
-              void checkSudoForNode(n.node_alias);
+              S.openDetailView?.(n.node_alias);
+              return;
             }
 
             S.requestRender?.();
@@ -466,8 +464,8 @@ export function renderDashboard() {
           S.selectedGpuIdx = gpuIndicesForNode(n)[0] ?? 0;
 
           if (isDouble) {
-            S.screen = "detail";
-            void checkSudoForNode(n.node_alias);
+            S.openDetailView?.(n.node_alias);
+            return;
           }
 
           S.requestRender?.();
@@ -503,9 +501,7 @@ export function renderDashboard() {
     Text({
       content: t`${fg(C.textDim)("Users:")} ${userSummary}`,
     }),
-    Text({
-      content: S.statusMsg ? t`${fg(C.yellow)(S.statusMsg)}` : " ",
-    }),
+
     Box(
       { flexDirection: "row", paddingTop: 1 },
       Text({
@@ -513,9 +509,7 @@ export function renderDashboard() {
           ? t`${fg("#9b59d6")("⌨ TYPING MODE")}  ${fg(C.textDim)("[Enter]")} Execute  ${fg(C.textDim)("[Esc]")} Cancel`
           : (S.runnerFocused
               ? t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Click GPU]")} Select  ${fg(C.textDim)("[Tab/+/-]")} Options`
-              : (S.runnerPaneFolded
-                  ? t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
-                  : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster Tab  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`)),
+              : t`${fg(C.textDim)("[↑↓]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail`),
       })
     )
   );
@@ -524,7 +518,6 @@ export function renderDashboard() {
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-      renderGlobalTabBar(),
       header,
       tableHeader,
       ...rows,
@@ -774,20 +767,9 @@ export function renderSrunPopup(popup: SlurmRunPopup): any {
   } else if (popup.jobSubmitStatus === "running") {
     rows.push(line(Text({ content: t`${fg(C.green)(`✓ Job ${popup.jobId} is RUNNING`)}` })));
     rows.push(line(Text({ content: t`${fg(C.textDim)("Node      :")} ${popup.nodeName}` })));
-    if (popup.gpuIdxList) {
-      rows.push(line(Text({ content: t`${fg(C.textDim)("GPU IDX   :")} ${fg(C.green)(popup.gpuIdxList)}` })));
-      rows.push(line(Text({ content: "" })));
-      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
-      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
-      rows.push(line(Text({ content: `export CUDA_VISIBLE_DEVICES=${popup.gpuIdxList}`, fg: C.text })));
-      rows.push(line(Text({ content: `# then run: python train.py  (or your workload)`, fg: C.textDim })));
-    } else {
-      rows.push(line(Text({ content: t`${fg(C.yellow)("GPU IDX   : unavailable (check scontrol manually)")}` })));
-      rows.push(line(Text({ content: "" })));
-      rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
-      rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
-      rows.push(line(Text({ content: `# check: scontrol -d show job ${popup.jobId} | grep IDX`, fg: C.textDim })));
-    }
+    rows.push(line(Text({ content: "" })));
+    rows.push(line(Text({ content: t`${fg(C.textDim)("In your terminal:")}` })));
+    rows.push(line(Text({ content: `ssh ${popup.nodeName}`, fg: C.text })));
     rows.push(line(Text({ content: "" })));
   } else if (popup.jobSubmitStatus === "error") {
     for (const wl of wrapText(`✗ ${popup.jobErrorMsg}`, innerW)) {
@@ -909,7 +891,7 @@ export async function fetchQosForPartition(loginNode: string, sshUser: string, p
     // Parse "AllowQos=normal,high" or "QoS=normal"
     const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
     if (m && m[1] !== "N/A" && m[1] !== "(null)") {
-      popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
+      popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe).filter(q => q.toLowerCase() !== "default");
     }
     tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
   } catch (e) {
@@ -1227,29 +1209,9 @@ export async function submitJobToSlurm() {
     }
     if (!running) throw new Error(`Job ${popup.jobId} did not reach RUNNING state within 60s`);
 
-    // 3. scontrol -d show job → GPU IDX
-    const scCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
-      "scontrol", "-d", "show", "job", popup.jobId];
-    const scProc = Bun.spawn(scCmd, { stdout: "pipe", stderr: "pipe" });
-    const scOut = await new Response(scProc.stdout).text();
-    await scProc.exited;
-
-    // Parse all "GresUsed=gpu:N(IDX:a,b,...)" segments, collect & dedupe indices
-    const idxMatches = [...scOut.matchAll(/GresUsed=gpu:\d+\(IDX:([0-9,]+)\)/g)];
-    if (idxMatches.length > 0) {
-      const allIdx = idxMatches
-        .flatMap(m => m[1]!.split(","))
-        .filter(s => /^\d+$/.test(s))
-        .map(Number);
-      const unique = [...new Set(allIdx)].sort((a, b) => a - b);
-      popup.gpuIdxList = unique.join(",");
-    } else {
-      popup.gpuIdxList = ""; // unavailable - don't show false data
-      tuiLog("WARNING", `GresUsed IDX not found in scontrol output for job ${popup.jobId}`);
-    }
     popup.jobSubmitStatus = "running";
     S._renderHook?.();
-    tuiLog("INFO", `job running: JOBID=${popup.jobId} GPU_IDX=${popup.gpuIdxList}`);
+    tuiLog("INFO", `job running: JOBID=${popup.jobId}`);
 
   } catch (e: any) {
     popup.jobSubmitStatus = "error";
@@ -1281,8 +1243,8 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   // Header
   const slurmHeader = Box(
     { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
-    Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name))} ${fg(C.textDim)("· slurm")}` }),
-    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${S.slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
+    Text({ content: t`${bold(fg(C.blue)("Slurm"))} ${fg(C.textDim)("· dashboard")}` }),
+    Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}`, fg: C.textDim }),
   );
 
   // Sort nodes
@@ -1294,12 +1256,10 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   const maxPartLen = nodes.reduce((m, n) => Math.max(m, (n.partition || "").length), 9);
   const partW = Math.min(22, Math.max(12, maxPartLen + 1));
   const stateW = 10;
-  const usedW = 6;
   const freeW = 6;
-  // Clamp max GPU columns to fit S.screen - prefer showing user names legibly
-  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - stateW - usedW - freeW - 3) / 8));
+  const maxDisplayGpus = Math.min(maxGpus, Math.floor((termWidth - nodeW - partW - stateW - freeW - 3) / 8));
   const gpuW = maxDisplayGpus > 0
-    ? Math.max(8, Math.floor((termWidth - nodeW - partW - stateW - usedW - freeW - 3) / maxDisplayGpus))
+    ? Math.max(8, Math.floor((termWidth - nodeW - partW - stateW - freeW - 3) / maxDisplayGpus))
     : 8;
 
   // Sort indicator helper
@@ -1336,10 +1296,6 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     ),
     ...gpuHeaders,
     ...(moreGpusHdr ? [moreGpusHdr] : []),
-    Box(
-      { width: usedW, onMouseDown: () => { S.slurmSortKey = S.slurmSortKey === "gpu_used" ? "none" : "gpu_used"; S.slurmScrollOff = 0; S.slurmSelectedIdx = 0; S._renderHook?.(); } },
-      Text({ content: t`${"Used".padEnd(usedW - 2)}${sortArrow("gpu_used")}`, fg: C.textDim }),
-    ),
     Box(
       {
         width: freeW,
@@ -1419,10 +1375,6 @@ export function renderSlurmClusterTab(slurmIdx: number) {
         Box({ width: stateW }, Text({ content: (snode.state || "").replace("*", "").slice(0, stateW - 1).padEnd(stateW), fg: C.textDim })),
         ...gpuCells,
         ...(moreCell ? [moreCell] : []),
-        Box({ width: usedW }, Text({
-          content: `${snode.gpu_used}/${snode.gpu_total}`.padEnd(usedW),
-          fg: snode.gpu_used > 0 ? C.yellow : C.textDim,
-        })),
         Box({ width: freeW }, Text({
           content: `${snode.gpu_free}/${snode.gpu_total}`.padEnd(freeW),
           fg: snode.gpu_free === 0 ? C.red : snode.gpu_free === snode.gpu_total ? C.green : C.yellow,
@@ -1465,9 +1417,8 @@ export function renderSlurmClusterTab(slurmIdx: number) {
 
   const footer = Box(
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
-    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
+    Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter/Double-click]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
@@ -1510,6 +1461,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
       S.slurmSelectedIdx = Math.max(0, S.slurmScrollOff);
     }
     S._renderHook?.();
+    S.requestRender?.();
   };
 
   return Box(

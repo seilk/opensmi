@@ -62,13 +62,30 @@ export function renderGlobalTabBar() {
     );
   });
 
-  // If we are on dashboard, show Cluster-level inner tabs as well
-  let clusterTabBoxes: any[] = [];
+  // App tab row
+  const appTabRow = Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+    ...appTabBoxes,
+    Box(
+      { paddingLeft: 3, paddingRight: 1 },
+      Text({ content: t`${fg(C.textDim)("[/] Next")}` })
+    ),
+    Box({ flexGrow: 1 }),
+    Box(
+      { paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: S.latestVersion
+          ? t`${fg(C.yellow)(`opensmi@${S.appVersion} → ${S.latestVersion} ↑`)}`
+          : t`${fg(C.textDim)(S.appVersion ? `opensmi@${S.appVersion}` : "opensmi")}`,
+      })
+    )
+  );
+
+  // Cluster tab row — shown below app tabs when on dashboard/detail with multiple clusters
+  let clusterTabRow: any = null;
   if (S.screen === "dashboard" || S.screen === "detail") {
     const clusterTabs = buildDashboardTabs();
     if (clusterTabs.length > 1) {
-      clusterTabBoxes.push(Text({ content: "  |  ", fg: C.textDim }));
-
       const cBoxes = clusterTabs.map((ctab, i) => {
         const isCActive = i === S.activeClusterTabIdx;
         const label = ctab.name.length > 18 ? ctab.name.slice(0, 17) + "..." : ctab.name;
@@ -84,9 +101,6 @@ export function renderGlobalTabBar() {
               S.slurmScrollOff = 0;
               S.slurmSortKey = "none";
               S.slurmRunPopup = null;
-              if (ctab.type === "slurm" && !S.slurmSnapshots[ctab.idx]?.nodes?.length) {
-                // NOTE: loadSlurmData() is in index.ts; call via S._renderHook or ignore in extracted version
-              }
               if (S.screen === "detail") await navigateToTab("dashboard");
               S.requestRender?.();
             },
@@ -98,23 +112,22 @@ export function renderGlobalTabBar() {
           })
         );
       });
-      clusterTabBoxes.push(...cBoxes);
+      clusterTabRow = Box(
+        { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+        ...cBoxes,
+        Box(
+          { paddingLeft: 3, paddingRight: 1 },
+          Text({ content: t`${fg(C.textDim)("[Tab] Cluster")}` })
+        ),
+        Box({ flexGrow: 1 })
+      );
     }
   }
 
   return Box(
-    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
-    ...appTabBoxes,
-    ...clusterTabBoxes,
-    Box({ flexGrow: 1 }),
-    Box(
-      { paddingLeft: 1, paddingRight: 1 },
-      Text({
-        content: S.latestVersion
-          ? t`${fg(C.yellow)(`opensmi@${S.appVersion} → ${S.latestVersion} ↑`)}`
-          : t`${fg(C.textDim)(S.appVersion ? `opensmi@${S.appVersion}` : "opensmi")}`,
-      })
-    )
+    { flexDirection: "column", width: "100%", backgroundColor: C.bgAlt },
+    appTabRow,
+    ...(clusterTabRow ? [clusterTabRow] : [])
   );
 }
 
@@ -129,9 +142,15 @@ export function renderGlobalFooter() {
       : t`${fg(C.green)("● RUNNER FOCUSED")}  ${fg(C.textDim)("[Esc]")} Unfocus  ${fg(C.textDim)("[Enter]")} Edit  ${fg(C.textDim)("[ctrl+x Enter]")} Execute  ${fg(C.textDim)("[Tab/+/-]")} Options`;
   } else {
     switch (S.screen) {
-      case "dashboard":
-        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh`;
+      case "dashboard": {
+        const tabs = buildDashboardTabs();
+        const activeTab = tabs[S.activeClusterTabIdx] ?? null;
+        const isSlurmView = activeTab?.type === "slurm";
+        helpContent = isSlurmView
+          ? t`${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter/Dbl-click]")} Popup  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`
+          : t`${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`;
         break;
+      }
       case "detail":
         helpContent = t`${fg(C.textDim)("[↑↓]")} GPU  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[*]")} Open-to-all  ${fg(C.textDim)("[x]")} Clear  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`;
         break;
@@ -149,6 +168,22 @@ export function renderGlobalFooter() {
     }
   }
 
+  const intervalLabel = S.autoRefreshSec === 0 ? "off"
+    : S.autoRefreshSec === 10 ? "10s"
+    : S.autoRefreshSec === 30 ? "30s"
+    : "1m";
+
+  const refreshWidget = Box(
+    {
+      flexDirection: "row",
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        (S as any).cycleAutoRefresh?.();
+      },
+    },
+    Text({ content: S.isRefreshing ? t`${fg(C.yellow)("⟳...")}  ${fg(C.textDim)("Refresh [R]")} ${fg(C.cyan)(intervalLabel)}` : t`${fg(C.textDim)("Refresh [R]")} ${fg(S.autoRefreshSec === 0 ? C.textDim : C.cyan)(intervalLabel)}` })
+  );
+
   return Box(
     {
       width: "100%",
@@ -159,31 +194,14 @@ export function renderGlobalFooter() {
       backgroundColor: C.bgAlt,
     },
     Text({ content: helpContent }),
-    Text({ content: S.statusMsg ? t`${fg(C.yellow)(S.statusMsg)}` : " " })
+    refreshWidget
   );
 }
 
 // ── Toast ──────────────────────────────────────────────────────────
 
 export function renderToast() {
-  if (!S.statusMsg) return null;
-
-  return Box(
-    {
-      position: "absolute",
-      right: 2,
-      bottom: 1,
-      paddingLeft: 1,
-      paddingRight: 1,
-      paddingTop: 0,
-      paddingBottom: 0,
-      backgroundColor: C.bgAlt,
-      borderStyle: "rounded",
-      borderColor: C.border,
-      zIndex: 10_000,
-    },
-    Text({ content: S.statusMsg, fg: C.yellow })
-  );
+  return null;
 }
 
 // ── Tab switcher ───────────────────────────────────────────────────
@@ -256,6 +274,7 @@ export async function navigateToTab(tabId: string): Promise<boolean> {
   const switched = await tabRegistry.switchTo(tabId);
   if (switched) {
     S.screen = tabRegistry.activeTabId as typeof S.screen;
+    // Note: render is triggered by caller (navigateByDelta or tab click handler)
   }
   return switched;
 }
@@ -271,8 +290,10 @@ export async function navigateByDelta(delta: number): Promise<boolean> {
   const nextTab = tabs[next];
   if (!nextTab) return false;
 
-  const switched = await navigateToTab(nextTab.id);
+  // Switch tab (lock in switchTo prevents races)
+  const switched = await tabRegistry.switchTo(nextTab.id);
   if (switched) {
+    S.screen = tabRegistry.activeTabId as typeof S.screen;
     S.requestRender?.();
   }
   return switched;

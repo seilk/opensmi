@@ -58,6 +58,7 @@ export class TabRegistryImpl implements TabRegistry {
   tabs = new Map<string, Tab>();
   activeTabId = "dashboard"; // Default to dashboard
   onMessage?: (msg: string) => void;
+  private _switchInProgress: boolean = false;
 
   private _notify(msg: string): void {
     if (this.onMessage) this.onMessage(msg);
@@ -91,47 +92,57 @@ export class TabRegistryImpl implements TabRegistry {
    * @returns true if switch succeeded, false otherwise
    */
   async switchTo(tabId: string): Promise<boolean> {
+    // Reject concurrent switches (prevent state thrashing)
+    if (this._switchInProgress) {
+      return false;
+    }
     // No-op if already on this tab
     if (tabId === this.activeTabId) {
       return true;
     }
+    
+    this._switchInProgress = true;
 
-    const nextTab = this.tabs.get(tabId);
-    if (!nextTab) {
-      this._notify(`Tab "${tabId}" not found`);
-      return false;
-    }
-
-    const currentTab = this.tabs.get(this.activeTabId);
-
-    // Check if current tab allows exit
-    if (currentTab?.canExit && !currentTab.canExit()) {
-      this._notify(`Cannot leave tab "${this.activeTabId}"`);
-      return false;
-    }
-
-    // Call exit hook on current tab
-    if (currentTab?.onExit) {
-      try {
-        await currentTab.onExit();
-      } catch {
-        this._notify(`Error while leaving tab "${this.activeTabId}"`);
+    try {
+      const nextTab = this.tabs.get(tabId);
+      if (!nextTab) {
+        this._notify(`Tab "${tabId}" not found`);
+        return false;
       }
-    }
 
-    // Switch active tab
-    this.activeTabId = tabId;
+      const currentTab = this.tabs.get(this.activeTabId);
 
-    // Call enter hook on new tab
-    if (nextTab.onEnter) {
-      try {
-        await nextTab.onEnter();
-      } catch {
-        this._notify(`Error while entering tab "${tabId}"`);
+      // Check if current tab allows exit
+      if (currentTab?.canExit && !currentTab.canExit()) {
+        this._notify(`Cannot leave tab "${this.activeTabId}"`);
+        return false;
       }
-    }
 
-    return true;
+      // Call exit hook on current tab
+      if (currentTab?.onExit) {
+        try {
+          await currentTab.onExit();
+        } catch {
+          this._notify(`Error while leaving tab "${this.activeTabId}"`);
+        }
+      }
+
+      // Switch active tab
+      this.activeTabId = tabId;
+
+      // Call enter hook on new tab
+      if (nextTab.onEnter) {
+        try {
+          await nextTab.onEnter();
+        } catch {
+          this._notify(`Error while entering tab "${tabId}"`);
+        }
+      }
+
+      return true;
+    } finally {
+      this._switchInProgress = false;
+    }
   }
 
   /**
