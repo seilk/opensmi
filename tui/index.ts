@@ -4472,7 +4472,8 @@ async function main() {
     render: renderMyGpuView,
     onEnter: async () => {
       await loadMyGpuViewState();
-      await Promise.all([pollAllClusters(), loadAllocations()]);
+      // Trigger background refresh without blocking tab switch
+      void Promise.all([pollAllClusters(), loadAllocations()]).then(() => requestRender?.());
     },
   });
 

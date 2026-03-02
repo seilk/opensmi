@@ -261,7 +261,7 @@ export async function navigateToTab(tabId: string): Promise<boolean> {
   const switched = await tabRegistry.switchTo(tabId);
   if (switched) {
     S.screen = tabRegistry.activeTabId as typeof S.screen;
-    S.requestRender?.();
+    // Note: render is triggered by caller (navigateByDelta or tab click handler)
   }
   return switched;
 }
@@ -277,9 +277,11 @@ export async function navigateByDelta(delta: number): Promise<boolean> {
   const nextTab = tabs[next];
   if (!nextTab) return false;
 
-  const switched = await navigateToTab(nextTab.id);
-  if (switched) {
-    S.requestRender?.();
-  }
-  return switched;
+  // Immediately update screen state and render — don't wait for async onEnter
+  S.screen = nextTab.id as typeof S.screen;
+  S.requestRender?.();
+  
+  // Switch tab (async onEnter runs in background)
+  await tabRegistry.switchTo(nextTab.id);
+  return true;
 }
