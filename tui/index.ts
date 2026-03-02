@@ -276,7 +276,7 @@ function syncStateToS(): void {
   (_S_module as any).systemUsers = systemUsers;
   (_S_module as any).systemUsersLoadedAt = systemUsersLoadedAt;
   (_S_module as any).knownUsers = knownUsers;
-  (_S_module as any).requestRender = requestRender;
+  (_S_module as any).requestRender = moduleRequestRender;
   (_S_module as any).jobList = jobList;
   (_S_module as any).selectedJobIdx = selectedJobIdx;
   (_S_module as any).jobDetailView = jobDetailView;
@@ -301,7 +301,7 @@ function syncStateToS(): void {
   (_S_module as any).slurmSortKey = slurmSortKey;
   (_S_module as any).slurmRunPopup = slurmRunPopup;
   (_S_module as any).nodeCancelStatus = nodeCancelStatus;
-  (_S_module as any)._renderHook = _renderHook;
+  (_S_module as any)._renderHook = moduleRenderHook;
   (_S_module as any).isDispatching = isDispatching;
 }
 function syncStateFromS(): void {
@@ -387,7 +387,6 @@ function syncStateFromS(): void {
   systemUsers = (_S_module as any).systemUsers;
   systemUsersLoadedAt = (_S_module as any).systemUsersLoadedAt;
   knownUsers = (_S_module as any).knownUsers;
-  requestRender = (_S_module as any).requestRender;
   jobList = (_S_module as any).jobList;
   selectedJobIdx = (_S_module as any).selectedJobIdx;
   jobDetailView = (_S_module as any).jobDetailView;
@@ -412,8 +411,17 @@ function syncStateFromS(): void {
   slurmSortKey = (_S_module as any).slurmSortKey;
   slurmRunPopup = (_S_module as any).slurmRunPopup;
   nodeCancelStatus = (_S_module as any).nodeCancelStatus;
-  _renderHook = (_S_module as any)._renderHook;
   isDispatching = (_S_module as any).isDispatching;
+}
+
+function moduleRequestRender(): void {
+  syncStateFromS();
+  requestRender?.();
+}
+
+function moduleRenderHook(): void {
+  syncStateFromS();
+  _renderHook?.();
 }
 
 function renderGlobalTabBar() {
@@ -4324,6 +4332,7 @@ async function main() {
     const root = Box(
       {
         position: "relative",
+        flexDirection: "column",
         width: "100%",
         height: "100%",
         backgroundColor: C.bg,
@@ -4339,7 +4348,9 @@ async function main() {
           }
         },
       },
-      newNode,
+      renderGlobalTabBar(),
+      Box({ flexGrow: 1, width: "100%" }, newNode),
+      renderGlobalFooter(),
       ...(toast ? [toast] : []),
       ...(loading ? [loading] : []),
       ...(tabSwitcher ? [tabSwitcher] : [])

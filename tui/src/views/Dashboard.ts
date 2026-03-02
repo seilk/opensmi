@@ -25,7 +25,6 @@ import {
 import { runOpensmi, tuiLog, OPENSMI, OPENSMI_CWD, OPENSMI_ENV } from "../state/api";
 import { checkSudoForNode } from "../components/AllocModal";
 import { getGpuCommandPlaceholder, renderRunnerPane } from "../components/Runner";
-import { renderGlobalTabBar } from "../components/Layout";
 
 // ── Dashboard Tab Helpers ────────────────────────────────────────
 
@@ -189,7 +188,7 @@ export function renderDashboard() {
       backgroundColor: C.bgAlt,
     },
     Text({
-      content: t`${bold(fg(C.blue)(viewSnapshot.cluster_name))}`,
+      content: t`${bold(fg(C.blue)("Dashboard"))}`,
     }),
     Text({
       content: t`${fg(C.textDim)(CURRENT_USER_HOST)}  GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  Violations: ${violationCount > 0 ? fg(C.red)(`${violationCount}`) : fg(C.green)("0")}  Poll: ${S.lastPollTime || "-"}  ${S.isPolling ? fg(C.yellow)("⟳") : ""}`,
@@ -524,7 +523,6 @@ export function renderDashboard() {
     { position: "relative", width: "100%", height: "100%", backgroundColor: C.bg },
     Box(
       { flexDirection: "column", width: "100%", height: "100%", backgroundColor: C.bg },
-      renderGlobalTabBar(),
       header,
       tableHeader,
       ...rows,
@@ -1281,7 +1279,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   // Header
   const slurmHeader = Box(
     { width: "100%", flexDirection: "row", justifyContent: "space-between", paddingLeft: 1, paddingRight: 1, backgroundColor: C.bgAlt },
-    Text({ content: t`${bold(fg(C.blue)(ssnap.cluster_name))} ${fg(C.textDim)("· slurm")}` }),
+    Text({ content: t`${bold(fg(C.blue)("Slurm"))} ${fg(C.textDim)("· dashboard")}` }),
     Text({ content: t`GPUs: ${fg(C.green)(`${usedGpus}`)}/${totalGpus}  ${S.slurmLoading ? fg(C.yellow)("⟳") : ""}`, fg: C.textDim }),
   );
 
@@ -1510,6 +1508,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
       S.slurmSelectedIdx = Math.max(0, S.slurmScrollOff);
     }
     S._renderHook?.();
+    S.requestRender?.();
   };
 
   return Box(

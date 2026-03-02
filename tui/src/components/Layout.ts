@@ -256,6 +256,7 @@ export async function navigateToTab(tabId: string): Promise<boolean> {
   const switched = await tabRegistry.switchTo(tabId);
   if (switched) {
     S.screen = tabRegistry.activeTabId as typeof S.screen;
+    S.requestRender?.();
   }
   return switched;
 }
