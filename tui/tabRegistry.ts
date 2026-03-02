@@ -58,6 +58,7 @@ export class TabRegistryImpl implements TabRegistry {
   tabs = new Map<string, Tab>();
   activeTabId = "dashboard"; // Default to dashboard
   onMessage?: (msg: string) => void;
+  private _switchInProgress: boolean = false;
 
   private _notify(msg: string): void {
     if (this.onMessage) this.onMessage(msg);
@@ -91,10 +92,16 @@ export class TabRegistryImpl implements TabRegistry {
    * @returns true if switch succeeded, false otherwise
    */
   async switchTo(tabId: string): Promise<boolean> {
+    // Reject concurrent switches (prevent state thrashing)
+    if (this._switchInProgress) {
+      return false;
+    }
     // No-op if already on this tab
     if (tabId === this.activeTabId) {
       return true;
     }
+    
+    this._switchInProgress = true;
 
     const nextTab = this.tabs.get(tabId);
     if (!nextTab) {
@@ -122,13 +129,17 @@ export class TabRegistryImpl implements TabRegistry {
     // Switch active tab
     this.activeTabId = tabId;
 
-    // Call enter hook on new tab
-    if (nextTab.onEnter) {
-      try {
-        await nextTab.onEnter();
-      } catch {
-        this._notify(`Error while entering tab "${tabId}"`);
+    try {
+      // Call enter hook on new tab
+      if (nextTab.onEnter) {
+        try {
+          await nextTab.onEnter();
+        } catch {
+          this._notify(`Error while entering tab "${tabId}"`);
+        }
       }
+    } finally {
+      this._switchInProgress = false;
     }
 
     return true;

@@ -441,6 +441,10 @@ function renderGlobalFooter() {
 let isPolling = false;
 let bootLoading = true;
 
+// Debounce rapid bracket key presses to prevent state thrashing
+let _lastBracketKeyTime = 0;
+const BRACKET_KEY_DEBOUNCE_MS = 100;
+
 let runnerOpen = false;
 let runnerHeight = 15;
 const runnerMinHeight = 8;
@@ -4643,12 +4647,13 @@ async function main() {
           : key.name === "[" || key.name === "]"
             ? key.name
             : null;
-      if (bracketKey === "[") {
-        void _mod_navigateByDelta(-1);
-        return;
-      }
-      if (bracketKey === "]") {
-        void _mod_navigateByDelta(1);
+      if (bracketKey === "[" || bracketKey === "]") {
+        const now = Date.now();
+        if (now - _lastBracketKeyTime < BRACKET_KEY_DEBOUNCE_MS) {
+          return;  // Ignore rapid-fire key presses
+        }
+        _lastBracketKeyTime = now;
+        void _mod_navigateByDelta(bracketKey === "[" ? -1 : 1);
         return;
       }
 
