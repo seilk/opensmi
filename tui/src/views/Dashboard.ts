@@ -1463,7 +1463,6 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
     Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter/Dbl-click]")} Popup` }),
   );
 
   // Error rows
