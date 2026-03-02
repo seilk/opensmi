@@ -62,13 +62,26 @@ export function renderGlobalTabBar() {
     );
   });
 
-  // If we are on dashboard, show Cluster-level inner tabs as well
-  let clusterTabBoxes: any[] = [];
+  // App tab row
+  const appTabRow = Box(
+    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+    ...appTabBoxes,
+    Box({ flexGrow: 1 }),
+    Box(
+      { paddingLeft: 1, paddingRight: 1 },
+      Text({
+        content: S.latestVersion
+          ? t`${fg(C.yellow)(`opensmi@${S.appVersion} → ${S.latestVersion} ↑`)}`
+          : t`${fg(C.textDim)(S.appVersion ? `opensmi@${S.appVersion}` : "opensmi")}`,
+      })
+    )
+  );
+
+  // Cluster tab row — shown below app tabs when on dashboard/detail with multiple clusters
+  let clusterTabRow: any = null;
   if (S.screen === "dashboard" || S.screen === "detail") {
     const clusterTabs = buildDashboardTabs();
     if (clusterTabs.length > 1) {
-      clusterTabBoxes.push(Text({ content: "  |  ", fg: C.textDim }));
-
       const cBoxes = clusterTabs.map((ctab, i) => {
         const isCActive = i === S.activeClusterTabIdx;
         const label = ctab.name.length > 18 ? ctab.name.slice(0, 17) + "..." : ctab.name;
@@ -84,9 +97,6 @@ export function renderGlobalTabBar() {
               S.slurmScrollOff = 0;
               S.slurmSortKey = "none";
               S.slurmRunPopup = null;
-              if (ctab.type === "slurm" && !S.slurmSnapshots[ctab.idx]?.nodes?.length) {
-                // NOTE: loadSlurmData() is in index.ts; call via S._renderHook or ignore in extracted version
-              }
               if (S.screen === "detail") await navigateToTab("dashboard");
               S.requestRender?.();
             },
@@ -98,23 +108,18 @@ export function renderGlobalTabBar() {
           })
         );
       });
-      clusterTabBoxes.push(...cBoxes);
+      clusterTabRow = Box(
+        { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
+        ...cBoxes,
+        Box({ flexGrow: 1 })
+      );
     }
   }
 
   return Box(
-    { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
-    ...appTabBoxes,
-    ...clusterTabBoxes,
-    Box({ flexGrow: 1 }),
-    Box(
-      { paddingLeft: 1, paddingRight: 1 },
-      Text({
-        content: S.latestVersion
-          ? t`${fg(C.yellow)(`opensmi@${S.appVersion} → ${S.latestVersion} ↑`)}`
-          : t`${fg(C.textDim)(S.appVersion ? `opensmi@${S.appVersion}` : "opensmi")}`,
-      })
-    )
+    { flexDirection: "column", width: "100%", backgroundColor: C.bgAlt },
+    appTabRow,
+    ...(clusterTabRow ? [clusterTabRow] : [])
   );
 }
 
