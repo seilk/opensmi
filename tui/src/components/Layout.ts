@@ -66,11 +66,11 @@ export function renderGlobalTabBar() {
   const appTabRow = Box(
     { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
     ...appTabBoxes,
-    Box({ flexGrow: 1 }),
     Box(
-      { paddingLeft: 2, paddingRight: 2 },
+      { paddingLeft: 3, paddingRight: 1 },
       Text({ content: t`${fg(C.textDim)("[/] App")}` })
     ),
+    Box({ flexGrow: 1 }),
     Box(
       { paddingLeft: 1, paddingRight: 1 },
       Text({
@@ -115,11 +115,11 @@ export function renderGlobalTabBar() {
       clusterTabRow = Box(
         { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
         ...cBoxes,
-        Box({ flexGrow: 1 }),
         Box(
-          { paddingLeft: 2, paddingRight: 2 },
+          { paddingLeft: 3, paddingRight: 1 },
           Text({ content: t`${fg(C.textDim)("[Tab] Cluster")}` })
-        )
+        ),
+        Box({ flexGrow: 1 })
       );
     }
   }
