@@ -226,10 +226,57 @@ export async function pollCluster(): Promise<void> {
         }
       }
     }
+    recomputeKnownUsers();
   } catch (e: any) {
     S.pollError = e.message || String(e);
   } finally {
     S.isPolling = false;
+  }
+}
+
+// CANONICAL: do not duplicate in index.ts
+export function recomputeKnownUsers(): void {
+  const users = new Set<string>();
+
+  for (const u of S.systemUsers) users.add(u);
+
+  // Live users from snapshot
+  if (S.snapshot) {
+    for (const n of S.snapshot.nodes) {
+      if (n.error) continue;
+      for (const p of n.processes) {
+        if (p.user && p.user !== "unknown") users.add(p.user);
+      }
+    }
+  }
+
+  // Alloc targets (except special tokens)
+  for (const a of S.allocations) {
+    const t = (a.target || "").trim();
+    if (!t || t === "*" || t.toLowerCase() === "none") continue;
+    users.add(t);
+  }
+
+  S.knownUsers = [...users].sort((a, b) => a.localeCompare(b));
+}
+
+// CANONICAL: do not duplicate in index.ts
+export function updateGpuIdleTracking(): void {
+  if (!S.snapshot) return;
+  const now = Date.now();
+  for (const node of S.snapshot.nodes) {
+    if (node.error) continue;
+    for (const gpu of node.gpus) {
+      const key = `${node.node_alias}:${gpu.uuid}`;
+      const procs = node.processes.filter((p) => p.gpu_uuid === gpu.uuid);
+      if (procs.length === 0) {
+        if (!S.gpuIdleStart[key]) {
+          S.gpuIdleStart[key] = now;
+        }
+      } else {
+        delete S.gpuIdleStart[key];
+      }
+    }
   }
 }
 
@@ -431,6 +478,26 @@ export async function loadClusterTabsFromConfig(): Promise<void> {
 }
 
 // ── Jobs ──────────────────────────────────────────────────────────
+
+export async function loadSystemUsers(force: boolean = false): Promise<void> {
+  // Avoid hammering the cluster; refresh at most every 10 minutes unless forced.
+  if (!force && S.systemUsersLoadedAt && Date.now() - S.systemUsersLoadedAt < 10 * 60_000) return;
+
+  try {
+    const { code, stdout, stderr } = await runOpensmi(["users", "--json", "--timeout", "8"]);
+    if (code !== 0) {
+      tuiLog("WARNING", `Failed to load system users: ${stderr.trim() || `exit ${code}`}`);
+      return;
+    }
+    const data = JSON.parse(stdout) as any;
+    const u = Array.isArray(data.users) ? (data.users as string[]) : [];
+    S.systemUsers = u;
+    S.systemUsersLoadedAt = Date.now();
+    recomputeKnownUsers();
+  } catch {
+    // ignore
+  }
+}
 
 export async function loadJobsFromCLI(): Promise<void> {
   try {
