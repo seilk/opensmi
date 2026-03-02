@@ -5441,7 +5441,8 @@ async function main() {
         screen = "kill";
         render();
       } else if (key.name === "escape" || key.name === "backspace") {
-        await navigateToTab("dashboard");
+        screen = "dashboard";
+        void navigateToTab("dashboard");
         render();
       } else if (key.name === "p") {
         if (!_detailSnap) return;
