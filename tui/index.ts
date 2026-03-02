@@ -17,9 +17,9 @@ import os from "node:os";
 import { tabRegistry, type Tab } from "./tabRegistry";
 import { S as _S_module } from './src/state/global';
 import { renderAlloc as _mod_renderAlloc } from './src/components/AllocModal';
-import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher } from './src/components/Layout';
+import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _mod_renderGlobalFooter, renderToast as _mod_renderToast, renderTabSwitcher as _mod_renderTabSwitcher, navigateByDelta as _mod_navigateByDelta } from './src/components/Layout';
 import { renderGpuAssignmentPanel as _mod_renderGpuAssignmentPanel, renderRunnerPane as _mod_renderRunnerPane } from './src/components/Runner';
-import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab } from './src/views/Dashboard';
+import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab, sortSlurmNodes as _mod_sortSlurmNodes } from './src/views/Dashboard';
 import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from './src/views/Detail';
 import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from './src/views/Jobs';
 import { renderMyGpuView as _mod_renderMyGpuView } from './src/views/MyGpus';
@@ -4612,6 +4612,21 @@ async function main() {
 
     if (screen === "dashboard" || screen === "my-gpu-view") {
 
+      const bracketKey =
+        key.sequence === "[" || key.sequence === "]"
+          ? key.sequence
+          : key.name === "[" || key.name === "]"
+            ? key.name
+            : null;
+      if (bracketKey === "[") {
+        await _mod_navigateByDelta(-1);
+        return;
+      }
+      if (bracketKey === "]") {
+        await _mod_navigateByDelta(1);
+        return;
+      }
+
       if (prefixKeyPressed && key.name === "down") {
         // ctrl+x down: focus runner
         prefixKeyPressed = false;
@@ -5168,15 +5183,7 @@ async function main() {
         } else if (key.name === "return") {
           // Enter on Slurm tab → open srun popup for selected node
           const snap = slurmSnapshots[activeSlurmIdx];
-          const sortedN = [...(snap?.nodes || [])].sort((a, b) => {
-            switch (slurmSortKey) {
-              case "name": return a.name.localeCompare(b.name);
-              case "partition": return (a.partition||"").localeCompare(b.partition||"");
-              case "free_asc": return a.gpu_free - b.gpu_free;
-              case "free_desc": return b.gpu_free - a.gpu_free;
-              default: return 0;
-            }
-          });
+          const sortedN = _mod_sortSlurmNodes(snap?.nodes || [], slurmSortKey);
           const node = sortedN[slurmSelectedIdx];
           if (node && snap) openSrunPopup(node, snap.cluster_name, snap);
           render();
