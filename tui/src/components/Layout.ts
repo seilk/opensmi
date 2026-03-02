@@ -259,3 +259,21 @@ export async function navigateToTab(tabId: string): Promise<boolean> {
   }
   return switched;
 }
+
+export async function navigateByDelta(delta: number): Promise<boolean> {
+  const tabs = tabRegistry.getAllVisible();
+  if (tabs.length === 0) return false;
+
+  const current = tabs.findIndex((tab) => tab.id === tabRegistry.activeTabId);
+  if (current < 0) return false;
+
+  const next = (current + delta + tabs.length) % tabs.length;
+  const nextTab = tabs[next];
+  if (!nextTab) return false;
+
+  const switched = await navigateToTab(nextTab.id);
+  if (switched) {
+    S.requestRender?.();
+  }
+  return switched;
+}

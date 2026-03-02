@@ -130,6 +130,18 @@ export function renderLoadingBadge() {
   );
 }
 
+export function sortSlurmNodes(nodes: SlurmNodeInfo[], key: SlurmSortKey): SlurmNodeInfo[] {
+  return [...nodes].sort((a, b) => {
+    switch (key) {
+      case "name":      return a.name.localeCompare(b.name);
+      case "state":     return (a.state || "").localeCompare(b.state || "");
+      case "gpu_used":  return b.gpu_used - a.gpu_used;
+      case "gpu_free":  return b.gpu_free - a.gpu_free;
+      default:          return 0;
+    }
+  });
+}
+
 export function renderDashboard() {
   const tabs = buildDashboardTabs();
   if (tabs.length > 0 && S.activeClusterTabIdx >= tabs.length) S.activeClusterTabIdx = 0;
@@ -1274,15 +1286,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   );
 
   // Sort nodes
-  const sortedNodes = [...nodes].sort((a, b) => {
-    switch (S.slurmSortKey) {
-      case "name":      return a.name.localeCompare(b.name);
-      case "state":     return (a.state || "").localeCompare(b.state || "");
-      case "gpu_used":  return b.gpu_used - a.gpu_used;
-      case "gpu_free":  return b.gpu_free - a.gpu_free;
-      default:          return 0;
-    }
-  });
+  const sortedNodes = sortSlurmNodes(nodes, S.slurmSortKey);
 
   // Column widths
   const nodeW = 12;
