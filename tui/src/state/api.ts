@@ -479,6 +479,26 @@ export async function loadClusterTabsFromConfig(): Promise<void> {
 
 // ── Jobs ──────────────────────────────────────────────────────────
 
+export async function loadSystemUsers(force: boolean = false): Promise<void> {
+  // Avoid hammering the cluster; refresh at most every 10 minutes unless forced.
+  if (!force && S.systemUsersLoadedAt && Date.now() - S.systemUsersLoadedAt < 10 * 60_000) return;
+
+  try {
+    const { code, stdout, stderr } = await runOpensmi(["users", "--json", "--timeout", "8"]);
+    if (code !== 0) {
+      tuiLog("WARNING", `Failed to load system users: ${stderr.trim() || `exit ${code}`}`);
+      return;
+    }
+    const data = JSON.parse(stdout) as any;
+    const u = Array.isArray(data.users) ? (data.users as string[]) : [];
+    S.systemUsers = u;
+    S.systemUsersLoadedAt = Date.now();
+    recomputeKnownUsers();
+  } catch {
+    // ignore
+  }
+}
+
 export async function loadJobsFromCLI(): Promise<void> {
   try {
     const proc = Bun.spawn([PYTHON, "-m", "opensmi", "job", "list", "--json"], {
