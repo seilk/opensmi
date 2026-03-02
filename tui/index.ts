@@ -2901,10 +2901,12 @@ function slurmTabIdxForPopup(popup: SlurmRunPopup): number | null {
   return byName >= 0 ? byName : null;
 }
 
+const ANSI_RE_GLOBAL = new RegExp("\\u001b\\[[0-9;]*[A-Za-z]", "g");
+const ANSI_RE_START = new RegExp("^\\u001b\\[[0-9;]*[A-Za-z]");
+
 // Strip ANSI escape codes for display-width calculation only
 function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+  return s.replace(ANSI_RE_GLOBAL, "");
 }
 
 // Wrap a string into lines based on ANSI-stripped display width (raw string preserved per line)
@@ -2919,7 +2921,7 @@ function wrapText(text: string, maxWidth: number): string[] {
   let lineStart = 0;
   while (rawIdx < text.length) {
     // Skip ANSI sequences (don't count toward display width)
-    const ansiMatch = text.slice(rawIdx).match(/^\x1b\[[0-9;]*[A-Za-z]/);
+    const ansiMatch = text.slice(rawIdx).match(ANSI_RE_START);
     if (ansiMatch) {
       rawIdx += ansiMatch[0].length;
       continue;
@@ -4608,6 +4610,34 @@ async function main() {
       clearInterval(refreshInterval);
       renderer.destroy();
       process.exit(0);
+    }
+
+    const bracketKey = key.sequence || "";
+    if (
+      (bracketKey === "[" || bracketKey === "]") &&
+      !runnerFocused &&
+      !runnerInputTyping &&
+      !allocCtx &&
+      !(slurmRunPopup && slurmRunPopup.editMode) &&
+      !(screen === "setup" && setupEditingField !== null)
+    ) {
+      const tabs = tabRegistry.getAllVisible();
+      if (tabs.length > 1) {
+        const currentIdx = tabs.findIndex((t) => t.id === tabRegistry.activeTabId);
+        if (currentIdx >= 0) {
+          const delta = bracketKey === "[" ? -1 : 1;
+          const nextIdx = (currentIdx + delta + tabs.length) % tabs.length;
+          const nextTab = tabs[nextIdx];
+          if (nextTab) {
+            const switched = await tabRegistry.switchTo(nextTab.id);
+            if (switched) {
+              screen = tabRegistry.activeTabId as typeof screen;
+              requestRender?.();
+            }
+          }
+        }
+      }
+      return;
     }
 
     if (screen === "dashboard" || screen === "my-gpu-view") {
