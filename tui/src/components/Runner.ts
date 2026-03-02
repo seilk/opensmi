@@ -215,13 +215,28 @@ export function renderRunnerPane() {
   // Use a slightly larger percentage or Flex trick to accommodate more GPUs
   const height = S.runnerPaneFolded ? 3 : (S.launchNumGpus > 3 ? "60%" : "40%");
 
-  const foldIcon = S.runnerPaneFolded ? "▸" : "▾";
+  const foldIcon = S.runnerPaneFolded ? "▶" : "▼";
   const focusIndicator = S.runnerFocused
     ? (S.runnerInputTyping ? "⌨ typing" : "● focused")
     : "○ idle";
 
+  const foldIconBox = Box(
+    {
+      paddingRight: 1,
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        S.runnerPaneFolded = !S.runnerPaneFolded;
+        S.requestRender?.();
+      },
+    },
+    Text({
+      content: foldIcon,
+      fg: S.runnerFocused ? C.green : C.cyan,
+    })
+  );
+
   const headerText = Text({
-    content: `${foldIcon} Command Runner  ${focusIndicator}`,
+    content: `Command Runner  ${focusIndicator}`,
     fg: S.runnerInputTyping ? "#9b59d6" : (S.runnerFocused ? C.green : C.cyan)
   });
 
@@ -244,7 +259,7 @@ export function renderRunnerPane() {
       backgroundColor: C.bgAlt,
       onMouseDown: (e: any) => {
         e?.stopPropagation?.();
-        if (S.runnerInputTyping) return; // Don't toggle while typing
+        if (S.runnerInputTyping) return;
         if (S.runnerFocused) {
           S.runnerFocused = false;
           S.runnerInputTyping = false;
@@ -256,7 +271,7 @@ export function renderRunnerPane() {
         S.requestRender?.();
       },
     },
-    headerText,
+    Box({ flexDirection: "row" }, foldIconBox, headerText),
     helpText
   );
 
@@ -363,10 +378,9 @@ export function renderRunnerPane() {
                 S.runnerFocused = true;
                 S.runnerInputBuffer = S.launchCommand;
                 S.runnerFocusedInputIdx = 0;
-              } else if (S.runnerFocusedInputIdx === 0 && !S.runnerInputTyping) {
-                // Second click on same line → typing mode
-                S.runnerInputTyping = true;
-                S.runnerInputBuffer = S.launchCommand;
+              } else {
+                S.runnerFocused = false;
+                S.runnerInputTyping = false;
               }
               S.requestRender?.();
             },
@@ -442,8 +456,8 @@ export function renderRunnerPane() {
                   S.runnerFocused = true;
                   S.runnerFocusedInputIdx = i;
                 } else if (S.runnerFocusedInputIdx === i && !S.runnerInputTyping) {
-                  // Second click on same line → typing mode
-                  S.runnerInputTyping = true;
+                  S.runnerFocused = false;
+                  S.runnerInputTyping = false;
                 } else {
                   S.runnerFocusedInputIdx = i;
                 }

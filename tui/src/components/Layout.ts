@@ -168,6 +168,22 @@ export function renderGlobalFooter() {
     }
   }
 
+  const intervalLabel = S.autoRefreshSec === 0 ? "off"
+    : S.autoRefreshSec === 10 ? "10s"
+    : S.autoRefreshSec === 30 ? "30s"
+    : "1m";
+
+  const refreshWidget = Box(
+    {
+      flexDirection: "row",
+      onMouseDown: (e: any) => {
+        e?.stopPropagation?.();
+        (S as any).cycleAutoRefresh?.();
+      },
+    },
+    Text({ content: S.isRefreshing ? t`${fg(C.yellow)("⟳...")}  ${fg(C.textDim)("Refresh [R]")} ${fg(C.cyan)(intervalLabel)}` : t`${fg(C.textDim)("Refresh [R]")} ${fg(S.autoRefreshSec === 0 ? C.textDim : C.cyan)(intervalLabel)}` })
+  );
+
   return Box(
     {
       width: "100%",
@@ -178,31 +194,14 @@ export function renderGlobalFooter() {
       backgroundColor: C.bgAlt,
     },
     Text({ content: helpContent }),
-    Text({ content: S.statusMsg ? t`${fg(C.yellow)(S.statusMsg)}` : " " })
+    refreshWidget
   );
 }
 
 // ── Toast ──────────────────────────────────────────────────────────
 
 export function renderToast() {
-  if (!S.statusMsg) return null;
-
-  return Box(
-    {
-      position: "absolute",
-      right: 2,
-      bottom: 1,
-      paddingLeft: 1,
-      paddingRight: 1,
-      paddingTop: 0,
-      paddingBottom: 0,
-      backgroundColor: C.bgAlt,
-      borderStyle: "rounded",
-      borderColor: C.border,
-      zIndex: 10_000,
-    },
-    Text({ content: S.statusMsg, fg: C.yellow })
-  );
+  return null;
 }
 
 // ── Tab switcher ───────────────────────────────────────────────────

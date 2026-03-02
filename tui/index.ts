@@ -207,6 +207,8 @@ function syncStateToS(): void {
   (_S_module as any).lastPollTime = lastPollTime;
   (_S_module as any).pollError = pollError;
   (_S_module as any).isPolling = isPolling;
+  (_S_module as any).isRefreshing = isRefreshing;
+  (_S_module as any).autoRefreshSec = autoRefreshSec;
   (_S_module as any).bootLoading = bootLoading;
   (_S_module as any).selectedNodeIdx = selectedNodeIdx;
   (_S_module as any).selectedGpuIdx = selectedGpuIdx;
@@ -318,6 +320,8 @@ function syncStateFromS(): void {
   lastPollTime = (_S_module as any).lastPollTime;
   pollError = (_S_module as any).pollError;
   isPolling = (_S_module as any).isPolling;
+  isRefreshing = (_S_module as any).isRefreshing;
+  autoRefreshSec = (_S_module as any).autoRefreshSec;
   bootLoading = (_S_module as any).bootLoading;
   selectedNodeIdx = (_S_module as any).selectedNodeIdx;
   selectedGpuIdx = (_S_module as any).selectedGpuIdx;
@@ -439,6 +443,8 @@ function renderGlobalFooter() {
 }
 
 let isPolling = false;
+let isRefreshing = false;
+let autoRefreshSec: 0 | 10 | 30 | 60 = 30;
 let bootLoading = true;
 
 // Debounce rapid bracket key presses to prevent state thrashing
@@ -2845,6 +2851,7 @@ function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: SlurmSna
 
 function closeSrunPopup() {
   slurmRunPopup = null;
+  void loadSlurmData().then(() => { _renderHook?.(); });
   _renderHook?.();
 }
 
@@ -3021,7 +3028,7 @@ async function fetchQosForPartition(loginNode: string, sshUser: string, partitio
     // Parse "AllowQos=normal,high" or "QoS=normal"
     const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
     if (m && m[1] !== "N/A" && m[1] !== "(null)") {
-      currentPopup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe);
+      currentPopup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe).filter(q => q.toLowerCase() !== "default");
     }
     tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(currentPopup.qosList)}`);
   } catch (e) {
@@ -3101,11 +3108,10 @@ async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot) {
     }
     nodeCancelStatus = { node: node.name, status: "done", msg: `Cancelled: ${jobIds.join(", ")}` };
     _renderHook?.();
-    // Refresh cluster data after cancel - force render on completion
     setTimeout(async () => {
       await loadSlurmData();
       _renderHook?.();
-    }, 1500);
+    }, 500);
   } catch (e: any) {
     nodeCancelStatus = { node: node.name, status: "error", msg: e?.message || String(e) };
     tuiLog("ERROR", `cancelJobsOnNode failed: ${nodeCancelStatus.msg}`);
@@ -3156,11 +3162,10 @@ async function cancelExistingJobsInPopup() {
     popup.existingJobCancelMsg = `Cancelled: ${popup.existingJobIds.join(", ")}`;
     popup.existingJobIds = [];
     _renderHook?.();
-    // Refresh cluster data
     setTimeout(async () => {
       await loadSlurmData();
       _renderHook?.();
-    }, 1500);
+    }, 500);
   } catch (e: any) {
     popup.existingJobCancelStatus = "error";
     popup.existingJobCancelMsg = e?.message || String(e);
@@ -3343,29 +3348,10 @@ async function submitJobToSlurm() {
     }
     if (!running) throw new Error(`Job ${popup.jobId} did not reach RUNNING state within 60s`);
 
-    // 3. scontrol -d show job → GPU IDX
-    const scCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
-      "scontrol", "-d", "show", "job", popup.jobId];
-    const scProc = Bun.spawn(scCmd, { stdout: "pipe", stderr: "pipe" });
-    const scOut = await new Response(scProc.stdout).text();
-    await scProc.exited;
-
-    // Parse all "GresUsed=gpu:N(IDX:a,b,...)" segments, collect & dedupe indices
-    const idxMatches = [...scOut.matchAll(/GresUsed=gpu:\d+\(IDX:([0-9,]+)\)/g)];
-    if (idxMatches.length > 0) {
-      const allIdx = idxMatches
-        .flatMap(m => m[1]!.split(","))
-        .filter(s => /^\d+$/.test(s))
-        .map(Number);
-      const unique = [...new Set(allIdx)].sort((a, b) => a - b);
-      popup.gpuIdxList = unique.join(",");
-    } else {
-      popup.gpuIdxList = ""; // unavailable - don't show false data
-      tuiLog("WARNING", `GresUsed IDX not found in scontrol output for job ${popup.jobId}`);
-    }
     popup.jobSubmitStatus = "running";
     _renderHook?.();
-    tuiLog("INFO", `job running: JOBID=${popup.jobId} GPU_IDX=${popup.gpuIdxList}`);
+    tuiLog("INFO", `job running: JOBID=${popup.jobId}`);
+    void loadSlurmData().then(() => { _renderHook?.(); });
 
   } catch (e: any) {
     popup.jobSubmitStatus = "error";
@@ -4170,6 +4156,7 @@ async function navigateToTab(tabId: string): Promise<boolean> {
   const switched = await tabRegistry.switchTo(tabId);
   if (switched) {
     screen = tabRegistry.activeTabId as typeof screen;
+    (_S_module as any).screen = screen;
   }
   return switched;
 }
@@ -4259,9 +4246,9 @@ async function main() {
 
       const ok = renderer.copyToClipboardOSC52(text);
 
-      // Show "Copied" message (2s) in lower right
+      // Show "Copied" message (1s) in lower right
       const charCount = text.length;
-      setStatus(`Copied ${charCount} char${charCount === 1 ? '' : 's'}`, 2000);
+      setStatus(`Copied ${charCount} char${charCount === 1 ? '' : 's'}`, 1000);
 
       // Clear selection immediately after copy (tmux-like behavior)
       // Use setImmediate to clear on next tick, ensuring copy completes first
@@ -4430,6 +4417,21 @@ async function main() {
     render();
   };
 
+  (_S_module as any).openDetailView = (nodeAlias: string) => {
+    const snap = activeDashboardSnapshot();
+    if (!snap) return;
+    const ni = snap.nodes.findIndex((n) => n.node_alias === nodeAlias);
+    if (ni >= 0) setActiveDashboardSelectedNodeIdx(ni);
+    selectedGpuIdx = gpuIndicesForNode(snap.nodes[ni >= 0 ? ni : 0])[0] ?? 0;
+    void navigateToTab("detail").then(() => {
+      const node = activeDashboardSnapshot()?.nodes[activeDashboardSelectedNodeIdx()];
+      if (node) void checkSudoForNode(node.node_alias);
+      render();
+    });
+  };
+
+  (_S_module as any).cycleAutoRefresh = () => { cycleAutoRefresh(); };
+
   tabRegistry.onMessage = (msg: string) => {
     setStatus(msg, 2000);
   };
@@ -4439,8 +4441,10 @@ async function main() {
     label: "Dashboard",
     shortcut: "d",
     render: renderDashboard,
-    onEnter: async () => {
-      await Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()]);
+    onEnter: () => {
+      void Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()])
+        .then(() => { requestRender?.(); })
+        .catch(() => {});
     },
   });
 
@@ -4512,32 +4516,48 @@ async function main() {
   // One-shot update hint (bottom-right toast, auto-hide)
   void maybeShowUpdateNotification();
 
-  // Auto-refresh every 10s
-  // Dispatch + watchdog run on ALL tabs (jobs shouldn't stall because user is on setup)
-  // UI refresh is skipped on non-data tabs to avoid unnecessary redraws
-  const refreshInterval = setInterval(async () => {
+  async function runRefreshCycle() {
     if (runnerFocused || runnerInputTyping) return;
-
-    // Always poll cluster + allocations (needed for dispatch decisions)
-    await Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()]);
-
-
-    // Load jobs if on jobs tab
-    if (screen === "jobs") {
-      await loadJobsFromCLI();
+    isRefreshing = true;
+    syncStateToS();
+    render();
+    try {
+      await Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()]);
+      if (screen === "jobs") {
+        await loadJobsFromCLI();
+      }
+      await dispatchQueuedJobs();
+      await watchRunningJobs();
+    } finally {
+      isRefreshing = false;
+      syncStateToS();
+      if (screen === "dashboard" || screen === "detail" || screen === "jobs") {
+        render();
+      }
     }
+  }
 
-    // Dispatch queued jobs after snapshot update - runs regardless of active tab
-    await dispatchQueuedJobs();
+  let refreshInterval: ReturnType<typeof setInterval> | null = null;
 
-    // Watch running jobs for health and auto-restart - runs regardless of active tab
-    await watchRunningJobs();
-
-    // Only re-render if on a data-display tab
-    if (screen === "dashboard" || screen === "detail" || screen === "jobs") {
-      render();
+  function restartRefreshInterval() {
+    if (refreshInterval !== null) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
     }
-  }, 10_000);
+    if (autoRefreshSec === 0) return;
+    refreshInterval = setInterval(() => { void runRefreshCycle(); }, autoRefreshSec * 1000);
+  }
+
+  restartRefreshInterval();
+
+  function cycleAutoRefresh() {
+    const cycle: Array<0 | 10 | 30 | 60> = [10, 30, 60, 0];
+    const next = cycle[(cycle.indexOf(autoRefreshSec) + 1) % cycle.length]!;
+    autoRefreshSec = next;
+    syncStateToS();
+    restartRefreshInterval();
+    render();
+  }
 
   // Cleanup old jobs every hour
   let cleanupCounter = 0;
@@ -4634,9 +4654,24 @@ async function main() {
     if (prefixKeyPressed && key.name === "q") {
       prefixKeyPressed = false;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
-      clearInterval(refreshInterval);
+      if (refreshInterval !== null) clearInterval(refreshInterval);
       renderer.destroy();
       process.exit(0);
+    }
+
+    if (key.sequence === "/" || key.name === "/") {
+      const now = Date.now();
+      if (now - _lastBracketKeyTime < BRACKET_KEY_DEBOUNCE_MS) {
+        return;
+      }
+      _lastBracketKeyTime = now;
+      void _mod_navigateByDelta(1);
+      return;
+    }
+
+    if ((key.name === "R" && key.shift) || key.sequence === "R") {
+      cycleAutoRefresh();
+      return;
     }
 
     if (screen === "dashboard" || screen === "my-gpu-view") {
@@ -4654,17 +4689,6 @@ async function main() {
         }
         _lastBracketKeyTime = now;
         void _mod_navigateByDelta(bracketKey === "[" ? -1 : 1);
-        return;
-      }
-
-      // "/" key: cycle through app-level tabs (forward only, wraps around)
-      if (key.sequence === "/" || key.name === "/") {
-        const now = Date.now();
-        if (now - _lastBracketKeyTime < BRACKET_KEY_DEBOUNCE_MS) {
-          return;
-        }
-        _lastBracketKeyTime = now;
-        void _mod_navigateByDelta(1);
         return;
       }
 
@@ -5291,10 +5315,15 @@ async function main() {
         }
         render();
       } else if (key.name === "r") {
-        if (dashboardTab?.type === "slurm") {
-          await loadSlurmData();
-        } else {
-          await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+        isRefreshing = true; syncStateToS(); render();
+        try {
+          if (dashboardTab?.type === "slurm") {
+            await loadSlurmData();
+          } else {
+            await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+          }
+        } finally {
+          isRefreshing = false; syncStateToS();
         }
         render();
       } else if (key.name === "?" || key.name === "h") {
@@ -5335,7 +5364,12 @@ async function main() {
         }
 
         if (key.name === "r") {
-          await Promise.all([pollAllClusters(), loadAllocations()]);
+          isRefreshing = true; syncStateToS(); render();
+          try {
+            await Promise.all([pollAllClusters(), loadAllocations()]);
+          } finally {
+            isRefreshing = false; syncStateToS();
+          }
           render();
           return;
         }
@@ -5452,8 +5486,7 @@ async function main() {
         screen = "kill";
         render();
       } else if (key.name === "escape" || key.name === "backspace") {
-        screen = "dashboard";
-        void navigateToTab("dashboard");
+        await navigateToTab("dashboard");
         render();
       } else if (key.name === "p") {
         if (!_detailSnap) return;
@@ -5471,7 +5504,12 @@ async function main() {
         await saveMyGpuViewState();
         render();
       } else if (key.name === "r") {
-        await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+        isRefreshing = true; syncStateToS(); render();
+        try {
+          await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+        } finally {
+          isRefreshing = false; syncStateToS();
+        }
         render();
       }
       // Quit via ctrl+x q (unified shortcut)
