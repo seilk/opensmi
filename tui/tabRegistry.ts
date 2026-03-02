@@ -103,33 +103,33 @@ export class TabRegistryImpl implements TabRegistry {
     
     this._switchInProgress = true;
 
-    const nextTab = this.tabs.get(tabId);
-    if (!nextTab) {
-      this._notify(`Tab "${tabId}" not found`);
-      return false;
-    }
-
-    const currentTab = this.tabs.get(this.activeTabId);
-
-    // Check if current tab allows exit
-    if (currentTab?.canExit && !currentTab.canExit()) {
-      this._notify(`Cannot leave tab "${this.activeTabId}"`);
-      return false;
-    }
-
-    // Call exit hook on current tab
-    if (currentTab?.onExit) {
-      try {
-        await currentTab.onExit();
-      } catch {
-        this._notify(`Error while leaving tab "${this.activeTabId}"`);
-      }
-    }
-
-    // Switch active tab
-    this.activeTabId = tabId;
-
     try {
+      const nextTab = this.tabs.get(tabId);
+      if (!nextTab) {
+        this._notify(`Tab "${tabId}" not found`);
+        return false;
+      }
+
+      const currentTab = this.tabs.get(this.activeTabId);
+
+      // Check if current tab allows exit
+      if (currentTab?.canExit && !currentTab.canExit()) {
+        this._notify(`Cannot leave tab "${this.activeTabId}"`);
+        return false;
+      }
+
+      // Call exit hook on current tab
+      if (currentTab?.onExit) {
+        try {
+          await currentTab.onExit();
+        } catch {
+          this._notify(`Error while leaving tab "${this.activeTabId}"`);
+        }
+      }
+
+      // Switch active tab
+      this.activeTabId = tabId;
+
       // Call enter hook on new tab
       if (nextTab.onEnter) {
         try {
@@ -138,11 +138,11 @@ export class TabRegistryImpl implements TabRegistry {
           this._notify(`Error while entering tab "${tabId}"`);
         }
       }
+
+      return true;
     } finally {
       this._switchInProgress = false;
     }
-
-    return true;
   }
 
   /**
