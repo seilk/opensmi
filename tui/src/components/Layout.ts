@@ -281,7 +281,7 @@ export async function navigateByDelta(delta: number): Promise<boolean> {
   S.screen = nextTab.id as typeof S.screen;
   S.requestRender?.();
   
-  // Switch tab (async onEnter runs in background)
-  await tabRegistry.switchTo(nextTab.id);
+  // Switch tab (async onEnter runs in background, don't block on it)
+  void tabRegistry.switchTo(nextTab.id);
   return true;
 }

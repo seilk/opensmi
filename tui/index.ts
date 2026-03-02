@@ -4644,11 +4644,11 @@ async function main() {
             ? key.name
             : null;
       if (bracketKey === "[") {
-        await _mod_navigateByDelta(-1);
+        void _mod_navigateByDelta(-1);
         return;
       }
       if (bracketKey === "]") {
-        await _mod_navigateByDelta(1);
+        void _mod_navigateByDelta(1);
         return;
       }
 
