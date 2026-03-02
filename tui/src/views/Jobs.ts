@@ -363,6 +363,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
       continue;
     }
 
+    const origGpus = job.gpus.slice();
     try {
       if (!hasExplicitGpus) {
         const available = await findAvailableGpus(needed);
@@ -399,6 +400,7 @@ async function _dispatchQueuedJobsInner(): Promise<void> {
     } catch (e: any) {
       tuiLog("ERROR", `dispatch failed job=${job.id}: ${e?.message || String(e)}`);
 
+      job.gpus = origGpus;
       job.status = "failed";
       job.finished_at = new Date().toISOString();
       job.error = `Dispatch failed: ${e?.message || String(e)}`;

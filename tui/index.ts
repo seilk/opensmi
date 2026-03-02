@@ -21,9 +21,10 @@ import { renderGlobalTabBar as _mod_renderGlobalTabBar, renderGlobalFooter as _m
 import { renderRunnerPane as _mod_renderRunnerPane } from './src/components/Runner';
 import { renderLoadingBadge as _mod_renderLoadingBadge, renderDashboard as _mod_renderDashboard, renderSrunPopup as _mod_renderSrunPopup, renderSlurmClusterTab as _mod_renderSlurmClusterTab, sortSlurmNodes as _mod_sortSlurmNodes } from './src/views/Dashboard';
 import { renderDetail as _mod_renderDetail, renderHelp as _mod_renderHelp, renderKill as _mod_renderKill } from './src/views/Detail';
-import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView } from './src/views/Jobs';
+import { renderJobsView as _mod_renderJobsView, renderJobsListView as _mod_renderJobsListView, renderJobDetailView as _mod_renderJobDetailView, dispatchQueuedJobs as _mod_dispatchQueuedJobs, watchRunningJobs as _mod_watchRunningJobs, checkGpuLiveness as _mod_checkGpuLiveness } from './src/views/Jobs';
 import { renderMyGpuView as _mod_renderMyGpuView } from './src/views/MyGpus';
 import { renderSetupView as _mod_renderSetupView } from './src/views/Setup';
+import { pollCluster as _mod_pollCluster, pollExtraCluster as _mod_pollExtraCluster, pollAllClusters as _mod_pollAllClusters, recomputeKnownUsers as _mod_recomputeKnownUsers } from './src/state/api';
 
 // ── TUI Logger ─────────────────────────────────────────────────────
 
@@ -918,110 +919,6 @@ async function killPids(
 
 // ── Data fetching ──────────────────────────────────────────────────
 
-async function pollCluster(): Promise<void> {
-  if (isPolling || (_S_module as any).isPolling) return;
-  isPolling = true;
-  (_S_module as any).isPolling = true;
-  pollError = "";
-  tuiLog("DEBUG", "pollCluster start");
-
-  try {
-    const proc = spawn([...OPENSMI, "poll", "--json"], {
-      cwd: OPENSMI_CWD,
-      env: OPENSMI_ENV,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const code = await proc.exited;
-
-    if (code !== 0) {
-      pollError = stderr.trim() || `exit ${code}`;
-      return;
-    }
-
-    const prevSelectedAlias = snapshot?.nodes?.[selectedNodeIdx]?.node_alias;
-
-    const next = JSON.parse(stdout) as ClusterSnapshot;
-    // Keep nodes in a stable A→Z order in the dashboard.
-    next.nodes = [...next.nodes].sort((a, b) =>
-      a.node_alias.localeCompare(b.node_alias, "en", { numeric: true, sensitivity: "base" })
-    );
-
-    snapshot = next;
-
-    // Preserve selection across re-ordering.
-    if (prevSelectedAlias) {
-      const i = snapshot.nodes.findIndex((n) => n.node_alias === prevSelectedAlias);
-      if (i >= 0) selectedNodeIdx = i;
-    }
-    if (snapshot.nodes.length === 0) {
-      selectedNodeIdx = 0;
-    } else if (selectedNodeIdx >= snapshot.nodes.length) {
-      selectedNodeIdx = snapshot.nodes.length - 1;
-    }
-
-    lastPollTime = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
-    recomputeKnownUsers();
-    updateGpuIdleTracking();
-  } catch (e: any) {
-    pollError = e.message || String(e);
-  } finally {
-    isPolling = false;
-    (_S_module as any).isPolling = false;
-  }
-}
-
-async function pollExtraCluster(idx: number): Promise<void> {
-  extraPollErrors[idx] = "";
-  try {
-    const clusterIdx = idx + 1;
-    const proc = spawn([...OPENSMI, "poll", "--json", "--cluster-idx", String(clusterIdx)], {
-      cwd: OPENSMI_CWD,
-      env: OPENSMI_ENV,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const code = await proc.exited;
-
-    if (code !== 0) {
-      extraPollErrors[idx] = stderr.trim() || `exit ${code}`;
-      extraSnapshots[idx] = null;
-      return;
-    }
-
-    const prevSelectedAlias = extraSnapshots[idx]?.nodes?.[extraSelectedNodeIdx[idx] || 0]?.node_alias;
-    const next = JSON.parse(stdout) as ClusterSnapshot;
-    next.nodes = [...next.nodes].sort((a, b) =>
-      a.node_alias.localeCompare(b.node_alias, "en", { numeric: true, sensitivity: "base" })
-    );
-
-    extraSnapshots[idx] = next;
-    const selectedIdx = extraSelectedNodeIdx[idx] || 0;
-    if (prevSelectedAlias) {
-      const i = next.nodes.findIndex((n) => n.node_alias === prevSelectedAlias);
-      if (i >= 0) extraSelectedNodeIdx[idx] = i;
-    }
-    if (next.nodes.length === 0) {
-      extraSelectedNodeIdx[idx] = 0;
-    } else if (extraSelectedNodeIdx[idx] >= next.nodes.length) {
-      extraSelectedNodeIdx[idx] = next.nodes.length - 1;
-    }
-  } catch (e: any) {
-    extraPollErrors[idx] = e?.message || String(e);
-    extraSnapshots[idx] = null;
-  }
-}
-
-async function pollAllClusters(): Promise<void> {
-  await Promise.all([pollCluster(), ...extraClusterNames.map((_, i) => pollExtraCluster(i))]);
-}
-
 function updateGpuIdleTracking(): void {
   if (!snapshot) return;
 
@@ -1068,7 +965,7 @@ async function loadAllocations(): Promise<void> {
   } catch {
     allocations = [];
   } finally {
-    recomputeKnownUsers();
+    _mod_recomputeKnownUsers();
   }
 }
 
@@ -1248,305 +1145,6 @@ print(json.dumps(available))
   } catch (e) {
     tuiLog("ERROR", `findAvailableGpus error: ${e}`);
     return [];
-  }
-}
-
-let isDispatching = false;
-
-async function dispatchQueuedJobs(): Promise<void> {
-  if (!snapshot || isDispatching) {
-    return;
-  }
-  isDispatching = true;
-  try {
-    // Hotfix: always persist latest setup before dispatching jobs.
-    await flushSetupChangesToConfig();
-    await _dispatchQueuedJobsInner();
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    tuiLog("ERROR", `dispatch precheck failed: ${msg}`);
-    setStatus(`✗ Setup save failed: ${msg.slice(0, 80)}`, 4000);
-  } finally {
-    isDispatching = false;
-  }
-}
-
-async function _dispatchQueuedJobsInner(): Promise<void> {
-
-  // Get queued jobs in FIFO order (sorted by submission time)
-  // Dispatch ALL queued jobs regardless of queue_mode - a queued job needs execution.
-  const queuedJobs = jobList
-    .filter(j => j.status === "queued")
-    .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at));
-
-  if (queuedJobs.length === 0) {
-    return;
-  }
-
-  // Process each queued job in order (FIFO)
-  for (let i = 0; i < queuedJobs.length; i++) {
-    const job = queuedJobs[i];
-    const hasExplicitGpus = job.gpus.length > 0;
-    const needed = job.requested_gpu_count || job.gpus.length;
-
-    if (needed === 0) {
-      continue;
-    }
-
-    const origGpus = job.gpus.slice();
-    try {
-      if (!hasExplicitGpus) {
-        // No GPUs specified - auto-assign from available pool
-        const available = await findAvailableGpus(needed);
-
-        if (available.length < needed) {
-          if (i === 0) {
-            const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-            setStatus(`Queue: Job ${job.id} waiting for ${needed} GPU(s) - ${cmdPreview.slice(0, 30)}...`, 2000);
-          }
-          continue;
-        }
-
-        job.gpus = available.slice(0, needed).map(g => [g.node, g.gpu] as [string, number]);
-      }
-
-      // GPUs are set (explicit or just assigned)
-      const gpuList = job.gpus
-        .map(([n, g]) => `${n}:${g}`)
-        .join(", ");
-
-      job.status = "running";
-      job.started_at = new Date().toISOString();
-
-      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-      setStatus(`Auto-dispatching job ${job.id} → [${gpuList}]`, 2000);
-
-      await executeJobRemote(job);
-      await updateJobInStore(job);
-      await loadJobsFromCLI();
-
-      setStatus(`✓ Auto-dispatched job ${job.id}: ${cmdPreview.slice(0, 40)}...`, 3000);
-
-      requestRender?.();
-
-    } catch (e: any) {
-      tuiLog("ERROR", `dispatch failed job=${job.id}: ${e?.message || String(e)}`);
-
-      job.gpus = origGpus;
-      job.status = "failed";
-      job.finished_at = new Date().toISOString();
-      job.error = `Dispatch failed: ${e?.message || String(e)}`;
-
-      const errorMsg = e?.message || String(e);
-      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-      setStatus(`✗ Auto-dispatch failed for job ${job.id}: ${errorMsg.slice(0, 40)}`, 4000);
-
-      try {
-        await updateJobInStore(job);
-        await loadJobsFromCLI();
-      } catch (updateErr) {
-        tuiLog("ERROR", `job store update failed job=${job.id}: ${updateErr}`);
-      }
-
-      requestRender?.();
-    }
-  }
-}
-
-// Per-GPU liveness cache: jobId → { "node:gpu": alive }
-const gpuLivenessCache: Map<string, Record<string, boolean>> = new Map();
-// Consecutive "all dead" counter per job - only act after threshold
-const watchdogDeadCount: Map<string, number> = new Map();
-const WATCHDOG_DEAD_THRESHOLD = 3;  // Must see "all dead" 3 times in a row before acting
-const WATCHDOG_GRACE_MS = 20_000;   // 20s grace after job start
-
-async function checkGpuLiveness(job: Job): Promise<Record<string, boolean> | null> {
-  const tmpFile = `/tmp/opensmi-check-${crypto.randomUUID()}.json`;
-  await Bun.write(tmpFile, JSON.stringify(job));
-
-  const checkScript = `
-import sys, json, os
-# Try multiple paths for opensmi module
-for p in [os.path.join("${BASE_DIR}", "src") if "${BASE_DIR}" else "", os.path.expanduser("~/opensmi-dev/src")]:
-    if p and os.path.isdir(p):
-        sys.path.insert(0, p)
-        break
-from opensmi.jobs import Job, check_gpu_liveness
-from opensmi.config import load_config
-from opensmi.state import resolve_config_path, get_state_dir
-import asyncio
-
-with open("${tmpFile}", "r") as f:
-    job_data = json.load(f)
-
-job = Job(
-    id=job_data["id"],
-    command=job_data["command"],
-    commands=job_data["commands"],
-    gpus=[tuple(g) for g in job_data["gpus"]],
-    requested_gpu_count=job_data["requested_gpu_count"],
-    dist_mode=job_data["dist_mode"],
-    exec_mode=job_data["exec_mode"],
-    tmux_sessions=job_data["tmux_sessions"],
-    status=job_data["status"],
-    submitted_at=job_data["submitted_at"],
-    started_at=job_data.get("started_at"),
-    finished_at=job_data.get("finished_at"),
-    exit_codes=job_data["exit_codes"],
-    error=job_data.get("error"),
-    user=job_data["user"],
-    restart_policy=job_data["restart_policy"],
-    retry_count=job_data["retry_count"],
-    max_retries=job_data["max_retries"],
-    tags=job_data["tags"],
-    queue_mode=job_data["queue_mode"],
-)
-
-cfg_path = resolve_config_path(state_dir=get_state_dir())
-cfg = load_config(cfg_path)
-
-async def main():
-    result = await check_gpu_liveness(job, cfg)
-    print(json.dumps(result))
-
-asyncio.run(main())
-`;
-
-  try {
-    const proc = Bun.spawn([PYTHON, "-c", checkScript], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: OPENSMI_ENV,
-      cwd: OPENSMI_CWD,
-    });
-
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const code = await proc.exited;
-
-    try {
-      await Bun.$`rm -f ${tmpFile}`;
-    } catch {}
-
-    if (code !== 0) {
-      tuiLog("WARNING", `checkGpuLiveness: python exited ${code} for job=${job.id}: ${stderr.slice(0, 500)}`);
-      return null;  // null = unknown, don't act on it
-    }
-
-    const trimmed = stdout.trim();
-    if (!trimmed) {
-      tuiLog("WARNING", `checkGpuLiveness: empty stdout for job=${job.id}`);
-      return null;
-    }
-
-    const parsed = JSON.parse(trimmed);
-    gpuLivenessCache.set(job.id, parsed);
-    return parsed;
-  } catch (e) {
-    tuiLog("ERROR", `checkGpuLiveness failed job=${job.id}: ${(e as any)?.message || String(e)}`);
-    return null;  // null = unknown
-  }
-}
-
-async function watchRunningJobs(): Promise<void> {
-  const runningJobs = jobList.filter(j => j.status === "running");
-
-  if (runningJobs.length === 0) {
-    return;
-  }
-
-  for (const job of runningJobs) {
-    try {
-      // Grace period: skip health check for first 30s after job started.
-      if (job.started_at) {
-        const elapsed = Date.now() - new Date(job.started_at).getTime();
-        if (elapsed < WATCHDOG_GRACE_MS) {
-          continue;
-        }
-      }
-
-      // Remote liveness check via PID file
-      const liveness = await checkGpuLiveness(job);
-
-      // null = check failed (SSH error, Python error, timeout)
-      // Don't act on failures - reset dead counter
-      if (liveness === null) {
-        tuiLog("DEBUG", `watchdog: job=${job.id} liveness check returned null (error/timeout), skipping`);
-        // Don't increment dead count on errors - could be transient
-        continue;
-      }
-
-      // Empty result = no GPUs mapped (misconfiguration)
-      if (Object.keys(liveness).length === 0) {
-        tuiLog("DEBUG", `watchdog: job=${job.id} empty liveness result, skipping`);
-        continue;
-      }
-
-      const anyAlive = Object.values(liveness).some(v => v);
-      const aliveCount = Object.values(liveness).filter(v => v).length;
-      const totalCount = Object.keys(liveness).length;
-
-      if (anyAlive) {
-        // Reset dead counter on any sign of life
-        watchdogDeadCount.delete(job.id);
-
-        if (aliveCount < totalCount) {
-          tuiLog("WARNING", `watchdog: job=${job.id} partial: ${aliveCount}/${totalCount} GPUs alive`);
-        }
-        continue;
-      }
-
-      // ALL GPUs reported dead - increment consecutive counter
-      const deadCount = (watchdogDeadCount.get(job.id) || 0) + 1;
-      watchdogDeadCount.set(job.id, deadCount);
-
-      const gpuSummary = Object.entries(liveness).map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
-      tuiLog("WARNING", `watchdog: job=${job.id} all dead (${deadCount}/${WATCHDOG_DEAD_THRESHOLD}) [${gpuSummary}]`);
-
-      // Only act after consecutive threshold
-      if (deadCount < WATCHDOG_DEAD_THRESHOLD) {
-        continue;
-      }
-
-      // Confirmed dead - take action
-      const cmdPreview = job.command || (job.commands.length > 0 ? job.commands[0] : "");
-      tuiLog("ERROR", `watchdog: job=${job.id} CONFIRMED dead after ${deadCount} checks. cmd=${cmdPreview.slice(0, 80)}`);
-      watchdogDeadCount.delete(job.id);
-
-      const shouldRestart =
-        (job.restart_policy === "on-failure" && job.retry_count < job.max_retries) ||
-        (job.restart_policy === "always");
-
-      if (shouldRestart) {
-        job.status = "queued";
-        job.retry_count++;
-        job.started_at = null;
-        job.tmux_sessions = [];
-
-        const retryInfo = job.restart_policy === "always"
-          ? `(retry ${job.retry_count})`
-          : `(retry ${job.retry_count}/${job.max_retries})`;
-
-        tuiLog("INFO", `watchdog: re-queuing job=${job.id} ${retryInfo}`);
-        setStatus(`Job ${job.id} died, re-queuing ${retryInfo}`, 3000);
-      } else {
-        job.status = "failed";
-        job.finished_at = new Date().toISOString();
-        job.error = `All GPU processes terminated after ${WATCHDOG_DEAD_THRESHOLD} consecutive checks`;
-
-        tuiLog("ERROR", `watchdog: job=${job.id} failed - confirmed dead (policy=${job.restart_policy} retries=${job.retry_count}/${job.max_retries})`);
-        setStatus(`Job ${job.id} failed: GPU processes terminated`, 3000);
-      }
-
-      // Clear caches
-      gpuLivenessCache.delete(job.id);
-
-      await updateJobInStore(job);
-      await loadJobsFromCLI();
-      requestRender?.();
-    } catch (e: any) {
-      tuiLog("ERROR", `watchdog failed job=${job.id}: ${e?.message || String(e)}`);
-    }
   }
 }
 
@@ -1796,7 +1394,7 @@ async function retryJobAction(job: Job): Promise<void> {
       await flushSetupChangesToConfig();
 
       // Immediately dispatch the new queued job instead of waiting 15s
-      await dispatchQueuedJobs();
+      await _mod_dispatchQueuedJobs();
       await loadJobsFromCLI();
       requestRender?.();
     } else {
@@ -1902,7 +1500,7 @@ print(job.id)
     // Ensure setup edits are persisted before dispatch.
     await flushSetupChangesToConfig();
 
-    await dispatchQueuedJobs();
+    await _mod_dispatchQueuedJobs();
     await loadJobsFromCLI();
     requestRender?.();
   } catch (e: any) {
@@ -2303,31 +1901,6 @@ function openAllocModal(node: NodeSnapshot, gpuIdx: number): void {
   allocDraftUser = prefill;
   screen = "alloc";
   requestRender?.();
-}
-
-function recomputeKnownUsers(): void {
-  const users = new Set<string>();
-
-  for (const u of systemUsers) users.add(u);
-
-  // Live users from snapshot
-  if (snapshot) {
-    for (const n of snapshot.nodes) {
-      if (n.error) continue;
-      for (const p of n.processes) {
-        if (p.user && p.user !== "unknown") users.add(p.user);
-      }
-    }
-  }
-
-  // Alloc targets (except special tokens)
-  for (const a of allocations) {
-    const t = (a.target || "").trim();
-    if (!t || t === "*" || t.toLowerCase() === "none") continue;
-    users.add(t);
-  }
-
-  knownUsers = [...users].sort((a, b) => a.localeCompare(b));
 }
 
 function computeGpuBundles(): GpuBundle[] {
@@ -4214,7 +3787,7 @@ async function main() {
   } catch {}
   await Promise.all([
     loadAdminStatus(),
-    pollAllClusters(),
+    _mod_pollAllClusters(),
     loadAllocations(),
     loadSystemUsers(true),
     loadJobsFromCLI(),
@@ -4289,7 +3862,7 @@ async function main() {
       const u = Array.isArray(data.users) ? (data.users as string[]) : [];
       systemUsers = u;
       systemUsersLoadedAt = Date.now();
-      recomputeKnownUsers();
+      _mod_recomputeKnownUsers();
     } catch {
       // ignore
     }
@@ -4442,7 +4015,7 @@ async function main() {
     shortcut: "d",
     render: renderDashboard,
     onEnter: () => {
-      void Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()])
+      void Promise.all([_mod_pollAllClusters(), loadAllocations(), loadSlurmData()])
         .then(() => { requestRender?.(); })
         .catch(() => {});
     },
@@ -4481,7 +4054,7 @@ async function main() {
     onEnter: async () => {
       await loadMyGpuViewState();
       // Trigger background refresh without blocking tab switch
-      void Promise.all([pollAllClusters(), loadAllocations()]).then(() => requestRender?.());
+      void Promise.all([_mod_pollAllClusters(), loadAllocations()]).then(() => requestRender?.());
     },
   });
 
@@ -4509,8 +4082,8 @@ async function main() {
 
   // Initial data is already loaded above (before TUI started).
   // Just kick off background workers.
-  await dispatchQueuedJobs();
-  await watchRunningJobs();
+  await _mod_dispatchQueuedJobs();
+  await _mod_watchRunningJobs();
   render();
 
   // One-shot update hint (bottom-right toast, auto-hide)
@@ -4522,12 +4095,12 @@ async function main() {
     syncStateToS();
     render();
     try {
-      await Promise.all([pollAllClusters(), loadAllocations(), loadSlurmData()]);
+      await Promise.all([_mod_pollAllClusters(), loadAllocations(), loadSlurmData()]);
       if (screen === "jobs") {
         await loadJobsFromCLI();
       }
-      await dispatchQueuedJobs();
-      await watchRunningJobs();
+      await _mod_dispatchQueuedJobs();
+      await _mod_watchRunningJobs();
     } finally {
       isRefreshing = false;
       syncStateToS();
@@ -4561,7 +4134,7 @@ async function main() {
 
   // Cleanup old jobs every hour
   let cleanupCounter = 0;
-  const cleanupInterval = setInterval(async () => {
+  let cleanupInterval: ReturnType<typeof setInterval> | null = setInterval(async () => {
     cleanupCounter++;
     // Run cleanup every hour (360 cycles of 10s)
     if (cleanupCounter % 360 === 0) {
@@ -4655,6 +4228,7 @@ async function main() {
       prefixKeyPressed = false;
       if (prefixKeyTimeout) clearTimeout(prefixKeyTimeout);
       if (refreshInterval !== null) clearInterval(refreshInterval);
+      if (cleanupInterval !== null) clearInterval(cleanupInterval);
       renderer.destroy();
       process.exit(0);
     }
@@ -5320,7 +4894,7 @@ async function main() {
           if (dashboardTab?.type === "slurm") {
             await loadSlurmData();
           } else {
-            await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+            await Promise.all([_mod_pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
           }
         } finally {
           isRefreshing = false; syncStateToS();
@@ -5366,7 +4940,7 @@ async function main() {
         if (key.name === "r") {
           isRefreshing = true; syncStateToS(); render();
           try {
-            await Promise.all([pollAllClusters(), loadAllocations()]);
+            await Promise.all([_mod_pollAllClusters(), loadAllocations()]);
           } finally {
             isRefreshing = false; syncStateToS();
           }
@@ -5437,7 +5011,7 @@ async function main() {
         try {
           await allocSet(node.node_alias, selectedGpuIdx, "*");
           setStatus(`Saved allocation: ${node.node_alias} GPU${selectedGpuIdx} → *`);
-          await Promise.all([pollAllClusters(), loadAllocations()]);
+          await Promise.all([_mod_pollAllClusters(), loadAllocations()]);
           render();
         } catch (e: any) {
           setStatus(e?.message ? `Alloc failed: ${e.message}` : "Alloc failed");
@@ -5506,7 +5080,7 @@ async function main() {
       } else if (key.name === "r") {
         isRefreshing = true; syncStateToS(); render();
         try {
-          await Promise.all([pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
+          await Promise.all([_mod_pollAllClusters(), loadAllocations(), loadSystemUsers(true)]);
         } finally {
           isRefreshing = false; syncStateToS();
         }
@@ -5552,7 +5126,7 @@ async function main() {
             killErrorMsg = "";
             killOutput = "";
             await navigateToTab("detail");
-            await Promise.all([pollAllClusters(), loadAllocations()]);
+            await Promise.all([_mod_pollAllClusters(), loadAllocations()]);
             render();
           }
         }, 2000);
@@ -5677,7 +5251,7 @@ async function main() {
           setStatus(`Saved allocation: ${allocCtx.nodeAlias} GPU${allocCtx.gpuIdx} → ${user}`);
           allocCtx = null;
           allocErrorMsg = "";
-          await Promise.all([pollAllClusters(), loadAllocations()]);
+          await Promise.all([_mod_pollAllClusters(), loadAllocations()]);
           await navigateToTab("detail");
           render();
         } catch (e: any) {
@@ -5791,7 +5365,7 @@ async function main() {
             jobDetailLogScroll = 0;
             render();
             if (jobDetailView.status === "running" && jobDetailView.gpus.length > 0) {
-              checkGpuLiveness(jobDetailView).then(() => render());
+              _mod_checkGpuLiveness(jobDetailView).then(() => render());
             }
           }
         } else if (key.name === "c") {
