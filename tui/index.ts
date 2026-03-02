@@ -4202,6 +4202,39 @@ async function main() {
     process.exit(0);
   }
 
+  // ── Pre-TUI splash: show loading message until all clusters are ready ──────
+  // Write directly to stdout before entering alternate screen.
+  // The spinner ticks every 80ms; we clear and replace the line in-place.
+  const splashText = "opensmi: I'm coordinating with your GPUs";
+  const spinFrames = ["░▒▓", "▒▓█", "▓█▓", "█▓▒", "▓▒░", "▒░▒"];
+  let spinIdx = 0;
+  process.stdout.write("\n");
+  const splashInterval = setInterval(() => {
+    const glyph = spinFrames[spinIdx++ % spinFrames.length];
+    process.stdout.write(`\r  ${splashText} ${glyph}  `);
+  }, 80);
+
+  // Run all initial loads before entering TUI
+  await loadClusterTabsFromConfig();
+  try {
+    const vr = await runOpensmi(["--version"]);
+    const m = vr.stdout.match(/\d+\.\d+\.\d+/);
+    if (m) appVersion = m[0];
+  } catch {}
+  await Promise.all([
+    loadAdminStatus(),
+    pollAllClusters(),
+    loadAllocations(),
+    loadSystemUsers(true),
+    loadJobsFromCLI(),
+    loadSlurmData(),
+  ]);
+
+  clearInterval(splashInterval);
+  process.stdout.write("\r\x1b[2K"); // clear splash line
+  bootLoading = false;
+  // ────────────────────────────────────────────────────────────────────────────
+
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
   });
@@ -4465,33 +4498,10 @@ async function main() {
     await Bun.$`find /tmp -maxdepth 1 -name 'opensmi-*.json' -mmin +5 -delete 2>/dev/null || true`;
   } catch {}
 
-  // Initial load
-  // Keep loading spinner animated while bootLoading is true.
-  const bootSpinInterval = setInterval(() => {
-    if (bootLoading) render();
-  }, 80);
-
-  await loadClusterTabsFromConfig();
-
-  // Read version for header display
-  try {
-    const vr = await runOpensmi(["--version"]);
-    const m = vr.stdout.match(/\d+\.\d+\.\d+/);
-    if (m) appVersion = m[0];
-  } catch {}
-
-  await Promise.all([
-    loadAdminStatus(),
-    pollAllClusters(),
-    loadAllocations(),
-    loadSystemUsers(true),
-    loadJobsFromCLI(),
-    loadSlurmData(),
-  ]);
+  // Initial data is already loaded above (before TUI started).
+  // Just kick off background workers.
   await dispatchQueuedJobs();
   await watchRunningJobs();
-  bootLoading = false;
-  clearInterval(bootSpinInterval);
   render();
 
   // One-shot update hint (bottom-right toast, auto-hide)
