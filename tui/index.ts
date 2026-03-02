@@ -4883,7 +4883,7 @@ async function main() {
       // (PREFIX KEY handlers moved to top of dashboard screen)
 
       // === RUNNER FOCUSED MODE ===
-      if (runnerFocused) {
+      if (runnerFocused && (screen === "dashboard" || screen === "my-gpu-view")) {
         if (key.name === "escape") {
           runnerFocused = false;
 
