@@ -68,7 +68,7 @@ export function renderGlobalTabBar() {
     ...appTabBoxes,
     Box(
       { paddingLeft: 3, paddingRight: 1 },
-      Text({ content: t`${fg(C.textDim)("[/] App")}` })
+      Text({ content: t`${fg(C.textDim)("[/] Next")}` })
     ),
     Box({ flexGrow: 1 }),
     Box(

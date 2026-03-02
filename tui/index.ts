@@ -4657,6 +4657,17 @@ async function main() {
         return;
       }
 
+      // "/" key: cycle through app-level tabs (forward only, wraps around)
+      if (key.sequence === "/" || key.name === "/") {
+        const now = Date.now();
+        if (now - _lastBracketKeyTime < BRACKET_KEY_DEBOUNCE_MS) {
+          return;
+        }
+        _lastBracketKeyTime = now;
+        void _mod_navigateByDelta(1);
+        return;
+      }
+
       if (prefixKeyPressed && key.name === "down") {
         // ctrl+x down: focus runner
         prefixKeyPressed = false;
