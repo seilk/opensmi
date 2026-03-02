@@ -790,18 +790,13 @@ export function renderRunnerPane() {
       flexDirection: "column",
       gap: 0,
       zIndex: 1000,
-      onMouseDown: (e: any) => {
+      onMouseUp: (e: any) => {
         e?.stopPropagation?.();
         if (S.runnerInputTyping) return;
-        if (S.runnerFocused) {
-          S.runnerFocused = false;
-          S.runnerInputTyping = false;
-          S.requestRender?.();
-          return;
-        }
         if (!S.runnerFocused) {
           e?.preventDefault?.();
           S.runnerFocused = true;
+          S.runnerFocusedInputIdx = 0;
           S.runnerInputBuffer = S.launchCommand;
           S.runnerInputTyping = false;
           S.requestRender?.();

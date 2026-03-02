@@ -4275,6 +4275,7 @@ async function main() {
 
   function render() {
     _renderHook = render;  // expose to module-level functions
+    screen = (_S_module as any).screen;
     // Expire transient status messages
     if (statusMsg && statusUntil > 0 && Date.now() > statusUntil) {
       statusMsg = "";
