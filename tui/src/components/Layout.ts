@@ -68,6 +68,10 @@ export function renderGlobalTabBar() {
     ...appTabBoxes,
     Box({ flexGrow: 1 }),
     Box(
+      { paddingLeft: 2, paddingRight: 2 },
+      Text({ content: t`${fg(C.textDim)("[/] App")}` })
+    ),
+    Box(
       { paddingLeft: 1, paddingRight: 1 },
       Text({
         content: S.latestVersion
@@ -111,7 +115,11 @@ export function renderGlobalTabBar() {
       clusterTabRow = Box(
         { flexDirection: "row", width: "100%", paddingLeft: 0, backgroundColor: C.bgAlt },
         ...cBoxes,
-        Box({ flexGrow: 1 })
+        Box({ flexGrow: 1 }),
+        Box(
+          { paddingLeft: 2, paddingRight: 2 },
+          Text({ content: t`${fg(C.textDim)("[Tab] Cluster")}` })
+        )
       );
     }
   }
@@ -135,7 +143,7 @@ export function renderGlobalFooter() {
   } else {
     switch (S.screen) {
       case "dashboard":
-        helpContent = t`${fg(C.textDim)("[/]")} App Tabs  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`;
+        helpContent = t`${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`;
         break;
       case "detail":
         helpContent = t`${fg(C.textDim)("[↑↓]")} GPU  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[*]")} Open-to-all  ${fg(C.textDim)("[x]")} Clear  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`;
