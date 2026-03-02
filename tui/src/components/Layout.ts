@@ -135,7 +135,7 @@ export function renderGlobalFooter() {
   } else {
     switch (S.screen) {
       case "dashboard":
-        helpContent = t`${fg(C.textDim)("[↑↓/jk]")} Navigate  ${fg(C.textDim)("[Enter]")} Detail  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh`;
+        helpContent = t`${fg(C.textDim)("[/]")} App Tabs  ${fg(C.textDim)("[Tab]")} Cluster  ${fg(C.textDim)("[ctrl+x ↓]")} Runner  ${fg(C.textDim)("[r]")} Refresh  ${fg(C.textDim)("[ctrl+x q]")} Quit`;
         break;
       case "detail":
         helpContent = t`${fg(C.textDim)("[↑↓]")} GPU  ${fg(C.textDim)("[Enter/a]")} Allocate  ${fg(C.textDim)("[*]")} Open-to-all  ${fg(C.textDim)("[x]")} Clear  ${fg(C.textDim)("[Shift+k]")} Kill  ${fg(C.textDim)("[Esc]")} Back`;
