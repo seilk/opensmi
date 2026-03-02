@@ -18,7 +18,7 @@ import { S as _S_module, runnerMinHeight, runnerMaxHeight, OPERATOR } from './sr
 import { renderAlloc, openAllocModal, requireAdminUI, checkSudoForNode } from './src/components/AllocModal';
 import { renderGlobalTabBar, renderGlobalFooter, renderToast, renderTabSwitcher, navigateByDelta, navigateToTab } from './src/components/Layout';
 import { renderRunnerPane, runnerPaneTopRow, setLaunchError, getGpuCommandPlaceholder, getGpuLabel, refreshLaunchGpuSelection, createImmediateJob, updateImmediateJob, executeLaunch, executeRemoteExec, executeLaunchDirect, executeLaunchOneToOne, executeLaunchTmux } from './src/components/Runner';
-import { renderLoadingBadge, renderDashboard, renderSrunPopup, renderSlurmClusterTab, sortSlurmNodes, buildDashboardTabs, activeDashboardTab, activeManualTabIdx, activeDashboardSnapshot, activeDashboardPollError, activeDashboardSelectedNodeIdx, setActiveDashboardSelectedNodeIdx, openSrunPopup, closeSrunPopup, srunTokens, srunCommand, copyToClipboard, getLatestFreeGpus, activeSlurmTabIdx, slurmTabIdxForPopup, submitSrunPopup, slurmNameSafe, fetchQosForPartition, getMyJobIdsOnNode, cancelJobsOnNode, cancelExistingJobsInPopup, cancelSlurmJob, submitJobToSlurm, loadSlurmData } from './src/views/Dashboard';
+import { renderLoadingBadge, renderDashboard, renderSrunPopup, renderSlurmClusterTab, sortSlurmNodes, buildDashboardTabs, activeDashboardTab, activeManualTabIdx, activeDashboardSnapshot, activeDashboardPollError, activeDashboardSelectedNodeIdx, setActiveDashboardSelectedNodeIdx, openSrunPopup, closeSrunPopup, srunTokens, srunCommand, copyToClipboard, getLatestFreeGpus, activeSlurmTabIdx, slurmTabIdxForPopup, submitSrunPopup, slurmNameSafe, fetchQosForPartition, getMyJobIdsOnNode, cancelJobsOnNode, cancelExistingJobsInPopup, cancelSlurmJob, submitJobToSlurm, loadSlurmData } from './src/views/dashboard';
 import { renderDetail, renderHelp, renderKill } from './src/views/Detail';
 import {
   renderJobsView,
@@ -41,7 +41,7 @@ import {
   formatJobTimestamp,
   formatJobDuration,
   formatJobGpus,
-} from './src/views/Jobs';
+} from './src/views/jobs';
 import { renderMyGpuView, computeGpuBundles, loadMyGpuViewState, saveMyGpuViewState } from './src/views/MyGpus';
 import { renderSetupView, setSetupMessage, loadSetupNodes, saveSetupNode, markSetupNodeDirty, flushSetupChangesToConfig } from './src/views/Setup';
 import type { RunnerState, PreflightCheck, GpuBundle, MyGpuViewState, GPUInfo, GPUProcess, NodeSnapshot, ClusterSnapshot, Allocation, Job, SlurmGPUSlot, SlurmNodeInfo, SlurmSnapshot, DashboardTab, SlurmSortKey, SlurmRunPopup, NodeEnvConfig, NodeCancelStatus } from './src/types';

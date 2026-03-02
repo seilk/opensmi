@@ -15,13 +15,13 @@ import {
   activeSlurmTabIdx, slurmTabIdxForPopup, submitSrunPopup, slurmNameSafe,
   fetchQosForPartition, getMyJobIdsOnNode, cancelJobsOnNode, cancelExistingJobsInPopup,
   cancelSlurmJob, submitJobToSlurm, loadSlurmData,
-} from '../views/Dashboard';
+} from '../views/dashboard';
 import {
   dispatchQueuedJobs, watchRunningJobs, checkGpuLiveness, findAvailableGpus,
   cleanupOldJobs, executeJobRemote, cancelJobAction, retryJobAction,
   retrySelectedSessionAction, cleanupTmuxSessionsAction, deleteJobAction,
   killTmuxSessions, captureTmuxPane,
-} from '../views/Jobs';
+} from '../views/jobs';
 import { computeGpuBundles, loadMyGpuViewState, saveMyGpuViewState } from '../views/MyGpus';
 import { setSetupMessage, loadSetupNodes, saveSetupNode, markSetupNodeDirty, flushSetupChangesToConfig } from '../views/Setup';
 import type { SlurmSortKey } from '../types';

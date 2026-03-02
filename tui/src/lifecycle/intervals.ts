@@ -1,7 +1,7 @@
 import { S } from '../state/global';
 import { pollAllClusters, loadAllocations, loadJobsFromCLI } from '../state/api';
-import { dispatchQueuedJobs, watchRunningJobs, cleanupOldJobs } from '../views/Jobs';
-import { loadSlurmData } from '../views/Dashboard';
+import { dispatchQueuedJobs, watchRunningJobs, cleanupOldJobs } from '../views/jobs';
+import { loadSlurmData } from '../views/dashboard';
 
 type RenderFn = () => void;
 
