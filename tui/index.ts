@@ -300,8 +300,6 @@ function syncStateToS(): void {
   (_S_module as any).slurmScrollOff = slurmScrollOff;
   (_S_module as any).slurmSortKey = slurmSortKey;
   (_S_module as any).slurmRunPopup = slurmRunPopup;
-  (_S_module as any)._slurmLastClickNode = _slurmLastClickNode;
-  (_S_module as any)._slurmLastClickTime = _slurmLastClickTime;
   (_S_module as any).nodeCancelStatus = nodeCancelStatus;
   (_S_module as any)._renderHook = _renderHook;
   (_S_module as any).isDispatching = isDispatching;
@@ -413,8 +411,6 @@ function syncStateFromS(): void {
   slurmScrollOff = (_S_module as any).slurmScrollOff;
   slurmSortKey = (_S_module as any).slurmSortKey;
   slurmRunPopup = (_S_module as any).slurmRunPopup;
-  _slurmLastClickNode = (_S_module as any)._slurmLastClickNode;
-  _slurmLastClickTime = (_S_module as any)._slurmLastClickTime;
   nodeCancelStatus = (_S_module as any).nodeCancelStatus;
   _renderHook = (_S_module as any)._renderHook;
   isDispatching = (_S_module as any).isDispatching;
@@ -3457,8 +3453,6 @@ interface SlurmRunPopup {
   existingJobCancelMsg: string;
 }
 let slurmRunPopup: SlurmRunPopup | null = null;
-let _slurmLastClickNode = "";
-let _slurmLastClickTime = 0;
 
 // Module-level render hook, set inside main()
 let _renderHook: (() => void) | null = null;
@@ -4375,6 +4369,18 @@ async function main() {
     }
   }
   requestRender = render;
+
+  // openSrunPopup callback: receives node name (not index) to avoid sort-mismatch bugs
+  (_S_module as any).openSrunPopup = (nodeName: string) => {
+    const dashboardTab = activeDashboardTab();
+    const activeSlurmIdx = dashboardTab?.type === "slurm" ? dashboardTab.idx : null;
+    if (activeSlurmIdx === null) { render(); return; }
+
+    const snap = slurmSnapshots[activeSlurmIdx];
+    const node = snap?.nodes.find((n) => n.name === nodeName);
+    if (node && snap) openSrunPopup(node, snap.cluster_name, snap);
+    render();
+  };
 
   tabRegistry.onMessage = (msg: string) => {
     setStatus(msg, 2000);

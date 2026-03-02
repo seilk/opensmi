@@ -162,6 +162,7 @@ export const S = {
 
   // Render hook
   requestRender: null as (() => void) | null,
+  openSrunPopup: undefined as ((nodeName: string) => void) | undefined,
 
   // Jobs view
   jobList: [] as Job[],
@@ -191,8 +192,6 @@ export const S = {
   slurmScrollOff: 0,
   slurmSortKey: "none" as SlurmSortKey,
   slurmRunPopup: null as SlurmRunPopup | null,
-  _slurmLastClickNode: "",
-  _slurmLastClickTime: 0,
   nodeCancelStatus: null as NodeCancelStatus | null,
 
   // Internal render hook (set inside main)

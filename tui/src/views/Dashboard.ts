@@ -1392,19 +1392,16 @@ export function renderSlurmClusterTab(slurmIdx: number) {
       : null;
 
     const capturedNode = snode;
-    const capturedCluster = ssnap;
     const handleNodeClick = () => {
       const now = Date.now();
-      if (S._slurmLastClickNode === capturedNode.name && now - S._slurmLastClickTime < 400) {
-        // Double-click → open popup
-        openSrunPopup(capturedNode, capturedCluster.cluster_name, capturedCluster);
-      } else {
-        // Single click → select
-        S.slurmSelectedIdx = ni;
-        S._renderHook?.();
-      }
-      S._slurmLastClickNode = capturedNode.name;
-      S._slurmLastClickTime = now;
+      const clickKey = `SLURM_NODE:${ssnap.cluster_name}:${capturedNode.name}`;
+      const isDouble = clickKey === S.lastNodeClickKey && now - S.lastNodeClickAt < 350;
+      S.lastNodeClickKey = clickKey;
+      S.lastNodeClickAt = now;
+
+      S.slurmSelectedIdx = ni;
+      if (isDouble) S.openSrunPopup?.(capturedNode.name);
+      S.requestRender?.();
     };
 
     const myJobIds = getMyJobIdsOnNode(snode, ssnap.ssh_user || "");
@@ -1466,7 +1463,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
     { width: "100%", flexDirection: "column", paddingLeft: 1, paddingTop: 1 },
     Text({ content: t`${fg(C.textDim)("Users:")} ${userParts || "(none)"}  ${fg(C.textDim)(scrollInfo)}` }),
     Text({ content: cancelStatusContent }),
-    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
+    Text({ content: t`${fg(C.textDim)("[[]/[]]")} Switch  ${fg(C.textDim)("[Tab]")} Next  ${fg(C.textDim)("[↑↓/jk]")} Scroll  ${fg(C.textDim)("[s]")} Sort  ${fg(C.textDim)("[Enter/Double-click]")} Popup  ${fg(C.textDim)("[r]")} Refresh` }),
   );
 
   // Error rows
