@@ -1481,8 +1481,7 @@ export function renderSlurmClusterTab(slurmIdx: number) {
   // Mouse scroll handler for the node list area
   const onMouseScroll = (e: any) => {
     if (!e.scroll) return;
-    const visH = Math.max(1, (process.stdout.rows || 24) - 6);
-    const maxSc = Math.max(0, nodes.length - visH);
+    const maxSc = Math.max(0, sortedNodes.length - visibleRows);
     if (e.scroll.direction === "down") {
       S.slurmScrollOff = Math.min(maxSc, S.slurmScrollOff + 3);
       S.slurmSelectedIdx = Math.min(nodes.length - 1, S.slurmScrollOff);
