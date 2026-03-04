@@ -20,6 +20,7 @@ import {
   gpuActivityStatus,
   isViolation,
   runtimeStr,
+  truncateText,
   gpuIndicesForNode,
 } from "../utils/format";
 
@@ -198,9 +199,10 @@ export function renderDetail(): any {
         const violMark = viol ? " ⚠" : "";
         const rt = runtimeStr(p.runtime_s);
         const rtCol = rt ? rt.padStart(6) : " ".repeat(6);
+        const procLabel = truncateText((p.cmdline || p.process_name || "").trim() || p.process_name, 64);
         children.push(
           Text({
-            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  ${p.process_name}${violMark}`,
+            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  ${procLabel}${violMark}`,
             fg: viol ? C.red : C.text,
           })
         );

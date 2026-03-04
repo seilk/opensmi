@@ -22,6 +22,7 @@ export interface GPUProcess {
   gpu_uuid: string;
   pid: number;
   process_name: string;
+  cmdline?: string | null;
   used_memory_mib: number | null;
   user: string;
   runtime_s?: number | null;
