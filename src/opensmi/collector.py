@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import io
 from dataclasses import asdict
@@ -47,7 +48,10 @@ hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
     runtime=$(awk -v up="$up" -v st="$st" -v hz="$hz" 'BEGIN{ if(hz==0){print ""} else { r=up-(st/hz); if(r<0) r=0; printf "%.0f", r } }')
   fi
 
-  echo "$pid,$user,$runtime"
+  cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
+  cmdline_b64=$(printf '%s' "$cmdline" | base64 | tr -d '\n')
+
+  echo "$pid,$user,$runtime,$cmdline_b64"
 done
 
 echo "__OPENSMI_END__"
@@ -153,6 +157,64 @@ def _parse_users_output(stdout: str) -> List[str]:
     return users
 
 
+_SENSITIVE_FLAGS = {
+    "--password",
+    "--passwd",
+    "--token",
+    "--api-key",
+    "--apikey",
+    "--secret",
+    "--access-key",
+    "--auth-token",
+}
+
+
+def _redact_cmdline(cmdline: str) -> str:
+    tokens = cmdline.split()
+    if not tokens:
+        return ""
+
+    out: List[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        low = tok.lower()
+        redacted = False
+        for flag in _SENSITIVE_FLAGS:
+            if low == flag:
+                out.append(tok)
+                if i + 1 < len(tokens):
+                    out.append("***REDACTED***")
+                    i += 1
+                redacted = True
+                break
+            if low.startswith(flag + "="):
+                out.append(tok.split("=", 1)[0] + "=***REDACTED***")
+                redacted = True
+                break
+        if not redacted:
+            out.append(tok)
+        i += 1
+    return " ".join(out)
+
+
+def _decode_cmdline_b64(value: str, *, max_len: int = 512) -> Optional[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        decoded = base64.b64decode(raw, validate=False).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    clean = " ".join(decoded.replace("\x00", " ").split())
+    if not clean:
+        return None
+    redacted = _redact_cmdline(clean)
+    if len(redacted) > max_len:
+        return redacted[: max_len - 3] + "..."
+    return redacted
+
+
 async def fetch_users(
     config: ClusterConfig, *, timeout_s: int = 10, max_retries: int = 2
 ) -> List[str]:
@@ -255,6 +317,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
 
     owners: Dict[int, str] = {}
     runtimes: Dict[int, Optional[int]] = {}
+    cmdlines: Dict[int, Optional[str]] = {}
     for row in _parse_csv_lines(owner_lines):
         if len(row) < 2:
             continue
@@ -271,6 +334,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
             except Exception:
                 rt = None
         runtimes[pid] = rt
+        cmdlines[pid] = _decode_cmdline_b64(row[3]) if len(row) >= 4 else None
 
     procs: List[GPUProcess] = []
     for row in _parse_csv_lines(proc_lines):
@@ -292,6 +356,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
                 gpu_uuid=row[0],
                 pid=pid,
                 process_name=row[2],
+                cmdline=cmdlines.get(pid),
                 used_memory_mib=used,
                 user=owners.get(pid, "unknown"),
                 runtime_s=runtimes.get(pid),

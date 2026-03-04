@@ -54,6 +54,7 @@ class GPUProcess:
     gpu_uuid: str
     pid: int
     process_name: str
+    cmdline: Optional[str] = None
     used_memory_mib: Optional[int] = None
     user: str = "unknown"
     runtime_s: Optional[int] = None

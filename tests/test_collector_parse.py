@@ -1,4 +1,5 @@
 import unittest
+import base64
 
 from opensmi.collector import _parse_remote_output
 from opensmi.models import NodeConfig
@@ -73,6 +74,51 @@ __OPENSMI_END__
         self.assertEqual(gpu.utilization_gpu_percent, 35)
         self.assertEqual(gpu.temperature_c, 62)
         self.assertEqual(gpu.power_draw_w, 145.5)
+
+    def test_parse_remote_output_cmdline_from_owner_section(self):
+        node = NodeConfig(alias="GPU-01", address="10.0.0.1", user="ubuntu")
+        cmd = "python3 train.py --epochs 100"
+        cmd_b64 = base64.b64encode(cmd.encode("utf-8")).decode("ascii")
+
+        stdout = f"""__OPENSMI_BEGIN__
+hostname=testnode
+os=Ubuntu 22.04
+__GPUS__
+0, GPU-uuid0, NVIDIA RTX A6000, 49140
+__PROCS__
+GPU-uuid0, 123, python3, 1000
+__OWNERS__
+123,alice,3600,{cmd_b64}
+__OPENSMI_END__
+"""
+
+        _meta, _gpus, procs = _parse_remote_output(node, stdout)
+        self.assertEqual(len(procs), 1)
+        self.assertEqual(procs[0].cmdline, cmd)
+
+    def test_parse_remote_output_cmdline_redacts_sensitive_flag(self):
+        node = NodeConfig(alias="GPU-01", address="10.0.0.1", user="ubuntu")
+        cmd = "python train.py --token abc123 --api-key=secretvalue"
+        cmd_b64 = base64.b64encode(cmd.encode("utf-8")).decode("ascii")
+
+        stdout = f"""__OPENSMI_BEGIN__
+hostname=testnode
+os=Ubuntu 22.04
+__GPUS__
+0, GPU-uuid0, NVIDIA RTX A6000, 49140
+__PROCS__
+GPU-uuid0, 123, python, 1000
+__OWNERS__
+123,alice,120,{cmd_b64}
+__OPENSMI_END__
+"""
+
+        _meta, _gpus, procs = _parse_remote_output(node, stdout)
+        self.assertEqual(len(procs), 1)
+        self.assertEqual(
+            procs[0].cmdline,
+            "python train.py --token ***REDACTED*** --api-key=***REDACTED***",
+        )
 
 
 if __name__ == "__main__":
