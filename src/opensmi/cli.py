@@ -251,6 +251,302 @@ def _ob_ssh_test(
         return False, str(e)
 
 
+_KNOWN_SERVICE_DOMAINS = frozenset({
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "sourceforge.net",
+    "heroku.com",
+    "aws.amazon.com",
+})
+
+_AUTH_FAILURE_KEYWORDS = ("Permission denied", "publickey", "password", "authentication failed")
+
+
+def _ob_is_auth_failure(stderr: str) -> bool:
+    low = stderr.lower()
+    return any(kw.lower() in low for kw in _AUTH_FAILURE_KEYWORDS)
+
+
+def _ob_find_local_pubkey() -> Optional[str]:
+    ssh_dir = Path.home() / ".ssh"
+    for name in ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub", "id_dsa.pub"):
+        candidate = ssh_dir / name
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _ob_generate_ssh_key() -> Optional[str]:
+    key_path = Path.home() / ".ssh" / "id_ed25519"
+    try:
+        r = subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key_path)],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0:
+            pub = str(key_path) + ".pub"
+            if Path(pub).exists():
+                return pub
+    except Exception:
+        pass
+    return None
+
+
+def _ob_copy_id(address: str, user: str, port: int, pubkey_path: str) -> tuple[bool, str]:
+    import shutil as _shutil
+    if not _shutil.which("ssh-copy-id"):
+        print(
+            f"  {_OB_YELLOW}⚠{_OB_RESET}  ssh-copy-id not found. Add the key manually:\n"
+            f"    cat {pubkey_path} | ssh -p {port} {user}@{address}"
+            f" 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+        )
+        return False, "ssh-copy-id not available"
+    cmd = ["ssh-copy-id", "-i", pubkey_path, "-p", str(port), f"{user}@{address}"]
+    print(f"  Running: {' '.join(cmd)}")
+    try:
+        r = subprocess.run(cmd)  # no capture_output — TTY passthrough for password
+        if r.returncode == 0:
+            return True, ""
+        return False, f"ssh-copy-id exited with code {r.returncode}"
+    except Exception as e:
+        return False, str(e)
+
+
+def _ob_filter_ssh_hosts(hosts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Filter known service hosts from SSH config hosts.
+
+    Pass 1: static domain blacklist (no network).
+    Pass 2: parallel quick probe (ConnectTimeout=3).
+    Returns (kept, filtered).
+    """
+    import asyncio
+
+    kept: list[dict] = []
+    filtered: list[dict] = []
+
+    # Pass 1: static blacklist
+    pass1_kept: list[dict] = []
+    for host in hosts:
+        addr = str(host.get("address") or "").lower().rstrip(".")
+        is_service = any(addr == d or addr.endswith("." + d) for d in _KNOWN_SERVICE_DOMAINS)
+        if is_service:
+            filtered.append(dict(host, _filter_reason="known service domain"))
+        else:
+            pass1_kept.append(host)
+
+    if not pass1_kept:
+        return kept, filtered
+
+    # Pass 2: parallel quick probe
+    async def _probe(host: dict) -> tuple[dict, str]:
+        user = str(host.get("user") or "")
+        address = str(host.get("address") or "")
+        port = int(host.get("port") or 22)
+        identityfile = str(host.get("identityfile") or "")
+        proxyjump = str(host.get("proxyjump") or "")
+        cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=3",
+            "-o", "StrictHostKeyChecking=no",
+        ]
+        if port != 22:
+            cmd += ["-p", str(port)]
+        if identityfile:
+            cmd += ["-i", identityfile]
+        if proxyjump:
+            cmd += ["-o", f"ProxyJump={proxyjump}"]
+        cmd += [f"{user}@{address}", "echo __opensmi__"]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=6)
+            out = (stdout_b or b"").decode(errors="replace")
+            err = (stderr_b or b"").decode(errors="replace")
+            if "__opensmi__" in out:
+                return host, "keep"
+            combined = out + err
+            if (
+                "does not provide shell access" in combined
+                or "PTY allocation request failed" in combined
+            ):
+                return host, "filter:no shell access"
+            if _ob_is_auth_failure(err):
+                return host, "keep"
+            return host, "unknown"
+        except Exception:
+            return host, "unknown"
+
+    async def _run_probes(host_list: list[dict]) -> list[tuple[dict, str]]:
+        return list(await asyncio.gather(*[_probe(h) for h in host_list]))
+
+    try:
+        results = asyncio.run(_run_probes(pass1_kept))
+    except Exception:
+        return pass1_kept + kept, filtered
+
+    for host, status in results:
+        if status.startswith("filter:"):
+            reason = status[len("filter:"):]
+            filtered.append(dict(host, _filter_reason=reason))
+        else:
+            kept.append(host)
+
+    return kept, filtered
+
+
+def _ob_arrow_select(options: list[str], default: int = 0) -> int:
+    """Horizontal arrow-key selector. Left/right moves highlight, Enter confirms.
+
+    Falls back to number entry if stdin is not a tty. Returns the selected index.
+    """
+    import termios
+    import tty
+
+    n = len(options)
+
+    if not sys.stdin.isatty():
+        for i, opt in enumerate(options, 1):
+            print(f"  {i}. {opt}")
+        while True:
+            raw = input(f"  Choice [1-{n}]: ").strip()
+            if raw.isdigit() and 1 <= int(raw) <= n:
+                return int(raw) - 1
+            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter 1–{n}.")
+
+    idx = default
+
+    def _render() -> None:
+        parts = []
+        for i, opt in enumerate(options):
+            if i == idx:
+                parts.append(f"{_OB_BOLD}\033[7m {opt} \033[27m{_OB_RESET}")
+            else:
+                parts.append(f"{_OB_DIM} {opt} {_OB_RESET}")
+        sys.stdout.write("\r  " + "  ".join(parts) + "   ")
+        sys.stdout.flush()
+
+    _render()
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq == "[D":   # left arrow
+                    idx = (idx - 1) % n
+                elif seq == "[C": # right arrow
+                    idx = (idx + 1) % n
+            _render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+    sys.stdout.write("\n")
+    return idx
+
+
+def _ob_handle_auth_failure_recovery(
+    node: dict,
+    result: dict,
+    *,
+    identityfile: str = "",
+) -> str:
+    """Show [1/2/3] recovery menu for an auth-failed node.
+
+    Returns: "added", "skipped", or "added_anyway".
+    """
+    alias = str(result.get("alias") or node.get("alias") or "node")
+    address = str(node.get("address") or "")
+    user = str(node.get("user") or "")
+    port = int(node.get("port") or 22)
+
+    print(f"\n  {_OB_BOLD}─── {alias}{_OB_RESET}  {_OB_DIM}{user}@{address}:{port} — key auth required{_OB_RESET}")
+
+    pubkey: Optional[str] = None
+    if identityfile:
+        candidate = identityfile + ".pub"
+        if Path(candidate).exists():
+            pubkey = candidate
+    if not pubkey:
+        pubkey = _ob_find_local_pubkey()
+
+    while True:
+        key_hint = pubkey or "no key in ~/.ssh/"
+        print(f"\n  {_OB_DIM}key: {key_hint}{_OB_RESET}")
+        _sel = _ob_arrow_select(["copy key", "skip", "add anyway"])
+        choice = str(_sel + 1)  # 0→"1", 1→"2", 2→"3"
+
+        if choice == "1":
+            if not pubkey:
+                raw_gen = (
+                    input(
+                        f"  {_OB_DIM}No key found. Generate a new ed25519 key?{_OB_RESET} [Y/n]: "
+                    )
+                    .strip()
+                    .lower()
+                )
+                if raw_gen not in ("n", "no"):
+                    pubkey = _ob_generate_ssh_key()
+                    if not pubkey:
+                        print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Key generation failed.")
+                        continue
+                    print(f"  Generated: {pubkey}")
+                else:
+                    print(
+                        f"  {_OB_DIM}Tip: run 'ssh-copy-id {user}@{address}' then re-run 'opensmi onboard'{_OB_RESET}"
+                    )
+                    return "skipped"
+
+            ok, copy_err = _ob_copy_id(address, user, port, pubkey)
+            if not ok:
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Key copy failed: {copy_err}")
+                raw_retry = input("  Try again? [y/N]: ").strip().lower()
+                if raw_retry in ("y", "yes"):
+                    continue
+                print(
+                    f"  {_OB_DIM}Tip: run 'ssh-copy-id {user}@{address}' then re-run 'opensmi onboard'{_OB_RESET}"
+                )
+                return "skipped"
+
+            sys.stdout.write(f"  Retesting {alias}... ")
+            sys.stdout.flush()
+            ok2, msg2 = _ob_ssh_test(
+                address, user, port=port, identityfile=identityfile or ""
+            )
+            if ok2:
+                print(f"{_OB_GREEN}✓ Connected{_OB_RESET}")
+                return "added"
+            print(f"{_OB_YELLOW}⚠ still failing: {msg2}{_OB_RESET}")
+            print("  Key was copied but SSH test still fails. Adding node anyway.")
+            return "added_anyway"
+
+        elif choice == "2":
+            print(
+                f"  {_OB_DIM}Tip: run 'ssh-copy-id {user}@{address}' then re-run 'opensmi onboard'{_OB_RESET}"
+            )
+            return "skipped"
+
+        elif choice == "3":
+            print(
+                f"  {_OB_YELLOW}⚠{_OB_RESET}  Node added. Run 'ssh-copy-id {user}@{address}' to enable polling.\n"
+                f"  {_OB_DIM}Note: Password auth won't work — opensmi requires key-based auth for background polling.{_OB_RESET}"
+            )
+            return "added_anyway"
+
+        else:
+            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter 1, 2, or 3.")
+
+
 def _is_valid_ssh_alias(token: str) -> bool:
     t = (token or "").strip()
     if not t:
@@ -777,22 +1073,25 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
                     break
 
                 print(f"{_OB_YELLOW}⚠ unreachable{_OB_RESET}")
-                raw_cont = (
-                    input(f"  {_OB_DIM}Continue anyway?{_OB_RESET} [y/N]: ")
-                    .strip()
-                    .lower()
-                )
-                if raw_cont == "y":
-                    nodes.append(
-                        {
-                            "alias": alias,
-                            "address": address,
-                            "user": user,
-                            "port": port,
-                        }
+                _node_draft = {"alias": alias, "address": address, "user": user, "port": port}
+                _fake_result = {"alias": alias, "index": 0, "target": f"{user}@{address}:{port}", "ok": False, "message": _msg}
+                if _ob_is_auth_failure(_msg):
+                    _outcome = _ob_handle_auth_failure_recovery(_node_draft, _fake_result)
+                    if _outcome in ("added", "added_anyway"):
+                        nodes.append(_node_draft)
+                        break
+                    # skipped: re-enter node details
+                    print(f"  {_OB_DIM}Re-enter node details.{_OB_RESET}\n")
+                else:
+                    raw_cont = (
+                        input(f"  {_OB_DIM}Continue anyway?{_OB_RESET} [y/N]: ")
+                        .strip()
+                        .lower()
                     )
-                    break
-                print(f"  {_OB_DIM}Re-enter node details.{_OB_RESET}\n")
+                    if raw_cont == "y":
+                        nodes.append(_node_draft)
+                        break
+                    print(f"  {_OB_DIM}Re-enter node details.{_OB_RESET}\n")
 
             print()
 
@@ -813,43 +1112,34 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
     )
     admin: Optional[str] = None if _admin_raw.lower() == "idk" else _admin_raw
 
-    raw_verify = (
-        input(
-            _ob_prompt(
-                "Verify selected nodes now",
-                "Attempts SSH test command and shows per-node summary",
-                "Y",
-            )
-        )
-        .strip()
-        .lower()
-    )
-    if raw_verify in ("", "y", "yes"):
-        while True:
-            verify_results = _verify_nodes(nodes)
-            _print_verify_summary(verify_results)
-            failed = [r for r in verify_results if not bool(r.get("ok"))]
-            if not failed:
-                break
-
-            raw_action = (
-                input(
-                    f"\n  {_OB_DIM}Failures found: continue anyway or re-edit failed nodes?{_OB_RESET} "
-                    "[c/r]: "
-                )
-                .strip()
-                .lower()
-            )
-            if raw_action.startswith("c"):
-                break
-
-            for r in failed:
-                idx = int(r["index"])
+    # Always verify — mandatory before saving config
+    print(f"\n  {_OB_BOLD}Verifying nodes...{_OB_RESET}")
+    verify_results = _verify_nodes(nodes)
+    _print_verify_summary(verify_results)
+    failed = [r for r in verify_results if not bool(r.get("ok"))]
+    if failed:
+        print(f"\n  {_OB_BOLD}Resolving failed nodes...{_OB_RESET}")
+        _legacy_to_remove: list[int] = []
+        for r in failed:
+            _idx = int(r["index"])
+            _n = nodes[_idx]
+            _err = str(r.get("message") or "")
+            if _ob_is_auth_failure(_err):
+                _outcome = _ob_handle_auth_failure_recovery(_n, r)
+                if _outcome == "skipped":
+                    _legacy_to_remove.append(_idx)
+            else:
                 print(
-                    f"\n  {_OB_DIM}Re-editing failed node:{_OB_RESET} "
-                    f"{nodes[idx].get('alias', f'node-{idx + 1}')}"
+                    f"\n  {_OB_BOLD}─── {r.get('alias', 'node')}{_OB_RESET}"
+                    f"  {_OB_DIM}network error: {_err}{_OB_RESET}"
                 )
-                nodes[idx] = _reedit_node(nodes[idx])
+                _nc = "23"[_ob_arrow_select(["skip", "add anyway"])]
+                if _nc == "2":
+                    _legacy_to_remove.append(_idx)
+                else:
+                    print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Node added with warning.")
+        for _idx in sorted(_legacy_to_remove, reverse=True):
+            nodes.pop(_idx)
 
     config_nodes = [_host_to_config_node(n) for n in nodes]
 
@@ -899,7 +1189,7 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
             "clusters": [
                 {
                     "cluster_name": str(c.get("cluster_name") or "GPU-Cluster"),
-                    "nodes": list(c.get("nodes") or []),
+                    "nodes": [_host_to_config_node(n) for n in (c.get("nodes") or [])],
                 }
                 for c in ssh_clusters
             ],
@@ -961,15 +1251,25 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                 ssh_path = Path("~/.ssh/config").expanduser()
 
             if discovered:
+                kept, filtered_out = _ob_filter_ssh_hosts(discovered)
+                if filtered_out:
+                    print(
+                        f"  {_OB_DIM}Filtered {len(filtered_out)} service host(s) "
+                        f"({', '.join(h.get('alias', '') for h in filtered_out)}){_OB_RESET}"
+                    )
+                display = kept if kept else discovered
                 print(
-                    f"\n  {_OB_BOLD}SSH config hosts{_OB_RESET}  {_OB_DIM}({len(discovered)} found){_OB_RESET}"
+                    f"\n  {_OB_BOLD}SSH config hosts{_OB_RESET}  {_OB_DIM}({len(display)} found){_OB_RESET}"
                 )
-                for i, host in enumerate(discovered, start=1):
+                for i, host in enumerate(display, start=1):
                     port = int(host.get("port") or 22)
                     port_str = f":{port}" if port != 22 else ""
+                    status = ""
+                    if host.get("_filter_reason"):
+                        status = f"  {_OB_DIM}[filtered]{_OB_RESET}"
                     print(
                         f"  {str(i).rjust(2)}. {host['alias']:<16} "
-                        f"{host['user']}@{host['address']}{port_str}"
+                        f"{host['user']}@{host['address']}{port_str}{status}"
                     )
 
                 while True:
@@ -977,10 +1277,9 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                         _ob_prompt("Select hosts", "all or 1,3-5", "all")
                     ).strip()
                     try:
-                        picks = _parse_selection_input(raw_sel, len(discovered))
-                        nodes = [
-                            _host_to_config_node(discovered[idx - 1]) for idx in picks
-                        ]
+                        picks = _parse_selection_input(raw_sel, len(display))
+                        # Keep raw dicts (with identityfile) so SSH testing can use them
+                        nodes = [dict(display[idx - 1]) for idx in picks]
                         break
                     except ValueError:
                         print(
@@ -1183,6 +1482,61 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
             return 1
         cluster["nodes"] = nodes
 
+    # ── Mandatory SSH connectivity test ────────────────────────────────────
+    all_nodes_flat: list[tuple[int, int, dict]] = []  # (cluster_idx, node_idx, node)
+    for _ci, _cluster in enumerate(ssh_clusters):
+        for _ni, _node in enumerate(list(_cluster.get("nodes") or [])):
+            all_nodes_flat.append((_ci, _ni, _node))
+
+    if all_nodes_flat:
+        print(f"\n  {_OB_BOLD}Testing SSH connectivity...{_OB_RESET}")
+        flat_nodes = [t[2] for t in all_nodes_flat]
+        verify_results = _verify_nodes(flat_nodes)
+        _print_verify_summary(verify_results)
+
+        failed_results = [r for r in verify_results if not r.get("ok")]
+        if failed_results:
+            print(f"\n  {_OB_BOLD}Resolving failed nodes...{_OB_RESET}")
+            to_skip: set[int] = set()
+
+            for r in failed_results:
+                flat_idx = int(r["index"])
+                _ci, _ni, _node = all_nodes_flat[flat_idx]
+                err_msg = str(r.get("message") or "")
+
+                if _ob_is_auth_failure(err_msg):
+                    _identityfile = str(_node.get("identityfile") or "")
+                    outcome = _ob_handle_auth_failure_recovery(
+                        _node, r, identityfile=_identityfile
+                    )
+                    if outcome == "skipped":
+                        to_skip.add(flat_idx)
+                else:
+                    _alias = str(r.get("alias") or "node")
+                    _address = str(_node.get("address") or "")
+                    _user = str(_node.get("user") or "")
+                    _port = int(_node.get("port") or 22)
+                    print(
+                        f"\n  {_OB_BOLD}─── {_alias}{_OB_RESET}"
+                        f"  {_OB_DIM}{_user}@{_address}:{_port} — network error: {err_msg}{_OB_RESET}"
+                    )
+                    _net_choice = "23"[_ob_arrow_select(["skip", "add anyway"])]
+                    if _net_choice == "2":
+                        print(
+                            f"  {_OB_DIM}Fix network access, then re-run 'opensmi onboard'{_OB_RESET}"
+                        )
+                        to_skip.add(flat_idx)
+                    else:
+                        print(
+                            f"  {_OB_YELLOW}⚠{_OB_RESET}  Node added with warning. "
+                            f"Fix network access, then re-run 'opensmi onboard --force'."
+                        )
+
+            # Remove skipped nodes in reverse flat-index order to preserve indices
+            for flat_idx in sorted(to_skip, reverse=True):
+                _ci, _ni, _ = all_nodes_flat[flat_idx]
+                ssh_clusters[_ci]["nodes"].pop(_ni)
+
     slurm_clusters: list[dict] = []
     raw_has_slurm = (
         input(_ob_prompt("Do you have any Slurm-managed clusters?", "", "N"))
@@ -1200,22 +1554,6 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
 
     while True:
         _print_review(ssh_clusters, slurm_clusters)
-
-        raw_test = (
-            input(
-                _ob_prompt(
-                    "Test connections now?", "Optional SSH check before save", "N"
-                )
-            )
-            .strip()
-            .lower()
-        )
-        if raw_test in ("y", "yes"):
-            review_nodes: list[dict] = []
-            for cluster in ssh_clusters:
-                review_nodes.extend(list(cluster.get("nodes") or []))
-            if review_nodes:
-                _print_verify_summary(_verify_nodes(review_nodes))
 
         action = (
             input(_ob_prompt("Looks good? (c)onfirm / (e)dit / (q)uit", "", "c"))
@@ -1301,14 +1639,53 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
         return 2
 
     print(f"Found {len(hosts)} host(s) in {ssh_path}:")
-    nodes = []
     for h in hosts:
         alias = str(h["alias"])
         addr = str(h["address"])
         user = str(h.get("user") or "root")
         port = int(h.get("port") or 22)
         print(f"  {alias} → {user}@{addr}:{port}")
-        nodes.append(_host_to_config_node(h))
+
+    print(f"\n  {_OB_BOLD}Testing SSH connectivity (parallel)...{_OB_RESET}")
+    verify_results = _verify_nodes(hosts)
+    _print_verify_summary(verify_results)
+
+    failed_results = [r for r in verify_results if not r.get("ok")]
+    to_skip: set[int] = set()
+    if failed_results:
+        print(f"\n  {_OB_BOLD}Resolving failed nodes...{_OB_RESET}")
+        for r in failed_results:
+            flat_idx = int(r["index"])
+            h = hosts[flat_idx]
+            err_msg = str(r.get("message") or "")
+            identityfile = str(h.get("identityfile") or "")
+            if _ob_is_auth_failure(err_msg):
+                outcome = _ob_handle_auth_failure_recovery(h, r, identityfile=identityfile)
+                if outcome == "skipped":
+                    to_skip.add(flat_idx)
+            else:
+                alias = str(h.get("alias") or "node")
+                user = str(h.get("user") or "")
+                address = str(h.get("address") or "")
+                port = int(h.get("port") or 22)
+                print(
+                    f"\n  {_OB_BOLD}─── {alias}{_OB_RESET}"
+                    f"  {_OB_DIM}{user}@{address}:{port} — network error: {err_msg}{_OB_RESET}"
+                )
+                nc = "23"[_ob_arrow_select(["skip", "add anyway"])]
+                if nc == "2":
+                    to_skip.add(flat_idx)
+                else:
+                    print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Node added with warning.")
+
+    nodes = [
+        _host_to_config_node(h)
+        for idx, h in enumerate(hosts)
+        if idx not in to_skip
+    ]
+    if not nodes:
+        print("No nodes added. Aborting.", file=sys.stderr)
+        return 1
 
     admin: Optional[str] = None
 

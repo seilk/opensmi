@@ -6,6 +6,9 @@ import pytest
 
 from opensmi.cli import (
     _discover_ssh_config_hosts,
+    _ob_filter_ssh_hosts,
+    _ob_find_local_pubkey,
+    _ob_is_auth_failure,
     _parse_selection_input,
     _parse_ssh_g_output,
     _parse_ssh_host_aliases,
@@ -148,3 +151,66 @@ def test_verify_summary_behavior_with_mocked_ssh_checks(capsys):
     assert "gpu-b" in out
     assert "Permission denied" in out
     assert "1/2 reachable, 1 failed" in out
+
+
+def test_ob_is_auth_failure_detects_auth_errors():
+    assert _ob_is_auth_failure("Permission denied (publickey,password).")
+    assert _ob_is_auth_failure("debug1: authentication failed")
+    assert _ob_is_auth_failure("ssh: connect to host: publickey")
+    assert not _ob_is_auth_failure("Connection refused")
+    assert not _ob_is_auth_failure("No route to host")
+    assert not _ob_is_auth_failure("Timeout connecting to host")
+    assert not _ob_is_auth_failure("")
+
+
+def test_ob_find_local_pubkey_returns_first_existing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    # No keys yet
+    assert _ob_find_local_pubkey() is None
+    # Create id_rsa.pub only
+    (ssh_dir / "id_rsa.pub").write_text("ssh-rsa AAAA...", encoding="utf-8")
+    result = _ob_find_local_pubkey()
+    assert result is not None
+    assert result.endswith("id_rsa.pub")
+    # Create id_ed25519.pub — should take priority
+    (ssh_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA...", encoding="utf-8")
+    result2 = _ob_find_local_pubkey()
+    assert result2 is not None
+    assert result2.endswith("id_ed25519.pub")
+
+
+def test_ob_filter_ssh_hosts_static_blacklist():
+    hosts = [
+        {"alias": "gpu-01", "address": "10.0.0.1", "user": "ubuntu", "port": 22},
+        {"alias": "github", "address": "github.com", "user": "git", "port": 22},
+        {"alias": "gitlab", "address": "gitlab.com", "user": "git", "port": 22},
+        {"alias": "sub-github", "address": "sub.github.com", "user": "git", "port": 22},
+    ]
+    # Patch asyncio.run to avoid network calls — pass2 returns keep for gpu-01
+    gpu01 = {"alias": "gpu-01", "address": "10.0.0.1", "user": "ubuntu", "port": 22}
+    with patch("asyncio.run", return_value=[(gpu01, "keep")]):
+        kept, filtered_out = _ob_filter_ssh_hosts(hosts)
+
+    # github.com, gitlab.com, sub.github.com all filtered by static blacklist
+    filtered_aliases = [h["alias"] for h in filtered_out]
+    assert "github" in filtered_aliases
+    assert "gitlab" in filtered_aliases
+    assert "sub-github" in filtered_aliases
+    # gpu-01 kept
+    kept_aliases = [h["alias"] for h in kept]
+    assert "gpu-01" in kept_aliases
+
+
+def test_ob_filter_ssh_hosts_no_shell_stderr():
+    """Pass-2 filter:no shell access pattern is surfaced correctly."""
+    host = {"alias": "myserver", "address": "10.0.0.5", "user": "ubuntu", "port": 22}
+
+    with patch("asyncio.run", return_value=[(host, "filter:no shell access")]):
+        kept, filtered_out = _ob_filter_ssh_hosts([host])
+
+    assert len(kept) == 0
+    assert len(filtered_out) == 1
+    assert filtered_out[0]["_filter_reason"] == "no shell access"
