@@ -76,7 +76,12 @@ def load_allocations(state_dir: Path) -> List[Allocation]:
     if not path.exists():
         return []
 
-    data = json.loads(path.read_text(encoding="utf-8"))
+    with _locked(path):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+
     allocs = []
     for raw in data.get("allocations", []):
         allocs.append(
