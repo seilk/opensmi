@@ -41,3 +41,4 @@ logs/
 doc-should-fix/
 opencode-onboard-redesign.txt
 .redteam/
+.omc/
