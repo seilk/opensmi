@@ -324,25 +324,18 @@ export async function pollAllClusters(): Promise<void> {
 
 export async function loadAllocations(): Promise<void> {
   try {
-    const homedir = process.env.HOME || "~";
-    const stateDir =
-      process.env.OPENSMI_STATE_DIR || `${homedir}/.opensmi`;
-    const allocPath = `${stateDir}/allocations.json`;
-    try {
-      const raw = await Bun.file(allocPath).text();
-      const data = JSON.parse(raw);
-      S.allocations = ((data.allocations || []) as Allocation[]).map(
-        (a: Allocation) => {
-          const t = String((a as any).target ?? "").trim();
-          return {
-            ...a,
-            target: !t || t.toLowerCase() === "none" ? "*" : t,
-          } as Allocation;
-        }
-      );
-    } catch {
-      S.allocations = [];
-    }
+    const allocPath = `${getStateDir()}/allocations.json`;
+    const raw = await Bun.file(allocPath).text();
+    const data = JSON.parse(raw);
+    S.allocations = ((data.allocations || []) as Allocation[]).map(
+      (a: Allocation) => {
+        const t = String((a as any).target ?? "").trim();
+        return {
+          ...a,
+          target: !t || t.toLowerCase() === "none" ? "*" : t,
+        } as Allocation;
+      }
+    );
   } catch {
     S.allocations = [];
   }
