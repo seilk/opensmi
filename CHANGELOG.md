@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-03-10
+
+### Fixed
+- **`opensmi alloc set/seed`**: Fixed `ImportError` crash caused by stale import of removed `_now_iso` from `allocations` module
+- **`load_allocations`**: Acquire advisory lock before reading to prevent torn reads under concurrent CLI + TUI access
+
+### Performance
+- **Collector**: Single-pass section marker index replaces 5× O(n) scans in `_parse_remote_output`
+- **Collector**: `_int_or_none`/`_float_or_none` hoisted out of GPU parse loop (no per-iteration function creation)
+- **Collector**: `_redact_cmdline` replaced O(tokens×flags) nested loop with frozenset O(1) lookup
+- **Violations**: Pre-grouped `(gpu_uuid, user)→pids` index eliminates O(p×g×u) scan
+- **GPU ranker**: `select_gpus_per_node` now makes a single `rank_gpus` call instead of N separate full-snapshot passes
+
+### Refactored
+- `_KST`/`_now_iso` deduplicated into `state.now_kst_iso()` (was copied in `allocations`, `collector`, `slurm`)
+- TUI: Removed dead `updateGpuIdleTracking` export (logic already inlined in `pollCluster`)
+- TUI: Extracted `_sortNodesByAlias` helper; removed duplicated sort in `pollCluster`/`pollExtraCluster`
+- TUI: Replaced modulo-counter anti-pattern with direct hourly `setInterval` for cleanup
+- TUI: Flattened unreachable nested try-catch in `loadAllocations`
+
+---
+
 ## [0.2.4] - 2026-02-20
 
 ### Fixed
