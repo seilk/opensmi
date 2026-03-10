@@ -6,7 +6,6 @@ import { loadSlurmData } from '../views/dashboard';
 type RenderFn = () => void;
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
-let cleanupCounter = 0;
 let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 let _renderFn: RenderFn | null = null;
 
@@ -49,15 +48,11 @@ export function cycleAutoRefresh(): void {
 export function startIntervals(renderFn: RenderFn): void {
   _renderFn = renderFn;
   restartRefreshInterval();
-  cleanupCounter = 0;
   cleanupInterval = setInterval(async () => {
-    cleanupCounter++;
-    if (cleanupCounter % 360 === 0) {
-      await cleanupOldJobs();
-      await loadJobsFromCLI();
-      S.requestRender?.();
-    }
-  }, 10_000);
+    await cleanupOldJobs();
+    await loadJobsFromCLI();
+    S.requestRender?.();
+  }, 60 * 60 * 1000); // every hour
 }
 
 export function stopIntervals(): void {
