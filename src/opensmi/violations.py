@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -25,8 +26,14 @@ def _alloc_lookup(allocs: List[Allocation]) -> Dict[Tuple[str, int], Allocation]
     return out
 
 
-def _pids_for_user(procs: List[GPUProcess], *, gpu_uuid: str, user: str) -> List[int]:
-    return [p.pid for p in procs if p.gpu_uuid == gpu_uuid and p.user == user]
+def _build_process_index(
+    procs: List[GPUProcess],
+) -> Dict[Tuple[str, str], List[int]]:
+    """Build (gpu_uuid, user) -> [pids] index in a single O(p) pass."""
+    index: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+    for p in procs:
+        index[(p.gpu_uuid, p.user)].append(p.pid)
+    return index
 
 
 def find_violations(
@@ -46,11 +53,14 @@ def find_violations(
         if node.error:
             continue
 
+        # Pre-group processes: (gpu_uuid, user) -> [pids]  O(p) once per node
+        proc_index = _build_process_index(node.processes)
+
         idx_to_uuid = {g.index: g.uuid for g in node.gpus}
 
-        # Consider the GPUs that exist on this node
         for gpu_index, gpu_uuid in idx_to_uuid.items():
-            users = sorted({p.user for p in node.processes if p.gpu_uuid == gpu_uuid})
+            # Collect unique users on this GPU
+            users = sorted({u for (guuid, u) in proc_index if guuid == gpu_uuid})
             if not users:
                 continue
 
@@ -58,10 +68,7 @@ def find_violations(
 
             if alloc is None:
                 if not require_allocation:
-                    # Default-open policy: before explicit admin allocation,
-                    # treat GPU as open-to-all.
                     continue
-
                 for u in users:
                     out.append(
                         Violation(
@@ -69,9 +76,7 @@ def find_violations(
                             gpu_index=int(gpu_index),
                             gpu_uuid=gpu_uuid,
                             user=u,
-                            pids=_pids_for_user(
-                                node.processes, gpu_uuid=gpu_uuid, user=u
-                            ),
+                            pids=list(proc_index[(gpu_uuid, u)]),
                             reason="UNALLOCATED_IN_USE",
                         )
                     )
@@ -90,9 +95,7 @@ def find_violations(
                             gpu_index=int(gpu_index),
                             gpu_uuid=gpu_uuid,
                             user=u,
-                            pids=_pids_for_user(
-                                node.processes, gpu_uuid=gpu_uuid, user=u
-                            ),
+                            pids=list(proc_index[(gpu_uuid, u)]),
                             reason="WRONG_USER",
                             expected=alloc.target,
                         )
