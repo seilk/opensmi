@@ -260,26 +260,6 @@ export function recomputeKnownUsers(): void {
   S.knownUsers = [...users].sort((a, b) => a.localeCompare(b));
 }
 
-// CANONICAL: do not duplicate in index.ts
-export function updateGpuIdleTracking(): void {
-  if (!S.snapshot) return;
-  const now = Date.now();
-  for (const node of S.snapshot.nodes) {
-    if (node.error) continue;
-    for (const gpu of node.gpus) {
-      const key = `${node.node_alias}:${gpu.uuid}`;
-      const procs = node.processes.filter((p) => p.gpu_uuid === gpu.uuid);
-      if (procs.length === 0) {
-        if (!S.gpuIdleStart[key]) {
-          S.gpuIdleStart[key] = now;
-        }
-      } else {
-        delete S.gpuIdleStart[key];
-      }
-    }
-  }
-}
-
 export async function pollExtraCluster(idx: number): Promise<void> {
   S.extraPollErrors[idx] = "";
   try {

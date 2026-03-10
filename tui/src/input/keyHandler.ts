@@ -36,7 +36,7 @@ import {
   pollAllClusters, loadAllocations, loadJobsFromCLI, allocSet, allocClear, killPids,
   tuiLog, runOpensmi, getStateDir, loadAdminStatus, saveJobToStore, updateJobInStore,
   loadClusterTabsFromConfig, recomputeKnownUsers, PYTHON, BASE_DIR, OPENSMI_ENV,
-  OPENSMI_CWD, OPENSMI, updateGpuIdleTracking, loadSystemUsers,
+  OPENSMI_CWD, OPENSMI, loadSystemUsers,
 } from '../state/api';
 import { cycleAutoRefresh, stopIntervals, restartRefreshInterval, runRefreshCycle } from '../lifecycle/intervals';
 import { tmuxSafeName } from '../utils/format';

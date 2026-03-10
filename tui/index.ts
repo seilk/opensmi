@@ -72,7 +72,6 @@ import {
   isRemoteNewer,
   maybeShowUpdateNotification,
   saveJobToStore,
-  updateGpuIdleTracking,
   loadSystemUsers,
 } from './src/state/api';
 import { startIntervals, stopIntervals, cycleAutoRefresh } from './src/lifecycle/intervals';
