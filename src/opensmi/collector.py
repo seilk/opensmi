@@ -157,7 +157,7 @@ def _parse_users_output(stdout: str) -> List[str]:
     return users
 
 
-_SENSITIVE_FLAGS = {
+_SENSITIVE_FLAGS: frozenset[str] = frozenset({
     "--password",
     "--passwd",
     "--token",
@@ -166,7 +166,10 @@ _SENSITIVE_FLAGS = {
     "--secret",
     "--access-key",
     "--auth-token",
-}
+})
+
+# Pre-built prefix set: "--token=" etc., avoids per-token inner loop
+_SENSITIVE_PREFIXES: tuple[str, ...] = tuple(f + "=" for f in _SENSITIVE_FLAGS)
 
 
 def _redact_cmdline(cmdline: str) -> str:
@@ -179,20 +182,17 @@ def _redact_cmdline(cmdline: str) -> str:
     while i < len(tokens):
         tok = tokens[i]
         low = tok.lower()
-        redacted = False
-        for flag in _SENSITIVE_FLAGS:
-            if low == flag:
-                out.append(tok)
-                if i + 1 < len(tokens):
-                    out.append("***REDACTED***")
-                    i += 1
-                redacted = True
-                break
-            if low.startswith(flag + "="):
-                out.append(tok.split("=", 1)[0] + "=***REDACTED***")
-                redacted = True
-                break
-        if not redacted:
+
+        if low in _SENSITIVE_FLAGS:
+            # --flag <value> form
+            out.append(tok)
+            if i + 1 < len(tokens):
+                out.append("***REDACTED***")
+                i += 1
+        elif any(low.startswith(p) for p in _SENSITIVE_PREFIXES):
+            # --flag=value form
+            out.append(tok.split("=", 1)[0] + "=***REDACTED***")
+        else:
             out.append(tok)
         i += 1
     return " ".join(out)

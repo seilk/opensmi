@@ -162,5 +162,25 @@ __OPENSMI_END__
         self.assertEqual(procs[0].user, "bob")
 
 
+    def test_redact_cmdline_all_forms(self):
+        """_redact_cmdline handles space-separated and = forms correctly."""
+        from opensmi.collector import _redact_cmdline
+
+        # Space-separated form: --token <value>
+        out = _redact_cmdline("train.py --token abc123 --lr 0.001")
+        self.assertIn("***REDACTED***", out)
+        self.assertNotIn("abc123", out)
+        self.assertIn("--lr", out)
+
+        # Attached = form: --token=abc123
+        out2 = _redact_cmdline("train.py --token=abc123")
+        self.assertIn("--token=***REDACTED***", out2)
+        self.assertNotIn("abc123", out2)
+
+        # No sensitive flags: string passes through unchanged
+        out3 = _redact_cmdline("python train.py --epochs 10")
+        self.assertEqual(out3, "python train.py --epochs 10")
+
+
 if __name__ == "__main__":
     unittest.main()
