@@ -251,3 +251,23 @@ def test_select_gpus_per_node_respects_ranking():
     result = select_gpus_per_node(snap, {"n1": 2}, {})
 
     assert result["n1"] == [1, 2]
+
+
+def test_select_gpus_per_node_multi_node():
+    """select_gpus_per_node picks correct GPUs from each node independently."""
+
+    def make_node(alias, n_gpus):
+        n = NodeSnapshot(node_alias=alias, address="10.0.0.1")
+        n.gpus = [GPUInfo(index=i, uuid=f"{alias}-uuid{i}", name="A100") for i in range(n_gpus)]
+        n.processes = []
+        return n
+
+    snap = ClusterSnapshot(
+        cluster_name="X", timestamp="t",
+        nodes=[make_node("node1", 4), make_node("node2", 2)],
+    )
+    result = select_gpus_per_node(snap, {"node1": 2, "node2": 1})
+    assert len(result["node1"]) == 2
+    assert len(result["node2"]) == 1
+    assert all(isinstance(i, int) for i in result["node1"])
+    assert all(isinstance(i, int) for i in result["node2"])

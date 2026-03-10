@@ -164,33 +164,30 @@ def select_gpus_per_node(
 ) -> Dict[str, List[int]]:
     """Select top N GPUs from each specified node independently.
 
-    Args:
-        snapshot: Current cluster state
-        gpus_per_node: Dict of {node_alias: num_gpus} specifying how many GPUs
-                       to select from each node
-        launch_history: Optional launch history
-        allocations: Optional list of allocation dicts
-        current_user: Optional current user name
-
-    Returns:
-        Dict of {node_alias: [gpu_indices]} with selected GPU indices per node
+    Single rank_gpus call filtered to all requested nodes, then split by node.
     """
-    result: Dict[str, List[int]] = {}
+    if not gpus_per_node:
+        return {}
 
-    for node_alias, num_gpus in gpus_per_node.items():
-        if num_gpus <= 0:
-            result[node_alias] = []
-            continue
+    node_aliases = set(gpus_per_node.keys())
 
-        node_ranked = rank_gpus(
-            snapshot,
-            launch_history,
-            allocations,
-            current_user,
-            node_filter=[node_alias],
-        )
+    # One ranking pass for all requested nodes together
+    ranked = rank_gpus(
+        snapshot,
+        launch_history,
+        allocations,
+        current_user,
+        node_filter=list(node_aliases),
+    )
 
-        selected = [(alias, idx) for alias, idx, _ in node_ranked[:num_gpus]]
-        result[node_alias] = [idx for alias, idx in selected if alias == node_alias]
+    # Group ranked results by node, preserving rank order within each node
+    per_node: Dict[str, List[int]] = {alias: [] for alias in node_aliases}
+    for alias, idx, _ in ranked:
+        if alias in per_node:
+            per_node[alias].append(idx)
 
-    return result
+    # Trim to requested count
+    return {
+        node_alias: per_node.get(node_alias, [])[:max(0, num_gpus)]
+        for node_alias, num_gpus in gpus_per_node.items()
+    }
