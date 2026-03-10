@@ -215,6 +215,20 @@ def _decode_cmdline_b64(value: str, *, max_len: int = 512) -> Optional[str]:
     return redacted
 
 
+def _int_or_none(val: str) -> Optional[int]:
+    try:
+        return int(val)
+    except Exception:
+        return None
+
+
+def _float_or_none(val: str) -> Optional[float]:
+    try:
+        return float(val)
+    except Exception:
+        return None
+
+
 async def fetch_users(
     config: ClusterConfig, *, timeout_s: int = 10, max_retries: int = 2
 ) -> List[str]:
@@ -279,18 +293,6 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
             idx = int(row[0])
         except ValueError:
             continue
-
-        def _int_or_none(val: str) -> Optional[int]:
-            try:
-                return int(val)
-            except Exception:
-                return None
-
-        def _float_or_none(val: str) -> Optional[float]:
-            try:
-                return float(val)
-            except Exception:
-                return None
 
         mem_total = _int_or_none(row[3]) if len(row) > 3 else None
         mem_used = _int_or_none(row[4]) if len(row) > 4 else None

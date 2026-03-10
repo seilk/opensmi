@@ -121,5 +121,24 @@ __OPENSMI_END__
         )
 
 
+    def test_parse_extended_metrics_all_fields(self):
+        """All numeric GPU fields parse correctly after hoisting helpers."""
+        from opensmi.collector import _parse_remote_output
+        from opensmi.models import NodeConfig
+        node = NodeConfig(alias="n1", address="10.0.0.1", user="u")
+        stdout = (
+            "__OPENSMI_BEGIN__\nhostname=h\nos=Linux\n"
+            "__GPUS__\n"
+            "0, uuid0, Tesla T4, 16160, 2048, 75, 68, 70.5\n"
+            "__PROCS__\n__OWNERS__\n__OPENSMI_END__\n"
+        )
+        _meta, gpus, _procs = _parse_remote_output(node, stdout)
+        self.assertEqual(gpus[0].memory_total_mib, 16160)
+        self.assertEqual(gpus[0].memory_used_mib, 2048)
+        self.assertEqual(gpus[0].utilization_gpu_percent, 75)
+        self.assertEqual(gpus[0].temperature_c, 68)
+        self.assertAlmostEqual(gpus[0].power_draw_w, 70.5)
+
+
 if __name__ == "__main__":
     unittest.main()
