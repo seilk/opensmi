@@ -194,11 +194,10 @@ def collect_slurm_snapshot(
     If login_node is provided, commands are run remotely via SSH.
     Otherwise, they are run locally (assumes we're on a Slurm login node).
     """
-    from datetime import datetime, timezone, timedelta
+    from .state import now_kst_iso
 
-    _KST = timezone(timedelta(hours=9))
     snap = SlurmClusterSnapshot(
-        timestamp=datetime.now(_KST).isoformat(timespec="seconds"),
+        timestamp=now_kst_iso(),
         cluster_name=cluster_name,
         login_node=login_node,
         ssh_user=ssh_user,

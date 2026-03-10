@@ -1923,7 +1923,7 @@ def _cmd_alloc_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_alloc_set(args: argparse.Namespace) -> int:
-    from .allocations import _now_iso
+    from .state import now_kst_iso
 
     state_dir, cfg = _load_cfg(args)
     _require_admin(cfg, "alloc set", node_aliases=[args.node])
@@ -1940,7 +1940,7 @@ def _cmd_alloc_set(args: argparse.Namespace) -> int:
         gpu_index=int(args.gpu),
         target=target,
         assigned_by=args.by or _current_operator() or "admin",
-        assigned_at=_now_iso(),
+        assigned_at=now_kst_iso(),
         notes=args.notes or "",
     )
     allocs = upsert_allocation(allocs, new_alloc)
@@ -2104,7 +2104,7 @@ echo \"__OPENSMI_KILL_END__\"
 
 def _cmd_alloc_seed(args: argparse.Namespace) -> int:
     """Seed allocations from current live GPU usage."""
-    from .allocations import _now_iso
+    from .state import now_kst_iso
 
     state_dir, cfg = _load_cfg(args)
     _require_admin(cfg, "alloc seed", node_aliases=[n.alias for n in cfg.nodes])
@@ -2161,7 +2161,7 @@ def _cmd_alloc_seed(args: argparse.Namespace) -> int:
                 gpu_index=gpu_index,
                 target=target,
                 assigned_by=by,
-                assigned_at=_now_iso(),
+                assigned_at=now_kst_iso(),
                 notes="seeded",
             )
             allocs = upsert_allocation(allocs, new_alloc)

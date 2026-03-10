@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -88,8 +89,6 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
 def latest_snapshot_path(state_dir: Path) -> Path:
     return state_dir / "latest_snapshot.json"
 
-
-from datetime import datetime, timezone, timedelta
 
 _KST = timezone(timedelta(hours=9))
 
