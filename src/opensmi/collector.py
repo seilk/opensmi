@@ -260,14 +260,25 @@ async def fetch_users(
 def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str], List[GPUInfo], List[GPUProcess]]:
     lines = stdout.splitlines()
 
-    begin_i = _find_section(lines, "__OPENSMI_BEGIN__")
-    end_i = _find_section(lines, "__OPENSMI_END__")
+    # Single-pass: find all known section markers at once
+    _MARKERS = frozenset({
+        "__OPENSMI_BEGIN__", "__OPENSMI_END__",
+        "__GPUS__", "__PROCS__", "__OWNERS__",
+    })
+    idx: Dict[str, int] = {}
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s in _MARKERS:
+            idx[s] = i
+
+    begin_i = idx.get("__OPENSMI_BEGIN__", -1)
+    end_i = idx.get("__OPENSMI_END__", -1)
     if begin_i == -1 or end_i == -1 or end_i <= begin_i:
         raise ValueError("Unexpected remote output (missing begin/end markers)")
 
-    gpus_i = _find_section(lines, "__GPUS__")
-    procs_i = _find_section(lines, "__PROCS__")
-    owners_i = _find_section(lines, "__OWNERS__")
+    gpus_i = idx.get("__GPUS__", -1)
+    procs_i = idx.get("__PROCS__", -1)
+    owners_i = idx.get("__OWNERS__", -1)
     if gpus_i == -1 or procs_i == -1 or owners_i == -1:
         raise ValueError("Unexpected remote output (missing section markers)")
 

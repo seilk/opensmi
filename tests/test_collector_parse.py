@@ -140,5 +140,27 @@ __OPENSMI_END__
         self.assertAlmostEqual(gpus[0].power_draw_w, 70.5)
 
 
+    def test_parse_finds_all_sections_in_single_pass(self):
+        """Parser correctly finds all section markers with many noise lines."""
+        from opensmi.collector import _parse_remote_output
+        from opensmi.models import NodeConfig
+        import base64
+        node = NodeConfig(alias="n1", address="10.0.0.1", user="u")
+        noise = "\n".join(f"# noise line {i}" for i in range(50))
+        owner_b64 = base64.b64encode(b"python train.py").decode()
+        stdout = (
+            f"{noise}\n"
+            "__OPENSMI_BEGIN__\nhostname=h\nos=Linux\n"
+            "__GPUS__\n0, uuid0, A100, 81920\n"
+            "__PROCS__\nuuid0, 42, python, 500\n"
+            f"__OWNERS__\n42,bob,3600,{owner_b64}\n"
+            "__OPENSMI_END__\n"
+        )
+        meta, gpus, procs = _parse_remote_output(node, stdout)
+        self.assertEqual(meta["hostname"], "h")
+        self.assertEqual(len(gpus), 1)
+        self.assertEqual(procs[0].user, "bob")
+
+
 if __name__ == "__main__":
     unittest.main()
