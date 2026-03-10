@@ -87,3 +87,13 @@ def resolve_config_path(*, state_dir: Path, cli_config: Optional[str] = None) ->
 
 def latest_snapshot_path(state_dir: Path) -> Path:
     return state_dir / "latest_snapshot.json"
+
+
+from datetime import datetime, timezone, timedelta
+
+_KST = timezone(timedelta(hours=9))
+
+
+def now_kst_iso() -> str:
+    """Return current KST time as ISO-8601 string (seconds precision)."""
+    return datetime.now(_KST).isoformat(timespec="seconds")

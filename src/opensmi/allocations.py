@@ -5,19 +5,13 @@ import os
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .state import now_kst_iso
+
 
 ALLOCS_VERSION = 1
-
-
-_KST = timezone(timedelta(hours=9))
-
-
-def _now_iso() -> str:
-    return datetime.now(_KST).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -39,7 +33,7 @@ def allocations_path(state_dir: Path) -> Path:
 def _default_allocs_doc() -> Dict[str, object]:
     return {
         "version": ALLOCS_VERSION,
-        "updated_at": _now_iso(),
+        "updated_at": now_kst_iso(),
         "allocations": [],
     }
 
@@ -111,7 +105,7 @@ def save_allocations(state_dir: Path, allocs: List[Allocation]) -> None:
 
     doc: Dict[str, object] = {
         "version": ALLOCS_VERSION,
-        "updated_at": _now_iso(),
+        "updated_at": now_kst_iso(),
         "allocations": payload_allocs,
     }
 

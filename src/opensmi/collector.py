@@ -5,10 +5,10 @@ import base64
 import csv
 import io
 from dataclasses import asdict
-from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .models import ClusterConfig, ClusterSnapshot, GPUInfo, GPUProcess, NodeConfig, NodeSnapshot
+from .state import now_kst_iso
 
 
 REMOTE_SCRIPT = r"""#!/usr/bin/env bash
@@ -69,13 +69,6 @@ echo "__OPENSMI_USERS_END__"
 
 class SSHError(RuntimeError):
     pass
-
-
-_KST = timezone(timedelta(hours=9))
-
-
-def _now_iso() -> str:
-    return datetime.now(_KST).isoformat(timespec="seconds")
 
 
 async def _ssh_run(
@@ -381,7 +374,7 @@ def _parse_remote_output(node: NodeConfig, stdout: str) -> Tuple[Dict[str, str],
 
 async def poll_node(node: NodeConfig, timeout_s: int, max_retries: int = 2) -> NodeSnapshot:
     snap = NodeSnapshot(node_alias=node.alias, address=node.address)
-    snap.timestamp = _now_iso()
+    snap.timestamp = now_kst_iso()
 
     try:
         rc, stdout, stderr = await _ssh_run(
@@ -415,7 +408,7 @@ async def poll_cluster(
 
     return ClusterSnapshot(
         cluster_name=config.cluster_name,
-        timestamp=_now_iso(),
+        timestamp=now_kst_iso(),
         nodes=nodes,
     )
 
