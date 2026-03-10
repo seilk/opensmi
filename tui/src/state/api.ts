@@ -156,6 +156,15 @@ export async function loadAdminStatus(): Promise<void> {
 
 // ── Cluster polling ───────────────────────────────────────────────
 
+function _sortNodesByAlias<T extends { node_alias: string }>(nodes: T[]): T[] {
+  return [...nodes].sort((a, b) =>
+    a.node_alias.localeCompare(b.node_alias, "en", {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+}
+
 export async function pollCluster(): Promise<void> {
   if (S.isPolling) return;
   S.isPolling = true;
@@ -183,12 +192,7 @@ export async function pollCluster(): Promise<void> {
       S.snapshot?.nodes?.[S.selectedNodeIdx]?.node_alias;
 
     const next = JSON.parse(stdout) as ClusterSnapshot;
-    next.nodes = [...next.nodes].sort((a, b) =>
-      a.node_alias.localeCompare(b.node_alias, "en", {
-        numeric: true,
-        sensitivity: "base",
-      })
-    );
+    next.nodes = _sortNodesByAlias(next.nodes);
 
     S.snapshot = next;
 
@@ -288,12 +292,7 @@ export async function pollExtraCluster(idx: number): Promise<void> {
       S.extraSnapshots[idx]?.nodes?.[S.extraSelectedNodeIdx[idx] || 0]
         ?.node_alias;
     const next = JSON.parse(stdout) as ClusterSnapshot;
-    next.nodes = [...next.nodes].sort((a, b) =>
-      a.node_alias.localeCompare(b.node_alias, "en", {
-        numeric: true,
-        sensitivity: "base",
-      })
-    );
+    next.nodes = _sortNodesByAlias(next.nodes);
 
     S.extraSnapshots[idx] = next;
     const selectedIdx = S.extraSelectedNodeIdx[idx] || 0;
