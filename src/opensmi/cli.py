@@ -251,16 +251,23 @@ def _ob_ssh_test(
         return False, str(e)
 
 
-_KNOWN_SERVICE_DOMAINS = frozenset({
-    "github.com",
-    "gitlab.com",
-    "bitbucket.org",
-    "sourceforge.net",
-    "heroku.com",
-    "aws.amazon.com",
-})
+_KNOWN_SERVICE_DOMAINS = frozenset(
+    {
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "sourceforge.net",
+        "heroku.com",
+        "aws.amazon.com",
+    }
+)
 
-_AUTH_FAILURE_KEYWORDS = ("Permission denied", "publickey", "password", "authentication failed")
+_AUTH_FAILURE_KEYWORDS = (
+    "Permission denied",
+    "publickey",
+    "password",
+    "authentication failed",
+)
 
 
 def _ob_is_auth_failure(stderr: str) -> bool:
@@ -294,8 +301,11 @@ def _ob_generate_ssh_key() -> Optional[str]:
     return None
 
 
-def _ob_copy_id(address: str, user: str, port: int, pubkey_path: str) -> tuple[bool, str]:
+def _ob_copy_id(
+    address: str, user: str, port: int, pubkey_path: str
+) -> tuple[bool, str]:
     import shutil as _shutil
+
     if not _shutil.which("ssh-copy-id"):
         print(
             f"  {_OB_YELLOW}⚠{_OB_RESET}  ssh-copy-id not found. Add the key manually:\n"
@@ -330,7 +340,9 @@ def _ob_filter_ssh_hosts(hosts: list[dict]) -> tuple[list[dict], list[dict]]:
     pass1_kept: list[dict] = []
     for host in hosts:
         addr = str(host.get("address") or "").lower().rstrip(".")
-        is_service = any(addr == d or addr.endswith("." + d) for d in _KNOWN_SERVICE_DOMAINS)
+        is_service = any(
+            addr == d or addr.endswith("." + d) for d in _KNOWN_SERVICE_DOMAINS
+        )
         if is_service:
             filtered.append(dict(host, _filter_reason="known service domain"))
         else:
@@ -348,9 +360,12 @@ def _ob_filter_ssh_hosts(hosts: list[dict]) -> tuple[list[dict], list[dict]]:
         proxyjump = str(host.get("proxyjump") or "")
         cmd = [
             "ssh",
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=3",
-            "-o", "StrictHostKeyChecking=no",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "StrictHostKeyChecking=no",
         ]
         if port != 22:
             cmd += ["-p", str(port)]
@@ -392,7 +407,7 @@ def _ob_filter_ssh_hosts(hosts: list[dict]) -> tuple[list[dict], list[dict]]:
 
     for host, status in results:
         if status.startswith("filter:"):
-            reason = status[len("filter:"):]
+            reason = status[len("filter:") :]
             filtered.append(dict(host, _filter_reason=reason))
         else:
             kept.append(host)
@@ -444,9 +459,9 @@ def _ob_arrow_select(options: list[str], default: int = 0) -> int:
                 raise KeyboardInterrupt
             if ch == "\x1b":
                 seq = sys.stdin.read(2)
-                if seq == "[D":   # left arrow
+                if seq == "[D":  # left arrow
                     idx = (idx - 1) % n
-                elif seq == "[C": # right arrow
+                elif seq == "[C":  # right arrow
                     idx = (idx + 1) % n
             _render()
     finally:
@@ -470,7 +485,9 @@ def _ob_handle_auth_failure_recovery(
     user = str(node.get("user") or "")
     port = int(node.get("port") or 22)
 
-    print(f"\n  {_OB_BOLD}─── {alias}{_OB_RESET}  {_OB_DIM}{user}@{address}:{port} — key auth required{_OB_RESET}")
+    print(
+        f"\n  {_OB_BOLD}─── {alias}{_OB_RESET}  {_OB_DIM}{user}@{address}:{port} — key auth required{_OB_RESET}"
+    )
 
     pubkey: Optional[str] = None
     if identityfile:
@@ -859,6 +876,84 @@ def _reedit_node(node: dict) -> dict:
         print(f"  {_OB_DIM}Re-enter node details.{_OB_RESET}\n")
 
 
+def _ob_is_wsl() -> bool:
+    try:
+        proc_version = Path("/proc/version").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        return "microsoft" in proc_version.lower() or "wsl" in proc_version.lower()
+    except OSError:
+        return False
+
+
+def _ob_find_windows_ssh_config() -> Optional[Path]:
+    wsl_mnt = Path("/mnt/c")
+    if not wsl_mnt.is_dir():
+        return None
+    userprofile_env = os.environ.get("USERPROFILE") or ""
+    if userprofile_env:
+        normalized = userprofile_env.replace("\\", "/")
+        candidate = Path(normalized) / ".ssh" / "config"
+        if candidate.exists():
+            return candidate
+        if re.match(r"^[A-Za-z]:/", normalized):
+            drive = normalized[0].lower()
+            rest = normalized[3:].lstrip("/")
+            wsl_candidate = Path("/mnt") / drive / rest / ".ssh" / "config"
+            if wsl_candidate.exists():
+                return wsl_candidate
+    for base in (wsl_mnt / "Users",):
+        if not base.is_dir():
+            continue
+        try:
+            for entry in base.iterdir():
+                if not entry.is_dir():
+                    continue
+                candidate = entry / ".ssh" / "config"
+                if candidate.exists():
+                    return candidate
+        except OSError:
+            pass
+    return None
+
+
+def _ob_maybe_copy_wsl_ssh_config() -> None:
+    if not _ob_is_wsl():
+        return
+    wsl_ssh_config = Path.home() / ".ssh" / "config"
+    if wsl_ssh_config.exists():
+        return
+    win_config = _ob_find_windows_ssh_config()
+    if win_config is None:
+        return
+    print(
+        f"\n  {_OB_BOLD}WSL SSH config helper{_OB_RESET}\n"
+        f"  {_OB_DIM}No ~/.ssh/config found in WSL, but a Windows SSH config was found:{_OB_RESET}\n"
+        f"    {win_config}\n"
+        f"  {_OB_YELLOW}⚠{_OB_RESET}  Copied config may reference Windows paths that need manual cleanup in WSL."
+    )
+    print(f"\n  {_OB_DIM}Copy it to ~/.ssh/config?{_OB_RESET}")
+    _copy_choice = _ob_arrow_select(["No", "Yes"], default=0)
+    if _copy_choice == 0:
+        return
+    if wsl_ssh_config.exists():
+        print(
+            f"  {_OB_YELLOW}⚠{_OB_RESET}  ~/.ssh/config already exists; skipping copy."
+        )
+        return
+    try:
+        wsl_ssh_config.parent.mkdir(parents=True, exist_ok=True)
+        import shutil as _shutil
+
+        _shutil.copy2(str(win_config), str(wsl_ssh_config))
+        print(
+            f"  {_OB_GREEN}✓{_OB_RESET}  Copied to {wsl_ssh_config}\n"
+            f"  {_OB_DIM}Review and clean up any Windows-style paths before using.{_OB_RESET}"
+        )
+    except OSError as e:
+        print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Copy failed: {e}")
+
+
 def _cmd_onboard(args: argparse.Namespace) -> int:
     """Onboarding wizard to create opensmi.json (interactive)."""
     state_dir = get_state_dir(args.state_dir)
@@ -1073,10 +1168,23 @@ def _init_wizard_legacy(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int
                     break
 
                 print(f"{_OB_YELLOW}⚠ unreachable{_OB_RESET}")
-                _node_draft = {"alias": alias, "address": address, "user": user, "port": port}
-                _fake_result = {"alias": alias, "index": 0, "target": f"{user}@{address}:{port}", "ok": False, "message": _msg}
+                _node_draft = {
+                    "alias": alias,
+                    "address": address,
+                    "user": user,
+                    "port": port,
+                }
+                _fake_result = {
+                    "alias": alias,
+                    "index": 0,
+                    "target": f"{user}@{address}:{port}",
+                    "ok": False,
+                    "message": _msg,
+                }
                 if _ob_is_auth_failure(_msg):
-                    _outcome = _ob_handle_auth_failure_recovery(_node_draft, _fake_result)
+                    _outcome = _ob_handle_auth_failure_recovery(
+                        _node_draft, _fake_result
+                    )
                     if _outcome in ("added", "added_anyway"):
                         nodes.append(_node_draft)
                         break
@@ -1226,19 +1334,13 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         return text, None
 
     def _prompt_nodes_for_cluster(default_count: int) -> list[dict]:
-        mode_raw = (
-            input(
-                _ob_prompt(
-                    "Node setup: (a)uto from ~/.ssh/config  or  (m)anual?",
-                    "",
-                    "a",
-                )
-            )
-            .strip()
-            .lower()
-            or "a"
+        print(
+            f"\n  {_OB_DIM}Node setup: auto-import from ~/.ssh/config or manual entry?{_OB_RESET}"
         )
-        setup_mode = "manual" if mode_raw.startswith("m") else "auto"
+        _node_mode_idx = _ob_arrow_select(
+            ["auto from ~/.ssh/config", "manual entry"], default=0
+        )
+        setup_mode = "manual" if _node_mode_idx == 1 else "auto"
 
         if setup_mode == "auto":
             try:
@@ -1349,27 +1451,24 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         default_name = str((existing or {}).get("name") or "HPC Cluster")
         default_login = str((existing or {}).get("login_node") or "")
         default_user = str((existing or {}).get("user") or current_user)
+        _existing_port = (existing or {}).get("port")
+        default_port: Optional[int] = int(_existing_port) if _existing_port else None
 
         name = (
             input(_ob_prompt("Slurm cluster name", "", default_name)).strip()
             or default_name
         )
-        mode_raw = (
-            input(
-                _ob_prompt(
-                    "Login node: (s)elect from SSH config  or  (m)anual?",
-                    "",
-                    "s",
-                )
-            )
-            .strip()
-            .lower()
-            or "s"
+        print(
+            f"\n  {_OB_DIM}Login node: select from SSH config or enter manually?{_OB_RESET}"
         )
-        manual_mode = mode_raw.startswith("m")
+        _slurm_mode_idx = _ob_arrow_select(
+            ["select from SSH config", "manual entry"], default=0
+        )
+        manual_mode = _slurm_mode_idx == 1
         select_mode = not manual_mode
 
         login_node = default_login
+        login_port: Optional[int] = default_port
         if select_mode:
             try:
                 _ssh_path, discovered = _discover_ssh_config_hosts("~/.ssh/config")
@@ -1381,7 +1480,11 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                     f"\n  {_OB_BOLD}SSH config hosts{_OB_RESET}  {_OB_DIM}({len(discovered)} found){_OB_RESET}"
                 )
                 for i, host in enumerate(discovered, start=1):
-                    print(f"  {str(i).rjust(2)}. {host['alias']:<16} {host['address']}")
+                    port = int(host.get("port") or 22)
+                    port_str = f":{port}" if port != 22 else ""
+                    print(
+                        f"  {str(i).rjust(2)}. {host['alias']:<16} {host['address']}{port_str}"
+                    )
                 while True:
                     raw_pick = (
                         input(_ob_prompt("Pick login node", "index", "1")).strip()
@@ -1394,7 +1497,10 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                     if pick < 1 or pick > len(discovered):
                         print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Selection out of range.")
                         continue
-                    login_node = str(discovered[pick - 1]["alias"])
+                    _picked = discovered[pick - 1]
+                    login_node = str(_picked["alias"])
+                    _picked_port = int(_picked.get("port") or 22)
+                    login_port = _picked_port if _picked_port != 22 else None
                     break
             else:
                 print(
@@ -1412,12 +1518,32 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                     login_node = raw_login
                     break
                 print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Login node is required.")
+            _port_default_str = str(default_port) if default_port else "22"
+            raw_port = (
+                input(
+                    _ob_prompt(
+                        "SSH port for login node", "22 = default", _port_default_str
+                    )
+                ).strip()
+                or _port_default_str
+            )
+            try:
+                _parsed_port = int(raw_port)
+                if _parsed_port <= 0:
+                    raise ValueError
+                login_port = _parsed_port if _parsed_port != 22 else None
+            except ValueError:
+                print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Invalid port; using 22.")
+                login_port = None
 
         user = (
             input(_ob_prompt("SSH user for login node", "", default_user)).strip()
             or default_user
         )
-        return {"name": name, "login_node": login_node, "user": user}
+        result: dict = {"name": name, "login_node": login_node, "user": user}
+        if login_port is not None:
+            result["port"] = login_port
+        return result
 
     def _print_review(ssh_clusters: list[dict], slurm_clusters: list[dict]) -> None:
         print(f"\n  {_OB_BOLD}Final review{_OB_RESET}")
@@ -1436,15 +1562,19 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         if not slurm_clusters:
             print("    (none)")
         for idx, sc in enumerate(slurm_clusters, start=1):
+            _sc_port = sc.get("port")
+            _port_suffix = f":{_sc_port}" if _sc_port else ""
             print(
                 f"    {idx}. {sc.get('name', 'Slurm Cluster')}  →  "
-                f"{sc.get('login_node', '')} (user: {sc.get('user', '')})"
+                f"{sc.get('login_node', '')}{_port_suffix} (user: {sc.get('user', '')})"
             )
 
     print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
     print(_ob_box_row("opensmi onboard", W, _OB_BOLD))
     print(_ob_box_row("Set up your GPU cluster config.", W, _OB_DIM))
     print(f"  {_OB_GREEN}╰{line}╯{_OB_RESET}\n")
+
+    _ob_maybe_copy_wsl_ssh_config()
 
     while True:
         raw_clusters = (
@@ -1538,37 +1668,26 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                 ssh_clusters[_ci]["nodes"].pop(_ni)
 
     slurm_clusters: list[dict] = []
-    raw_has_slurm = (
-        input(_ob_prompt("Do you have any Slurm-managed clusters?", "", "N"))
-        .strip()
-        .lower()
-    )
-    if raw_has_slurm in ("y", "yes"):
+    print(f"\n  {_OB_DIM}Do you have any Slurm-managed clusters?{_OB_RESET}")
+    _has_slurm = _ob_arrow_select(["No", "Yes"], default=0)
+    if _has_slurm == 1:
         while True:
             slurm_clusters.append(_prompt_slurm_cluster())
-            raw_more = (
-                input(_ob_prompt("Add another Slurm cluster?", "", "N")).strip().lower()
-            )
-            if raw_more not in ("y", "yes"):
+            print(f"\n  {_OB_DIM}Add another Slurm cluster?{_OB_RESET}")
+            _more_slurm = _ob_arrow_select(["No", "Yes"], default=0)
+            if _more_slurm == 0:
                 break
 
     while True:
         _print_review(ssh_clusters, slurm_clusters)
 
-        action = (
-            input(_ob_prompt("Looks good? (c)onfirm / (e)dit / (q)uit", "", "c"))
-            .strip()
-            .lower()
-            or "c"
-        )
-        if action.startswith("q"):
+        print(f"\n  {_OB_DIM}Looks good?{_OB_RESET}")
+        _review_choice = _ob_arrow_select(["confirm", "edit", "quit"], default=0)
+        if _review_choice == 2:
             print(f"  {_OB_YELLOW}Aborted. No config written.{_OB_RESET}")
             return 1
-        if action.startswith("c"):
+        if _review_choice == 0:
             break
-        if not action.startswith("e"):
-            print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Enter c, e, or q.")
-            continue
 
         print(f"\n  {_OB_BOLD}Editable items{_OB_RESET}")
         editable: list[tuple[str, int]] = []
@@ -1660,7 +1779,9 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
             err_msg = str(r.get("message") or "")
             identityfile = str(h.get("identityfile") or "")
             if _ob_is_auth_failure(err_msg):
-                outcome = _ob_handle_auth_failure_recovery(h, r, identityfile=identityfile)
+                outcome = _ob_handle_auth_failure_recovery(
+                    h, r, identityfile=identityfile
+                )
                 if outcome == "skipped":
                     to_skip.add(flat_idx)
             else:
@@ -1679,9 +1800,7 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
                     print(f"  {_OB_YELLOW}⚠{_OB_RESET}  Node added with warning.")
 
     nodes = [
-        _host_to_config_node(h)
-        for idx, h in enumerate(hosts)
-        if idx not in to_skip
+        _host_to_config_node(h) for idx, h in enumerate(hosts) if idx not in to_skip
     ]
     if not nodes:
         print("No nodes added. Aborting.", file=sys.stderr)
