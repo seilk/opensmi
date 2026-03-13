@@ -136,6 +136,7 @@ export interface SlurmSnapshot {
   errors: string[];
   login_node: string | null;
   ssh_user: string;
+  ssh_port: number;
 }
 
 export interface SlurmRunPopup {
@@ -146,6 +147,7 @@ export interface SlurmRunPopup {
   snapshotTime: string;
   loginNode: string;
   sshUser: string;
+  sshPort: number;
   gpuCount: number;
   editMode: boolean;
   cmdOverride: string | null;

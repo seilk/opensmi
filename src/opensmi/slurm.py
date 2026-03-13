@@ -3,6 +3,7 @@
 Parses sinfo / squeue / scontrol to build a per-node, per-GPU-index
 usage map showing which user occupies which GPU.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 @dataclass
 class SlurmGPUSlot:
     """One GPU slot on a node."""
+
     index: int
     user: Optional[str] = None
     job_id: Optional[int] = None
@@ -29,6 +31,7 @@ class SlurmGPUSlot:
 @dataclass
 class SlurmNodeInfo:
     """Aggregated info for one compute node."""
+
     name: str
     partition: str
     state: str  # idle / mixed / allocated / down / drain …
@@ -48,12 +51,14 @@ class SlurmNodeInfo:
 @dataclass
 class SlurmClusterSnapshot:
     """Full cluster snapshot from Slurm."""
+
     cluster_name: str = "Slurm Cluster"
     timestamp: str = ""
     nodes: List[SlurmNodeInfo] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     login_node: Optional[str] = None
     ssh_user: str = ""
+    ssh_port: int = 22
 
 
 # ── Shell helpers ───────────────────────────────────────────────────
@@ -63,11 +68,15 @@ def _run(cmd: List[str], timeout: int = 15) -> str:
     """Run a command and return stdout. Raises on failure."""
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd)} failed (rc={r.returncode}): {r.stderr.strip()}")
+        raise RuntimeError(
+            f"{' '.join(cmd)} failed (rc={r.returncode}): {r.stderr.strip()}"
+        )
     return r.stdout
 
 
-def _run_remote(cmd: List[str], login_node: str, user: str = "", port: int = 22, timeout: int = 15) -> str:
+def _run_remote(
+    cmd: List[str], login_node: str, user: str = "", port: int = 22, timeout: int = 15
+) -> str:
     """Run a command on a remote login node via SSH."""
     ssh_cmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes"]
     if port != 22:
@@ -77,7 +86,9 @@ def _run_remote(cmd: List[str], login_node: str, user: str = "", port: int = 22,
     ssh_cmd.append(" ".join(cmd))
     r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
-        raise RuntimeError(f"ssh {target}: {r.stderr.strip() or f'exit {r.returncode}'}")
+        raise RuntimeError(
+            f"ssh {target}: {r.stderr.strip() or f'exit {r.returncode}'}"
+        )
     return r.stdout
 
 
@@ -151,15 +162,17 @@ def _parse_jobs(squeue_out: str, scontrol_fn) -> List[_JobGPUAlloc]:
             node_name = m.group(1)
             idx_str = m.group(2)
             indices = _expand_idx(idx_str)
-            allocs.append(_JobGPUAlloc(
-                job_id=job_id,
-                user=user,
-                job_name=job_name,
-                state=state,
-                elapsed=elapsed,
-                node=node_name,
-                gpu_indices=indices,
-            ))
+            allocs.append(
+                _JobGPUAlloc(
+                    job_id=job_id,
+                    user=user,
+                    job_name=job_name,
+                    state=state,
+                    elapsed=elapsed,
+                    node=node_name,
+                    gpu_indices=indices,
+                )
+            )
 
     return allocs
 
@@ -201,11 +214,14 @@ def collect_slurm_snapshot(
         cluster_name=cluster_name,
         login_node=login_node,
         ssh_user=ssh_user,
+        ssh_port=ssh_port,
     )
 
     def run_cmd(cmd: List[str]) -> str:
         if login_node:
-            return _run_remote(cmd, login_node, user=ssh_user, port=ssh_port, timeout=timeout)
+            return _run_remote(
+                cmd, login_node, user=ssh_user, port=ssh_port, timeout=timeout
+            )
         return _run(cmd, timeout=timeout)
 
     # 1. sinfo — node list
@@ -241,8 +257,11 @@ def collect_slurm_snapshot(
         # sinfo -N -o '%N %G' gives Gres, but AllocTRES needs scontrol or sinfo %aTRES
         sinfo_alloc_raw = run_cmd(["sinfo", "-N", "-o", "'%N %G %a %T %A'"])
         # Parse via scontrol show node for mixed/allocated nodes
-        mixed_nodes = [n for n, (_, st, _, _) in node_map.items()
-                       if st.lower().rstrip("*") in ("mixed", "allocated")]
+        mixed_nodes = [
+            n
+            for n, (_, st, _, _) in node_map.items()
+            if st.lower().rstrip("*") in ("mixed", "allocated")
+        ]
         for mnode in mixed_nodes:
             try:
                 detail = run_cmd(["scontrol", "show", "node", mnode])
@@ -302,14 +321,16 @@ def collect_slurm_snapshot(
                         slot.job_name = "non-slurm"
                         filled += 1
 
-        snap.nodes.append(SlurmNodeInfo(
-            name=name,
-            partition=partition,
-            state=state,
-            gpu_type=gpu_type,
-            gpu_total=gpu_total,
-            gpus=slots,
-        ))
+        snap.nodes.append(
+            SlurmNodeInfo(
+                name=name,
+                partition=partition,
+                state=state,
+                gpu_type=gpu_type,
+                gpu_total=gpu_total,
+                gpus=slots,
+            )
+        )
 
     return snap
 
@@ -387,7 +408,9 @@ def format_table(snap: SlurmClusterSnapshot, *, compact: bool = False) -> str:
 
     lines.append(f"Total: {total_used}/{total_gpus} GPUs in use, {total_free} free")
     if user_counts:
-        user_parts = [f"{u}({c})" for u, c in sorted(user_counts.items(), key=lambda x: -x[1])]
+        user_parts = [
+            f"{u}({c})" for u, c in sorted(user_counts.items(), key=lambda x: -x[1])
+        ]
         lines.append(f"Users: {', '.join(user_parts)}")
 
     return "\n".join(lines)
