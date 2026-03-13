@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-03-14
+
+### Added
+- **Onboarding wizard**: Added Slurm login-node SSH port capture and persistence during `opensmi onboard`
+- **Onboarding wizard**: Added safe WSL SSH config copy prompt when WSL has no `~/.ssh/config`
+
+### Changed
+- **Onboarding wizard**: Replaced letter-based discrete choices with left/right selection and Enter confirmation
+- **GPU detail view**: Process commands now wrap across continuation lines instead of truncating to a short fixed width
+
+### Fixed
+- **Slurm submit popup**: Removed the synthetic default QoS entry and cycle only real QoS values
+- **Slurm submit popup**: Distinguish real QoS lookup failures from partitions that simply expose no QoS
+- **Slurm submit popup**: Thread configured Slurm login-node SSH ports through lookup, submit, poll, and cancel paths
+
+---
+
 ## [0.4.2] - 2026-03-10
 
 ### Fixed
@@ -134,6 +151,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI (Bun + OpenTUI): dashboard, node detail, allocation editor, kill action
 
 [0.2.4]: https://github.com/seilk/opensmi/releases/tag/v0.2.4
+[0.4.3]: https://github.com/seilk/opensmi/releases/tag/v0.4.3
+[0.4.2]: https://github.com/seilk/opensmi/releases/tag/v0.4.2
 [0.2.3]: https://github.com/seilk/opensmi/releases/tag/v0.2.3
 [0.2.2]: https://github.com/seilk/opensmi/releases/tag/v0.2.2
 [0.2.1]: https://github.com/seilk/opensmi/releases/tag/v0.2.1
