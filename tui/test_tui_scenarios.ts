@@ -44,6 +44,7 @@ function mockCluster(name: string, nodes: any[]): any {
 
 import { S, OPERATOR } from "./src/state/global";
 import type { Allocation } from "./src/types";
+import { renderDetail } from "./src/views/Detail";
 
 function resetState() {
   S.screen = "dashboard"; S.snapshot = null; S.selectedNodeIdx = 0; S.selectedGpuIdx = 0;
@@ -58,6 +59,26 @@ function resetState() {
   S.prefixKeyPressed = false;
   S.myGpuViewState.selectedBundleIdx = 0; S.myGpuViewState.bundles = [];
   S.myGpuViewState.expandedGpuKeys = new Set(); S.myGpuViewState.pinnedGpus = [];
+}
+
+function collectTextContent(node: any): string[] {
+  if (!node) return [];
+  const lines: string[] = [];
+  if (typeof node.props?.content === "string") lines.push(node.props.content);
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) lines.push(...collectTextContent(child));
+  }
+  return lines;
+}
+
+function withTerminalColumns(columns: number, fn: () => void) {
+  const original = process.stdout.columns;
+  Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true });
+  try {
+    fn();
+  } finally {
+    Object.defineProperty(process.stdout, "columns", { value: original, configurable: true });
+  }
 }
 
 console.log("[TEST] === Starting TUI Scenario Tests ===\n");
@@ -211,6 +232,68 @@ test("Regression: Tab switcher state", () => {
   assert(S.tabSwitcherOpen, "tab switcher open");
   S.tabSwitcherOpen = false; S.tabSwitcherIdx = 0;
   assert(!S.tabSwitcherOpen, "tab switcher closed");
+});
+
+test("Detail view wraps long cmdline onto continuation lines", () => {
+  resetState();
+  const longCmd = [
+    "python train.py",
+    "--config configs/very-long-experiment.yaml",
+    "--checkpoint /tmp/checkpoints/run-123456789/model-last.pt",
+    "--dataset /datasets/vision/imagenet-subset",
+  ].join(" ");
+  const proc = {
+    gpu_uuid: "GPU-UUID-0",
+    pid: 4242,
+    process_name: "python",
+    cmdline: longCmd,
+    used_memory_mib: 4096,
+    user: "alice",
+    runtime_s: 3600,
+  };
+
+  S.snapshot = mockCluster("test", [mockNode("node1", 1, { procs: [proc] })]);
+  S.allocations = [{ node_alias: "node1", gpu_index: 0, target: "bob", assigned_by: "admin", assigned_at: new Date().toISOString(), expires_at: null, notes: "" } as Allocation];
+
+  withTerminalColumns(80, () => {
+    const lines = collectTextContent(renderDetail());
+    const procLineIdx = lines.findIndex(line => line.includes("PID 4242"));
+    assert(procLineIdx >= 0, "process metadata row should render");
+
+    const firstLine = lines[procLineIdx]!;
+    const secondLine = lines[procLineIdx + 1]!;
+    const prefix = `    PID ${String(proc.pid).padEnd(8)} ${proc.user.padEnd(14)} ${"4096 MiB".padStart(10)} ${"1h0m".padStart(6)}  `;
+
+    assert(firstLine.includes("alice"), "first line should preserve user metadata");
+    assert(firstLine.includes("4096 MiB"), "first line should preserve memory metadata");
+    assert(firstLine.includes("1h0m"), "first line should preserve runtime metadata");
+    assert(firstLine.includes("⚠"), "violation marker should remain on metadata row");
+    assert(!firstLine.includes("…"), "wrapped command should not use local truncation ellipsis");
+    assert(secondLine.startsWith(" ".repeat(prefix.length)), "continuation line should align under command text");
+    assert(!secondLine.includes("PID 4242"), "continuation line should not repeat metadata columns");
+  });
+});
+
+test("Detail view falls back to process_name when cmdline is blank", () => {
+  resetState();
+  const proc = {
+    gpu_uuid: "GPU-UUID-0",
+    pid: 5252,
+    process_name: "python worker.py",
+    cmdline: "   ",
+    used_memory_mib: 2048,
+    user: "carol",
+    runtime_s: 125,
+  };
+
+  S.snapshot = mockCluster("test", [mockNode("node1", 1, { procs: [proc] })]);
+
+  withTerminalColumns(80, () => {
+    const lines = collectTextContent(renderDetail());
+    const procLine = lines.find(line => line.includes("PID 5252"));
+    assert(!!procLine, "process line should render");
+    assert(procLine!.includes("python worker.py"), "blank cmdline should fall back to process_name");
+  });
 });
 
 test("Performance: 100+ GPU state handling", () => {

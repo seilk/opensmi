@@ -20,8 +20,8 @@ import {
   gpuActivityStatus,
   isViolation,
   runtimeStr,
-  truncateText,
   gpuIndicesForNode,
+  wrapText,
 } from "../utils/format";
 
 // ── Callback injection ─────────────────────────────────────────────
@@ -90,9 +90,22 @@ export function activeDashboardSelectedNodeIdx(): number {
   return S.extraSelectedNodeIdx[manualIdx - 1] || 0;
 }
 
+function wrapProcessCommand(
+  prefix: string,
+  command: string,
+  maxWidth: number
+): string[] {
+  const usableWidth = Math.max(12, maxWidth - prefix.length);
+  const wrapped = wrapText(command, usableWidth);
+  if (wrapped.length === 0) return [prefix];
+  return wrapped.map((line, idx) => `${idx === 0 ? prefix : " ".repeat(prefix.length)}${line}`);
+}
+
 // ── renderDetail ───────────────────────────────────────────────────
 
 export function renderDetail(): any {
+  const termWidth = process.stdout.columns || 80;
+  const contentWidth = Math.max(termWidth - 2, 40);
   const activeSnap = activeDashboardSnapshot();
   const activeNodeIdx = activeDashboardSelectedNodeIdx();
   if (!activeSnap) return Text({ content: "No data" });
@@ -199,13 +212,17 @@ export function renderDetail(): any {
         const violMark = viol ? " ⚠" : "";
         const rt = runtimeStr(p.runtime_s);
         const rtCol = rt ? rt.padStart(6) : " ".repeat(6);
-        const procLabel = truncateText((p.cmdline || p.process_name || "").trim() || p.process_name, 64);
-        children.push(
-          Text({
-            content: `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  ${procLabel}${violMark}`,
-            fg: viol ? C.red : C.text,
-          })
-        );
+        const procLabel = (p.cmdline || p.process_name || "").trim() || p.process_name;
+        const prefix = `    PID ${String(p.pid).padEnd(8)} ${p.user.padEnd(14)} ${mem.padStart(10)} ${rtCol}  `;
+        const procLines = wrapProcessCommand(prefix, procLabel, contentWidth - violMark.length);
+        procLines.forEach((line, idx) => {
+          children.push(
+            Text({
+              content: idx === 0 ? `${line}${violMark}` : line,
+              fg: viol ? C.red : C.text,
+            })
+          );
+        });
       }
     }
 
