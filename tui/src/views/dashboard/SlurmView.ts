@@ -30,6 +30,7 @@ export function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: S
     snapshotTime: new Date().toISOString(),
     loginNode: snap?.login_node || "",
     sshUser: snap?.ssh_user || "",
+    sshPort: snap?.ssh_port || 22,
     gpuCount: 1,
     editMode: false,
     cmdOverride: null,
@@ -71,6 +72,27 @@ export function srunTokens(popup: SlurmRunPopup): string[] {
 
 export function srunCommand(popup: SlurmRunPopup): string {
   return srunTokens(popup).map(shellQuote).join(" ");
+}
+
+export function selectedQosName(popup: Pick<SlurmRunPopup, "qosList" | "qosIdx">): string {
+  return popup.qosIdx >= 0 && popup.qosIdx < popup.qosList.length ? popup.qosList[popup.qosIdx]! : "";
+}
+
+export function normalizeQosSelection(popup: Pick<SlurmRunPopup, "qosList" | "qosIdx">): void {
+  popup.qosIdx = popup.qosList.length === 0 ? -1 : Math.min(Math.max(popup.qosIdx, 0), popup.qosList.length - 1);
+}
+
+export function buildSlurmSubmitRemoteCmd(popup: Pick<SlurmRunPopup, "partition" | "nodeName" | "gpuCount" | "qosList" | "qosIdx">): string {
+  const qosName = selectedQosName(popup);
+  const qosPart = qosName ? ` --qos=${shellQuote(qosName)}` : "";
+  return `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
+}
+
+function buildSshArgs(target: string, port: number, timeout: number): string[] {
+  const args = ["ssh", "-o", `ConnectTimeout=${timeout}`, "-o", "BatchMode=yes"];
+  if (port !== 22) args.push("-p", String(port));
+  args.push(target);
+  return args;
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {
@@ -186,14 +208,16 @@ export function renderSrunPopup(popup: SlurmRunPopup): any {
   if (popup.qosLoading) {
     rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("⟳ loading...")}` })));
   } else if (popup.qosFetchFailed) {
-    rows.push(line(Text({ content: t`${fg(C.red)("QoS       :")} ${fg(C.red)("unavailable - use 'e' to add --qos manually")}` })));
+    rows.push(line(Text({ content: t`${fg(C.red)("QoS       :")} ${fg(C.red)("lookup failed - submit blocked for safety")}` })));
   } else if (popup.qosList.length > 0) {
-    const qosLabel = popup.qosIdx === 0 ? "(default)" : popup.qosList[popup.qosIdx - 1]!;
+    const qosLabel = selectedQosName(popup) || popup.qosList[0]!;
     rows.push(line(Box({ flexDirection: "row" },
       Text({ content: t`${fg(C.textDim)("QoS       :")} ` }),
       Text({ content: `[${qosLabel}]`, fg: C.cyan }),
-      Text({ content: t`  ${fg(C.textDim)("Q to cycle")}` }),
+      Text({ content: popup.qosList.length > 1 ? t`  ${fg(C.textDim)("Q to cycle")}` : "" }),
     )));
+  } else {
+    rows.push(line(Text({ content: t`${fg(C.textDim)("QoS       :")} ${fg(C.textDim)("none available - submit omits --qos")}` })));
   }
 
   rows.push(line(Text({ content: "" })));
@@ -275,7 +299,7 @@ export function renderSrunPopup(popup: SlurmRunPopup): any {
   // Action bar
   const canSubmit = !popup.editMode && !busy && !!popup.loginNode && !popup.qosLoading && !popup.qosFetchFailed && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle";
   const canCancel = popup.jobSubmitStatus === "running" && !!popup.jobId;
-  const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode;
+  const canResubmit = !busy && popup.jobSubmitStatus === "error" && !!popup.loginNode && !popup.qosFetchFailed;
 
   rows.push(line(Box({ flexDirection: "row" },
     Box({
@@ -376,17 +400,22 @@ export async function fetchQosForPartition(loginNode: string, sshUser: string, p
   try {
     const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
     const proc = Bun.spawn(
-      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
        `scontrol show partition ${shellQuote(partition)}`],
       { stdout: "pipe", stderr: "pipe" }
     );
     const out = await new Response(proc.stdout).text();
-    await proc.exited;
+    const err = await new Response(proc.stderr).text();
+    const exit = await proc.exited;
+    if (exit !== 0) {
+      throw new Error(err.trim() || `exit ${exit}`);
+    }
     // Parse "AllowQos=normal,high" or "QoS=normal"
     const m = out.match(/AllowQos=([^\s]+)/) || out.match(/QoS=([^\s]+)/);
     if (m && m[1] !== "N/A" && m[1] !== "(null)") {
       popup.qosList = m[1]!.split(",").filter(Boolean).filter(slurmNameSafe).filter(q => q.toLowerCase() !== "default");
     }
+    normalizeQosSelection(popup);
     tuiLog("DEBUG", `QoS for ${partition}: ${JSON.stringify(popup.qosList)}`);
   } catch (e) {
     tuiLog("DEBUG", `fetchQos failed: ${e}`);
@@ -435,7 +464,7 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
     for (const jobId of jobIds) {
       // Ownership check before cancelling
       const ownerProc = Bun.spawn(
-        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6),
          `squeue -h -j ${jobId} -o %u`],
         { stdout: "pipe", stderr: "pipe" }
       );
@@ -452,7 +481,7 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
         return;
       }
       const proc = Bun.spawn(
-        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `scancel ${jobId}`],
+        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6), `scancel ${jobId}`],
         { stdout: "pipe", stderr: "pipe" }
       );
       await proc.exited;
@@ -487,7 +516,7 @@ export async function cancelExistingJobsInPopup() {
       if (!/^\d+$/.test(String(jobId))) continue;
       // Ownership check
       const ownerProc = Bun.spawn(
-        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `squeue -h -j ${jobId} -o %u`],
+        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6), `squeue -h -j ${jobId} -o %u`],
         { stdout: "pipe", stderr: "pipe" }
       );
       const ownerExit = await ownerProc.exited;
@@ -505,7 +534,7 @@ export async function cancelExistingJobsInPopup() {
         return;
       }
       const proc = Bun.spawn(
-        ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget, `scancel ${jobId}`],
+        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6), `scancel ${jobId}`],
         { stdout: "pipe", stderr: "pipe" }
       );
       await proc.exited;
@@ -544,7 +573,7 @@ export async function cancelSlurmJob() {
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
     // Ownership check: verify job belongs to current user before cancelling
     const ownerProc = Bun.spawn(
-      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
        `squeue -h -j ${popup.jobId} -o %u`],
       { stdout: "pipe", stderr: "pipe" }
     );
@@ -567,7 +596,7 @@ export async function cancelSlurmJob() {
       return;
     }
     const proc = Bun.spawn(
-      ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
        `scancel ${popup.jobId}`],
       { stdout: "pipe", stderr: "pipe" }
     );
@@ -599,8 +628,8 @@ export async function submitJobToSlurm() {
     ["partition", popup.partition],
     ["node", popup.nodeName],
   ];
-  const selectedQosName = popup.qosList[popup.qosIdx - 1] || "";
-  if (selectedQosName) fieldsToValidate.push(["qos", selectedQosName]);
+  const qosName = selectedQosName(popup);
+  if (qosName) fieldsToValidate.push(["qos", qosName]);
   for (const [fieldName, value] of fieldsToValidate) {
     if (!slurmNameSafe(value)) {
       const msg = `Invalid characters in ${fieldName} (allowed: A-Z a-z 0-9 _ . : -): "${value}"`;
@@ -620,6 +649,13 @@ export async function submitJobToSlurm() {
     return;
   }
 
+  if (popup.qosFetchFailed) {
+    popup.jobSubmitStatus = "error";
+    popup.jobErrorMsg = "QoS lookup failed - submit blocked for safety.";
+    S._renderHook?.();
+    return;
+  }
+
   popup.jobSubmitStatus = "submitting";
   popup.jobId = "";
   popup.gpuIdxList = "";
@@ -627,15 +663,14 @@ export async function submitJobToSlurm() {
   popup.jobAbortRequested = false;
   S._renderHook?.();
 
-  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${selectedQosName || "(default)"} login=${popup.loginNode}`);
+  tuiLog("INFO", `job submit: node=${popup.nodeName} partition=${popup.partition} gpus=${popup.gpuCount} qos=${qosName || "(omitted)"} login=${popup.loginNode}:${popup.sshPort || 22}`);
 
   try {
     // 1. sbatch sleep infinity
     // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
-    const qosPart = selectedQosName ? ` --qos=${shellQuote(selectedQosName)}` : "";
-    const remoteCmd = `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
-    const sshCmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", sshTarget, remoteCmd];
+    const remoteCmd = buildSlurmSubmitRemoteCmd(popup);
+    const sshCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 10), remoteCmd];
 
     const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
     const sbatchOut = await new Response(sbatchProc.stdout).text();
@@ -689,7 +724,7 @@ export async function submitJobToSlurm() {
       }
       tickCount++;
       if (tickCount % POLL_EVERY !== 0) continue;
-      const sqCmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes", sshTarget,
+      const sqCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
         "squeue", "-j", popup.jobId, "-h", "-o", "%T"];
       const sqProc = Bun.spawn(sqCmd, { stdout: "pipe", stderr: "pipe" });
       const sqOut = (await new Response(sqProc.stdout).text()).trim();

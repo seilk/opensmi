@@ -612,8 +612,8 @@ export function registerKeyHandler(ctx: KeyHandlerContext): void {
           popup.jobErrorMsg = "";
           submitJobToSlurm();
           render();
-        } else if ((key.sequence === "q" || key.sequence === "Q") && popup.qosList.length > 0 && !isBusy) {
-          popup.qosIdx = (popup.qosIdx + 1) % (popup.qosList.length + 1);
+        } else if ((key.sequence === "q" || key.sequence === "Q") && popup.qosList.length > 1 && !isBusy) {
+          popup.qosIdx = (popup.qosIdx + 1) % popup.qosList.length;
           S._renderHook?.();
         } else if (key.sequence === "e" || key.sequence === "E") {
           if (popup.jobSubmitStatus === "idle" || popup.jobSubmitStatus === "running") {
@@ -633,7 +633,7 @@ export function registerKeyHandler(ctx: KeyHandlerContext): void {
         } else if (key.name === "left" || key.sequence === "-") {
           if (popup.gpuCount > 1) { popup.gpuCount--; popup.cmdOverride = null; popup.copyStatus = "idle"; S._renderHook?.(); }
         } else if (key.sequence === "s" || key.sequence === "S") {
-          if (popup.loginNode && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle") {
+          if (popup.loginNode && !popup.qosLoading && !popup.qosFetchFailed && popup.gpuCount >= 1 && popup.gpuCount <= popup.freeGpusAtOpen && popup.jobSubmitStatus === "idle") {
             submitJobToSlurm();
             render();
           }
