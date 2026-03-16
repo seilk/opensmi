@@ -169,9 +169,11 @@ export function renderGlobalFooter() {
   }
 
   const intervalLabel = S.autoRefreshSec === 0 ? "off"
-    : S.autoRefreshSec === 10 ? "10s"
     : S.autoRefreshSec === 30 ? "30s"
-    : "1m";
+    : S.autoRefreshSec === 60 ? "1m"
+    : S.autoRefreshSec === 300 ? "5m"
+    : S.autoRefreshSec === 600 ? "10m"
+    : "30m";
 
   const refreshWidget = Box(
     {

@@ -38,7 +38,7 @@ export function restartRefreshInterval(): void {
 }
 
 export function cycleAutoRefresh(): void {
-  const cycle: Array<0 | 10 | 30 | 60> = [10, 30, 60, 0];
+  const cycle: Array<0 | 30 | 60 | 300 | 600 | 1800> = [30, 60, 300, 600, 1800, 0];
   const next = cycle[(cycle.indexOf(S.autoRefreshSec) + 1) % cycle.length]!;
   S.autoRefreshSec = next;
   restartRefreshInterval();
