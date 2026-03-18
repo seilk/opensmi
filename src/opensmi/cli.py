@@ -1540,9 +1540,27 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
             input(_ob_prompt("SSH user for login node", "", default_user)).strip()
             or default_user
         )
+        # Slurm binary prefix (for clusters where sinfo/squeue/scontrol aren't in PATH)
+        default_prefix = str((existing or {}).get("slurm_bin_prefix") or "")
+        print(
+            f"\n  {_OB_DIM}If Slurm commands (sinfo, squeue, scontrol) are not in the"
+            f" remote PATH,{_OB_RESET}"
+        )
+        print(
+            f"  {_OB_DIM}enter the full directory path (e.g. /opt/slurm-21.08/bin).{_OB_RESET}"
+        )
+        slurm_prefix = (
+            input(
+                _ob_prompt("Slurm bin path", "leave empty if default", default_prefix)
+            ).strip()
+            or default_prefix
+        )
+
         result: dict = {"name": name, "login_node": login_node, "user": user}
         if login_port is not None:
             result["port"] = login_port
+        if slurm_prefix:
+            result["slurm_bin_prefix"] = slurm_prefix
         return result
 
     def _print_review(ssh_clusters: list[dict], slurm_clusters: list[dict]) -> None:
@@ -1564,9 +1582,11 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         for idx, sc in enumerate(slurm_clusters, start=1):
             _sc_port = sc.get("port")
             _port_suffix = f":{_sc_port}" if _sc_port else ""
+            _sc_prefix = sc.get("slurm_bin_prefix", "")
+            _prefix_suffix = f"  slurm: {_sc_prefix}" if _sc_prefix else ""
             print(
                 f"    {idx}. {sc.get('name', 'Slurm Cluster')}  →  "
-                f"{sc.get('login_node', '')}{_port_suffix} (user: {sc.get('user', '')})"
+                f"{sc.get('login_node', '')}{_port_suffix} (user: {sc.get('user', '')}){_prefix_suffix}"
             )
 
     print(f"\n  {_OB_GREEN}╭{line}╮{_OB_RESET}")
@@ -2882,6 +2902,7 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
                 login_node=str(sc["login_node"]),
                 user=str(sc.get("user", "")),
                 port=int(sc.get("port", 22)),
+                slurm_bin_prefix=str(sc.get("slurm_bin_prefix", "")),
             )
             for sc in raw_slurm
         ]
@@ -2895,6 +2916,7 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
                 ssh_user=sc.user,
                 ssh_port=sc.port,
                 cluster_name=sc.name,
+                slurm_bin_prefix=sc.slurm_bin_prefix,
             )
             results.append(snap)
         if args.output_json:

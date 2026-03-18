@@ -83,6 +83,7 @@ def _parse_cluster_config(
                 login_node=str(raw["login_node"]),
                 user=str(raw.get("user", "")),
                 port=int(raw.get("port", 22)),
+                slurm_bin_prefix=str(raw.get("slurm_bin_prefix", "")),
             )
         )
 
