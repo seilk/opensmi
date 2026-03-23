@@ -24,6 +24,7 @@ class SlurmClusterConfig:
     login_node: str          # SSH alias or address for the login node
     user: str = ""           # SSH user (optional, defaults to current user)
     port: int = 22
+    slurm_bin_prefix: str = ""  # e.g. "/opt/slurm-21.08/bin" for non-standard installs
 
 
 @dataclass

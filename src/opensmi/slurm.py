@@ -201,6 +201,7 @@ def collect_slurm_snapshot(
     ssh_user: str = "",
     ssh_port: int = 22,
     cluster_name: str = "Slurm Cluster",
+    slurm_bin_prefix: str = "",
 ) -> SlurmClusterSnapshot:
     """Collect a full Slurm cluster snapshot using only Slurm CLI tools.
 
@@ -218,11 +219,14 @@ def collect_slurm_snapshot(
     )
 
     def run_cmd(cmd: List[str]) -> str:
+        resolved = list(cmd)
+        if slurm_bin_prefix and resolved and resolved[0] in ("sinfo", "squeue", "scontrol"):
+            resolved[0] = f"{slurm_bin_prefix.rstrip('/')}/{resolved[0]}"
         if login_node:
             return _run_remote(
-                cmd, login_node, user=ssh_user, port=ssh_port, timeout=timeout
+                resolved, login_node, user=ssh_user, port=ssh_port, timeout=timeout
             )
-        return _run(cmd, timeout=timeout)
+        return _run(resolved, timeout=timeout)
 
     # 1. sinfo — node list
     try:
