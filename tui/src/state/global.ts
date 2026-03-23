@@ -60,7 +60,7 @@ export const S = {
   pollError: "",
   isPolling: false,
   isRefreshing: false,
-  autoRefreshSec: 30 as 0 | 10 | 30 | 60,
+  autoRefreshSec: 30 as 0 | 30 | 60 | 300 | 600 | 1800,
   bootLoading: true,
 
   // Navigation

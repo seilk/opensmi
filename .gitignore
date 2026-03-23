@@ -43,4 +43,5 @@ opencode-onboard-redesign.txt
 .redteam/
 .omc/
 .gitworktrees/
+.worktrees/
 .localdevtest/
