@@ -231,7 +231,7 @@ def _ob_ssh_test(
     if int(port) > 0 and int(port) != 22:
         cmd += ["-p", str(int(port))]
     if identityfile:
-        cmd += ["-i", identityfile]
+        cmd += ["-i", str(Path(identityfile).expanduser())]
     if proxyjump:
         cmd += ["-o", f"ProxyJump={proxyjump}"]
     cmd += [f"{user}@{address}", "true"]
@@ -370,7 +370,7 @@ def _ob_filter_ssh_hosts(hosts: list[dict]) -> tuple[list[dict], list[dict]]:
         if port != 22:
             cmd += ["-p", str(port)]
         if identityfile:
-            cmd += ["-i", identityfile]
+            cmd += ["-i", str(Path(identityfile).expanduser())]
         if proxyjump:
             cmd += ["-o", f"ProxyJump={proxyjump}"]
         cmd += [f"{user}@{address}", "echo __opensmi__"]
@@ -491,7 +491,7 @@ def _ob_handle_auth_failure_recovery(
 
     pubkey: Optional[str] = None
     if identityfile:
-        candidate = identityfile + ".pub"
+        candidate = str(Path(identityfile).expanduser()) + ".pub"
         if Path(candidate).exists():
             pubkey = candidate
     if not pubkey:
@@ -747,6 +747,12 @@ def _host_to_config_node(host: dict) -> dict:
     port = int(host.get("port") or 22)
     if port != 22:
         node["port"] = port
+    identityfile = str(host.get("identityfile") or "").strip()
+    if identityfile:
+        node["identityfile"] = identityfile
+    proxyjump = str(host.get("proxyjump") or "").strip()
+    if proxyjump:
+        node["proxyjump"] = proxyjump
     return node
 
 
@@ -1453,6 +1459,8 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         default_user = str((existing or {}).get("user") or current_user)
         _existing_port = (existing or {}).get("port")
         default_port: Optional[int] = int(_existing_port) if _existing_port else None
+        default_identity = str((existing or {}).get("identityfile") or "")
+        default_proxyjump = str((existing or {}).get("proxyjump") or "")
 
         name = (
             input(_ob_prompt("Slurm cluster name", "", default_name)).strip()
@@ -1469,6 +1477,8 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
 
         login_node = default_login
         login_port: Optional[int] = default_port
+        identityfile = default_identity
+        proxyjump = default_proxyjump
         if select_mode:
             try:
                 _ssh_path, discovered = _discover_ssh_config_hosts("~/.ssh/config")
@@ -1501,6 +1511,8 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
                     login_node = str(_picked["alias"])
                     _picked_port = int(_picked.get("port") or 22)
                     login_port = _picked_port if _picked_port != 22 else None
+                    identityfile = str(_picked.get("identityfile") or "")
+                    proxyjump = str(_picked.get("proxyjump") or "")
                     break
             else:
                 print(
@@ -1540,6 +1552,14 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
             input(_ob_prompt("SSH user for login node", "", default_user)).strip()
             or default_user
         )
+        identityfile = (
+            input(_ob_prompt("Identity file", "Optional", identityfile)).strip()
+            or identityfile
+        )
+        proxyjump = (
+            input(_ob_prompt("ProxyJump", "Optional", proxyjump)).strip()
+            or proxyjump
+        )
         # Slurm binary prefix (for clusters where sinfo/squeue/scontrol aren't in PATH)
         default_prefix = str((existing or {}).get("slurm_bin_prefix") or "")
         print(
@@ -1559,6 +1579,10 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
         result: dict = {"name": name, "login_node": login_node, "user": user}
         if login_port is not None:
             result["port"] = login_port
+        if identityfile:
+            result["identityfile"] = identityfile
+        if proxyjump:
+            result["proxyjump"] = proxyjump
         if slurm_prefix:
             result["slurm_bin_prefix"] = slurm_prefix
         return result
@@ -2902,6 +2926,8 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
                 login_node=str(sc["login_node"]),
                 user=str(sc.get("user", "")),
                 port=int(sc.get("port", 22)),
+                identityfile=str(sc.get("identityfile", "")),
+                proxyjump=str(sc.get("proxyjump", "")),
                 slurm_bin_prefix=str(sc.get("slurm_bin_prefix", "")),
             )
             for sc in raw_slurm
@@ -2915,6 +2941,8 @@ def _cmd_slurm(args: argparse.Namespace) -> int:
                 login_node=sc.login_node,
                 ssh_user=sc.user,
                 ssh_port=sc.port,
+                identityfile=sc.identityfile,
+                proxyjump=sc.proxyjump,
                 cluster_name=sc.name,
                 slurm_bin_prefix=sc.slurm_bin_prefix,
             )

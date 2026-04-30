@@ -12,6 +12,8 @@ class NodeConfig:
     user: str
     port: int = 22
     connect_timeout_s: int = 6
+    identityfile: str = ""
+    proxyjump: str = ""
     env_manager: str = ""       # "conda" | "micromamba" | "venv" | ""
     env_name: str = ""          # virtual env name (e.g. "ml", "torch2")
     work_dir: str = ""          # remote working directory (e.g. "~/projects")
@@ -24,6 +26,8 @@ class SlurmClusterConfig:
     login_node: str          # SSH alias or address for the login node
     user: str = ""           # SSH user (optional, defaults to current user)
     port: int = 22
+    identityfile: str = ""
+    proxyjump: str = ""
     slurm_bin_prefix: str = ""  # e.g. "/opt/slurm-21.08/bin" for non-standard installs
 
 

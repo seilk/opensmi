@@ -10,6 +10,7 @@ import json
 import re
 import subprocess
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
@@ -75,12 +76,24 @@ def _run(cmd: List[str], timeout: int = 15) -> str:
 
 
 def _run_remote(
-    cmd: List[str], login_node: str, user: str = "", port: int = 22, timeout: int = 15
+    cmd: List[str],
+    login_node: str,
+    user: str = "",
+    port: int = 22,
+    identityfile: str = "",
+    proxyjump: str = "",
+    timeout: int = 15,
 ) -> str:
     """Run a command on a remote login node via SSH."""
     ssh_cmd = ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes"]
     if port != 22:
         ssh_cmd += ["-p", str(port)]
+    identityfile = str(identityfile or "").strip()
+    if identityfile:
+        ssh_cmd += ["-i", str(Path(identityfile).expanduser())]
+    proxyjump = str(proxyjump or "").strip()
+    if proxyjump:
+        ssh_cmd += ["-o", f"ProxyJump={proxyjump}"]
     target = f"{user}@{login_node}" if user else login_node
     ssh_cmd.append(target)
     ssh_cmd.append(" ".join(cmd))
@@ -200,6 +213,8 @@ def collect_slurm_snapshot(
     login_node: Optional[str] = None,
     ssh_user: str = "",
     ssh_port: int = 22,
+    identityfile: str = "",
+    proxyjump: str = "",
     cluster_name: str = "Slurm Cluster",
     slurm_bin_prefix: str = "",
 ) -> SlurmClusterSnapshot:
@@ -224,7 +239,13 @@ def collect_slurm_snapshot(
             resolved[0] = f"{slurm_bin_prefix.rstrip('/')}/{resolved[0]}"
         if login_node:
             return _run_remote(
-                resolved, login_node, user=ssh_user, port=ssh_port, timeout=timeout
+                resolved,
+                login_node,
+                user=ssh_user,
+                port=ssh_port,
+                identityfile=identityfile,
+                proxyjump=proxyjump,
+                timeout=timeout,
             )
         return _run(resolved, timeout=timeout)
 

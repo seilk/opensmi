@@ -7,6 +7,7 @@ import socket
 import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .models import NodeConfig
@@ -84,6 +85,13 @@ class SSHRetryExhausted(SSHRunError):
     pass
 
 
+def _resolve_identityfile(identityfile: str) -> str:
+    raw = str(identityfile or "").strip()
+    if not raw:
+        return ""
+    return str(Path(raw).expanduser())
+
+
 def _ssh_base_cmd(node: NodeConfig) -> List[str]:
     cmd = [
         "ssh",
@@ -96,6 +104,12 @@ def _ssh_base_cmd(node: NodeConfig) -> List[str]:
     ]
     if node.port and int(node.port) != 22:
         cmd += ["-p", str(int(node.port))]
+    identityfile = _resolve_identityfile(node.identityfile)
+    if identityfile:
+        cmd += ["-i", identityfile]
+    proxyjump = str(node.proxyjump or "").strip()
+    if proxyjump:
+        cmd += ["-o", f"ProxyJump={proxyjump}"]
     return cmd
 
 
