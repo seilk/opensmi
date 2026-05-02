@@ -60,6 +60,8 @@ class SlurmClusterSnapshot:
     login_node: Optional[str] = None
     ssh_user: str = ""
     ssh_port: int = 22
+    identityfile: str = ""
+    proxyjump: str = ""
 
 
 # ── Shell helpers ───────────────────────────────────────────────────
@@ -231,6 +233,8 @@ def collect_slurm_snapshot(
         login_node=login_node,
         ssh_user=ssh_user,
         ssh_port=ssh_port,
+        identityfile=str(Path(identityfile).expanduser()) if identityfile else "",
+        proxyjump=str(proxyjump or "").strip(),
     )
 
     def run_cmd(cmd: List[str]) -> str:

@@ -8,6 +8,7 @@ import {
   Box, Text, t, bold, fg,
 } from "@opentui/core";
 import { spawn } from "bun";
+import { homedir } from "os";
 import { C } from "../../theme";
 import { S } from "../../state/global";
 import type {
@@ -31,6 +32,8 @@ export function openSrunPopup(node: SlurmNodeInfo, clusterName: string, snap?: S
     loginNode: snap?.login_node || "",
     sshUser: snap?.ssh_user || "",
     sshPort: snap?.ssh_port || 22,
+    identityfile: snap?.identityfile || "",
+    proxyjump: snap?.proxyjump || "",
     gpuCount: 1,
     editMode: false,
     cmdOverride: null,
@@ -88,9 +91,15 @@ export function buildSlurmSubmitRemoteCmd(popup: Pick<SlurmRunPopup, "partition"
   return `sbatch --partition=${shellQuote(popup.partition)} --nodelist=${shellQuote(popup.nodeName)} --gres=gpu:${popup.gpuCount}${qosPart} --wrap 'sleep infinity'`;
 }
 
-function buildSshArgs(target: string, port: number, timeout: number): string[] {
+function expandIdentityFile(identityfile: string): string {
+  return identityfile.startsWith("~/") ? `${homedir()}${identityfile.slice(1)}` : identityfile;
+}
+
+function buildSshArgs(target: string, port: number, timeout: number, identityfile = "", proxyjump = ""): string[] {
   const args = ["ssh", "-o", `ConnectTimeout=${timeout}`, "-o", "BatchMode=yes"];
   if (port !== 22) args.push("-p", String(port));
+  if (identityfile.trim()) args.push("-i", expandIdentityFile(identityfile.trim()));
+  if (proxyjump.trim()) args.push("-o", `ProxyJump=${proxyjump.trim()}`);
   args.push(target);
   return args;
 }
@@ -400,7 +409,7 @@ export async function fetchQosForPartition(loginNode: string, sshUser: string, p
   try {
     const sshTarget = sshUser ? `${sshUser}@${loginNode}` : loginNode;
     const proc = Bun.spawn(
-      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump),
        `scontrol show partition ${shellQuote(partition)}`],
       { stdout: "pipe", stderr: "pipe" }
     );
@@ -464,7 +473,7 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
     for (const jobId of jobIds) {
       // Ownership check before cancelling
       const ownerProc = Bun.spawn(
-        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6),
+        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6, snap.identityfile || "", snap.proxyjump || ""),
          `squeue -h -j ${jobId} -o %u`],
         { stdout: "pipe", stderr: "pipe" }
       );
@@ -481,7 +490,7 @@ export async function cancelJobsOnNode(node: SlurmNodeInfo, snap: SlurmSnapshot)
         return;
       }
       const proc = Bun.spawn(
-        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6), `scancel ${jobId}`],
+        [...buildSshArgs(sshTarget, snap.ssh_port || 22, 6, snap.identityfile || "", snap.proxyjump || ""), `scancel ${jobId}`],
         { stdout: "pipe", stderr: "pipe" }
       );
       await proc.exited;
@@ -516,7 +525,7 @@ export async function cancelExistingJobsInPopup() {
       if (!/^\d+$/.test(String(jobId))) continue;
       // Ownership check
       const ownerProc = Bun.spawn(
-        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6), `squeue -h -j ${jobId} -o %u`],
+        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump), `squeue -h -j ${jobId} -o %u`],
         { stdout: "pipe", stderr: "pipe" }
       );
       const ownerExit = await ownerProc.exited;
@@ -534,7 +543,7 @@ export async function cancelExistingJobsInPopup() {
         return;
       }
       const proc = Bun.spawn(
-        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6), `scancel ${jobId}`],
+        [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump), `scancel ${jobId}`],
         { stdout: "pipe", stderr: "pipe" }
       );
       await proc.exited;
@@ -573,7 +582,7 @@ export async function cancelSlurmJob() {
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
     // Ownership check: verify job belongs to current user before cancelling
     const ownerProc = Bun.spawn(
-      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump),
        `squeue -h -j ${popup.jobId} -o %u`],
       { stdout: "pipe", stderr: "pipe" }
     );
@@ -596,7 +605,7 @@ export async function cancelSlurmJob() {
       return;
     }
     const proc = Bun.spawn(
-      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
+      [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump),
        `scancel ${popup.jobId}`],
       { stdout: "pipe", stderr: "pipe" }
     );
@@ -670,7 +679,7 @@ export async function submitJobToSlurm() {
     // Pass as a single shell string to SSH so --wrap 'sleep infinity' is not split
     const sshTarget = popup.sshUser ? `${popup.sshUser}@${popup.loginNode}` : popup.loginNode;
     const remoteCmd = buildSlurmSubmitRemoteCmd(popup);
-    const sshCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 10), remoteCmd];
+    const sshCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 10, popup.identityfile, popup.proxyjump), remoteCmd];
 
     const sbatchProc = Bun.spawn(sshCmd, { stdout: "pipe", stderr: "pipe" });
     const sbatchOut = await new Response(sbatchProc.stdout).text();
@@ -724,7 +733,7 @@ export async function submitJobToSlurm() {
       }
       tickCount++;
       if (tickCount % POLL_EVERY !== 0) continue;
-      const sqCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 6),
+      const sqCmd = [...buildSshArgs(sshTarget, popup.sshPort || 22, 6, popup.identityfile, popup.proxyjump),
         "squeue", "-j", popup.jobId, "-h", "-o", "%T"];
       const sqProc = Bun.spawn(sqCmd, { stdout: "pipe", stderr: "pipe" });
       const sqOut = (await new Response(sqProc.stdout).text()).trim();

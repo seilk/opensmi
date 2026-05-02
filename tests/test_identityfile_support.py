@@ -6,12 +6,28 @@ from unittest.mock import patch
 
 from opensmi.cli import _host_to_config_node, _ob_ssh_test
 from opensmi.config import load_all_clusters
-from opensmi.models import NodeConfig
-from opensmi.slurm import _run_remote
+from opensmi.models import NodeConfig, SlurmClusterConfig
+from opensmi.slurm import _run_remote, collect_slurm_snapshot, snapshot_to_json
 from opensmi.sshutil import _ssh_base_cmd
 
 
 class TestIdentityfileSupport(unittest.TestCase):
+    def test_node_config_positional_optional_fields_remain_compatible(self):
+        node = NodeConfig("gpu-a", "10.0.0.10", "alice", 2222, 9, "conda", "ml", "~/work")
+
+        self.assertEqual(node.env_manager, "conda")
+        self.assertEqual(node.env_name, "ml")
+        self.assertEqual(node.work_dir, "~/work")
+        self.assertEqual(node.identityfile, "")
+        self.assertEqual(node.proxyjump, "")
+
+    def test_slurm_config_positional_optional_fields_remain_compatible(self):
+        cluster = SlurmClusterConfig("HPC", "login-a", "alice", 2202, "/opt/slurm/bin")
+
+        self.assertEqual(cluster.slurm_bin_prefix, "/opt/slurm/bin")
+        self.assertEqual(cluster.identityfile, "")
+        self.assertEqual(cluster.proxyjump, "")
+
     def test_host_to_config_node_preserves_identityfile_and_proxyjump(self):
         node = _host_to_config_node(
             {
@@ -141,6 +157,21 @@ class TestIdentityfileSupport(unittest.TestCase):
         self.assertIn("2202", cmd)
         self.assertIn(str(Path("~/.ssh/id_hpc").expanduser()), cmd)
         self.assertIn("ProxyJump=bastion-hpc", cmd)
+
+    def test_slurm_snapshot_serializes_identityfile_and_proxyjump(self):
+        with patch("opensmi.slurm._parse_sinfo", return_value={}):
+            with patch("opensmi.slurm._run_remote", return_value=""):
+                snap = collect_slurm_snapshot(
+                    login_node="login-a",
+                    ssh_user="alice",
+                    ssh_port=2202,
+                    identityfile="~/.ssh/id_hpc",
+                    proxyjump="bastion-hpc",
+                )
+
+        data = json.loads(snapshot_to_json(snap))
+        self.assertEqual(data["identityfile"], str(Path("~/.ssh/id_hpc").expanduser()))
+        self.assertEqual(data["proxyjump"], "bastion-hpc")
 
 
 if __name__ == "__main__":

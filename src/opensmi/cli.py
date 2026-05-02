@@ -475,6 +475,7 @@ def _ob_handle_auth_failure_recovery(
     result: dict,
     *,
     identityfile: str = "",
+    proxyjump: str = "",
 ) -> str:
     """Show [1/2/3] recovery menu for an auth-failed node.
 
@@ -538,7 +539,11 @@ def _ob_handle_auth_failure_recovery(
             sys.stdout.write(f"  Retesting {alias}... ")
             sys.stdout.flush()
             ok2, msg2 = _ob_ssh_test(
-                address, user, port=port, identityfile=identityfile or ""
+                address,
+                user,
+                port=port,
+                identityfile=identityfile or "",
+                proxyjump=proxyjump or "",
             )
             if ok2:
                 print(f"{_OB_GREEN}✓ Connected{_OB_RESET}")
@@ -1680,8 +1685,9 @@ def _init_wizard(cfg_path: Path, *, n_nodes: Optional[int] = None) -> int:
 
                 if _ob_is_auth_failure(err_msg):
                     _identityfile = str(_node.get("identityfile") or "")
+                    _proxyjump = str(_node.get("proxyjump") or "")
                     outcome = _ob_handle_auth_failure_recovery(
-                        _node, r, identityfile=_identityfile
+                        _node, r, identityfile=_identityfile, proxyjump=_proxyjump
                     )
                     if outcome == "skipped":
                         to_skip.add(flat_idx)
@@ -1822,9 +1828,10 @@ def _init_from_ssh_config(cfg_path: Path, ssh_config_path: str) -> int:
             h = hosts[flat_idx]
             err_msg = str(r.get("message") or "")
             identityfile = str(h.get("identityfile") or "")
+            proxyjump = str(h.get("proxyjump") or "")
             if _ob_is_auth_failure(err_msg):
                 outcome = _ob_handle_auth_failure_recovery(
-                    h, r, identityfile=identityfile
+                    h, r, identityfile=identityfile, proxyjump=proxyjump
                 )
                 if outcome == "skipped":
                     to_skip.add(flat_idx)
