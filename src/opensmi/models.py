@@ -15,6 +15,9 @@ class NodeConfig:
     env_manager: str = ""       # "conda" | "micromamba" | "venv" | ""
     env_name: str = ""          # virtual env name (e.g. "ml", "torch2")
     work_dir: str = ""          # remote working directory (e.g. "~/projects")
+    # Keep new SSH options after existing optional fields for positional-call compatibility.
+    identityfile: str = ""
+    proxyjump: str = ""
 
 
 @dataclass
@@ -25,6 +28,9 @@ class SlurmClusterConfig:
     user: str = ""           # SSH user (optional, defaults to current user)
     port: int = 22
     slurm_bin_prefix: str = ""  # e.g. "/opt/slurm-21.08/bin" for non-standard installs
+    # Keep new SSH options after existing optional fields for positional-call compatibility.
+    identityfile: str = ""
+    proxyjump: str = ""
 
 
 @dataclass

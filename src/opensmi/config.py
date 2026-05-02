@@ -66,6 +66,8 @@ def _parse_cluster_config(
                 user=str(raw.get("user") or data.get("default_user") or "ubuntu"),
                 port=int(raw.get("port", 22)),
                 connect_timeout_s=int(raw.get("connect_timeout_s", 6)),
+                identityfile=str(raw.get("identityfile", "")),
+                proxyjump=str(raw.get("proxyjump", "")),
                 env_manager=str(raw.get("env_manager", "")),
                 env_name=str(raw.get("env_name", "")),
                 work_dir=str(raw.get("work_dir", "")),
@@ -83,6 +85,8 @@ def _parse_cluster_config(
                 login_node=str(raw["login_node"]),
                 user=str(raw.get("user", "")),
                 port=int(raw.get("port", 22)),
+                identityfile=str(raw.get("identityfile", "")),
+                proxyjump=str(raw.get("proxyjump", "")),
                 slurm_bin_prefix=str(raw.get("slurm_bin_prefix", "")),
             )
         )

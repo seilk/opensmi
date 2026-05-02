@@ -137,6 +137,8 @@ export interface SlurmSnapshot {
   login_node: string | null;
   ssh_user: string;
   ssh_port: number;
+  identityfile: string;
+  proxyjump: string;
 }
 
 export interface SlurmRunPopup {
@@ -148,6 +150,8 @@ export interface SlurmRunPopup {
   loginNode: string;
   sshUser: string;
   sshPort: number;
+  identityfile: string;
+  proxyjump: string;
   gpuCount: number;
   editMode: boolean;
   cmdOverride: string | null;

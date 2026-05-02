@@ -38,6 +38,8 @@ function resetPopup(overrides: Partial<SlurmRunPopup> = {}) {
     loginNode: "login01",
     sshUser: "alice",
     sshPort: 22,
+    identityfile: "",
+    proxyjump: "",
     gpuCount: 1,
     editMode: false,
     cmdOverride: null,
@@ -138,6 +140,26 @@ await test("marks qos lookup as failed when the ssh fetch exits non-zero", async
     await fetchQosForPartition("login01", "alice", "gpu");
     assert(S.slurmRunPopup?.qosFetchFailed === true, "non-zero ssh fetch should mark qosFetchFailed");
     assert(S.slurmRunPopup?.qosLoading === false, "fetch should always clear loading state");
+  } finally {
+    (Bun as any).spawn = originalSpawn;
+  }
+});
+
+await test("passes identity file and proxy jump to qos ssh lookup", async () => {
+  resetPopup({ identityfile: "~/.ssh/id_hpc", proxyjump: "bastion" });
+  const originalSpawn = (Bun as any).spawn;
+  let call: string[] | null = null;
+  (Bun as any).spawn = (cmd: string[]) => {
+    call = cmd;
+    return mockProc("AllowQos=normal\n");
+  };
+  try {
+    const { fetchQosForPartition } = await import("./src/views/dashboard/SlurmView");
+    await fetchQosForPartition("login01", "alice", "gpu");
+    assert(call !== null, "QoS lookup should spawn ssh");
+    assert(call!.includes("-i"), "ssh args should include identity flag");
+    assert(call!.some((part) => part.includes("/.ssh/id_hpc")), "ssh args should include expanded identity file");
+    assert(call!.includes("ProxyJump=bastion"), "ssh args should include proxy jump");
   } finally {
     (Bun as any).spawn = originalSpawn;
   }
